@@ -11,8 +11,13 @@ import UniformTypeIdentifiers
     @Published private(set) var paired = false
     @Published private(set) var targetKnown = false
     @Published private(set) var loginEnabled = false
+    @Published private(set) var nearbyPads = [NearbyPad]()
+    @Published private(set) var pairingStatus = ""
+    @Published private(set) var pairingCode: String?
+    @Published private(set) var pairingPadName = ""
+    @Published private(set) var pairingActive = false
+    @Published private(set) var pairingConfirmed = false
     @Published var target = 0.0
-    @Published var pairingInput = ""
     @Published var showPairing = false
     @Published var errorMessage = ""
     @Published private(set) var enabled: Bool
@@ -20,6 +25,10 @@ import UniformTypeIdentifiers
     private let preferences = MacPreferences.defaults
     private let runLock = RunLock()
     private var client: BLEClient?
+    private var pairClient: PairClient?
+    private var currentKey: Data?
+    private var pendingKey: Data?
+    private var pendingExpiresAt: Date?
     private var input: InputActivity?
     private var timer: Timer?
     private var started = false
@@ -53,12 +62,27 @@ import UniformTypeIdentifiers
         input?.poll()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             self?.input?.poll()
+            self?.expirePendingPairing()
         }
         connection = "正在读取本机配对信息"
         Task.detached { [weak self] in
             do {
                 let key = try MacCredentials.read("pairingKey")
-                await MainActor.run { self?.useKey(key) }
+                var pending: (key: Data, expiresAt: Date)?
+                var pendingError: String?
+                do { pending = try MacCredentials.pendingPairing() }
+                catch { pendingError = "无法读取待激活配对：\(error.localizedDescription)" }
+                await MainActor.run {
+                    guard let self else { return }
+                    self.currentKey = key
+                    if let pending {
+                        self.pendingKey = pending.key
+                        self.pendingExpiresAt = pending.expiresAt
+                        self.useKey(pending.key)
+                    } else if let key { self.useKey(key) }
+                    else { self.beginPairing() }
+                    if let pendingError { self.errorMessage = pendingError }
+                }
             } catch {
                 await MainActor.run { self?.connection = "无法读取配对信息"; self?.errorMessage = error.localizedDescription }
             }
@@ -81,12 +105,20 @@ import UniformTypeIdentifiers
         client = BLEClient(key: key, onStatus: { [weak self] status in
             Task { @MainActor [weak self] in self?.connection = status }
         }, onAck: { [weak self] ack in
-            Task { @MainActor [weak self] in self?.accept(ack) }
+            Task { @MainActor [weak self] in self?.accept(ack, key: key) }
         })
         client?.setDesired(enabled && inputCount > 0)
     }
 
-    private func accept(_ ack: ControlAck) {
+    private func accept(_ ack: ControlAck, key: Data) {
+        if pendingKey == key {
+            do {
+                try MacCredentials.promotePairing(key)
+                currentKey = key
+                pendingKey = nil
+                pendingExpiresAt = nil
+            } catch { errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)" }
+        }
         if !targetEditing, (0...500).contains(ack.targetMilli) {
             target = Double(ack.targetMilli) / 1000
             targetKnown = true
@@ -142,17 +174,86 @@ import UniformTypeIdentifiers
         }
     }
 
-    func pair() {
-        let code = pairingInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let key = Data(base64Encoded: code), key.count == 32 else {
-            errorMessage = "配对码无效，请复制 iPad App 首页显示的完整配对码。"
-            return
+    func beginPairing() {
+        if pendingKey != nil {
+            do { try MacCredentials.clearPendingPairing() }
+            catch { errorMessage = "无法清除上次待激活配对：\(error.localizedDescription)"; return }
+            pendingKey = nil
+            pendingExpiresAt = nil
         }
-        do {
-            try MacCredentials.save(key, account: "pairingKey")
-            pairingInput = ""
-            useKey(key)
-        } catch { errorMessage = "无法保存配对信息：\(error.localizedDescription)" }
+        pairClient?.stop()
+        client?.setDesired(false)
+        client?.stop()
+        client = nil
+        connection = "正在配对"
+        showPairing = true
+        nearbyPads = []
+        pairingCode = nil
+        pairingPadName = ""
+        pairingActive = true
+        pairingConfirmed = false
+        pairingStatus = "正在查找附近的 iPad"
+        errorMessage = ""
+        pairClient = PairClient(onDevices: { [weak self] devices in
+            self?.nearbyPads = devices
+        }, onStatus: { [weak self] status in
+            self?.pairingStatus = status
+        }, onCode: { [weak self] code, name in
+            self?.pairingCode = code
+            self?.pairingPadName = name
+        }, onComplete: { [weak self] key in
+            guard let self else { return }
+            self.pairClient = nil
+            self.pairingActive = false
+            do {
+                let deadline = try MacCredentials.stagePairing(key)
+                self.pendingKey = key
+                self.pendingExpiresAt = deadline
+                self.useKey(key)
+            } catch {
+                self.restorePreviousPairing()
+                self.errorMessage = "无法保存新配对：\(error.localizedDescription)"
+            }
+        }, onFailure: { [weak self] message in
+            guard let self else { return }
+            self.pairClient = nil
+            self.pairingActive = false
+            self.pairingStatus = message
+            self.pairingCode = nil
+            self.restorePreviousPairing()
+            self.errorMessage = message
+        })
+    }
+
+    func choosePad(_ id: UUID) { pairClient?.choose(id) }
+    func confirmPairing() {
+        guard !pairingConfirmed, let pairClient else { return }
+        pairingConfirmed = true
+        pairClient.confirm()
+    }
+
+    func cancelPairing() {
+        pairClient?.reject()
+        pairClient = nil
+        pairingActive = false
+        showPairing = false
+        pairingCode = nil
+        restorePreviousPairing()
+    }
+
+    private func restorePreviousPairing() {
+        if let currentKey { useKey(currentKey) }
+        else { paired = false; connection = "尚未配对" }
+    }
+
+    private func expirePendingPairing() {
+        guard let pendingExpiresAt, Date() >= pendingExpiresAt else { return }
+        do { try MacCredentials.clearPendingPairing() }
+        catch { errorMessage = "无法清除过期配对：\(error.localizedDescription)"; return }
+        pendingKey = nil
+        self.pendingExpiresAt = nil
+        restorePreviousPairing()
+        errorMessage = "新配对未能连接 iPad，旧配对已保留；请重新配对。"
     }
 
     func targetEditChanged(_ editing: Bool) {
@@ -170,6 +271,7 @@ import UniformTypeIdentifiers
     }
 
     func quit() {
+        pairClient?.stop()
         client?.setDesired(false)
         connection = "正在恢复音量并退出"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in

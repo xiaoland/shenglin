@@ -49,22 +49,43 @@ private struct ControlPanel: View {
                     .frame(width: 8, height: 8)
                 Text(model.connection).font(.subheadline)
                 Spacer()
-                if model.paired {
-                    Button("重新配对") { model.showPairing.toggle() }
-                        .buttonStyle(.link)
-                }
+                Button(model.paired ? "更换配对" : "开始配对") { model.beginPairing() }
+                    .buttonStyle(.link)
             }
 
             if model.showPairing {
                 VStack(alignment: .leading, spacing: 7) {
-                    Text("首次配对").font(.headline)
-                    Text("打开 iPad 上的 Nearby Audio，复制首页配对码。配对码只保存在两端密钥链。")
+                    Text(model.paired ? "更换配对的 iPad" : "与 iPad 配对").font(.headline)
+                    Text("在 iPad App 点按“开始 2 分钟配对”，然后选择下方的 iPad。")
                         .font(.caption).foregroundStyle(.secondary)
-                    HStack {
-                        SecureField("粘贴 iPad 配对码", text: $model.pairingInput)
-                            .textFieldStyle(.roundedBorder)
-                        Button("配对") { model.pair() }
-                            .disabled(model.pairingInput.isEmpty)
+                    if model.paired {
+                        Text("新配对生效后，旧 Mac 将无法再控制这台 iPad。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Text(model.pairingStatus).font(.caption)
+                    if let code = model.pairingCode {
+                        Text(model.pairingPadName).font(.subheadline)
+                        Text(code).font(.system(size: 34, weight: .bold, design: .monospaced))
+                            .accessibilityLabel("配对验证码 \(code)")
+                        Text("请逐位核对 iPad 上的 6 位数字；不一致请取消。")
+                            .font(.caption)
+                        HStack {
+                            Button("数字一致，确认配对") { model.confirmPairing() }
+                                .disabled(model.pairingConfirmed)
+                            Button("取消") { model.cancelPairing() }
+                        }
+                    } else {
+                        ForEach(model.nearbyPads) { pad in
+                            Button(pad.name) { model.choosePad(pad.id) }
+                                .buttonStyle(.bordered)
+                        }
+                        if model.nearbyPads.isEmpty && model.pairingActive {
+                            Text("正在查找附近的 iPad…").font(.caption).foregroundStyle(.secondary)
+                        }
+                        if !model.pairingActive {
+                            Button("重新查找") { model.beginPairing() }
+                        }
+                        Button("取消") { model.cancelPairing() }.buttonStyle(.link)
                     }
                 }
                 .padding(10)

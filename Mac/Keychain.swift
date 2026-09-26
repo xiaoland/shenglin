@@ -1,5 +1,8 @@
 import Foundation
 import Security
+#if canImport(NearbyAudioCore)
+import NearbyAudioCore
+#endif
 
 enum MacPreferences {
     static let defaults = UserDefaults(suiteName: "local.nearbyaudio.preferences")!
@@ -7,6 +10,8 @@ enum MacPreferences {
 
 enum MacCredentials {
     private static let service = "local.nearbyaudio.mac"
+    private static let pendingAccount = "pendingPairingKey"
+    private struct Pending: Codable { let key: Data; let expiresAt: Date }
 
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
@@ -39,6 +44,39 @@ enum MacCredentials {
             throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
         }
     }
+
+    static func delete(_ account: String) throws {
+        let status = SecItemDelete(query(account) as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+        }
+    }
+
+    static func pendingPairing() throws -> (key: Data, expiresAt: Date)? {
+        guard let data = try read(pendingAccount) else { return nil }
+        let pending = try JSONDecoder().decode(Pending.self, from: data)
+        guard pending.key.count == 32 else { throw PairingError.invalidMessage }
+        if pending.expiresAt <= Date() {
+            try delete(pendingAccount)
+            return nil
+        }
+        return (pending.key, pending.expiresAt)
+    }
+
+    static func stagePairing(_ key: Data) throws -> Date {
+        guard key.count == 32 else { throw PairingError.invalidMessage }
+        let deadline = Date().addingTimeInterval(300)
+        try save(JSONEncoder().encode(Pending(key: key, expiresAt: deadline)), account: pendingAccount)
+        return deadline
+    }
+
+    static func promotePairing(_ key: Data) throws {
+        guard let pending = try pendingPairing(), pending.key == key else { throw PairingError.expired }
+        try save(key, account: "pairingKey")
+        try? delete(pendingAccount)
+    }
+
+    static func clearPendingPairing() throws { try delete(pendingAccount) }
 
     static func nextSequence() -> UInt64 {
         // The sequence is not secret; only the pairing key belongs in Keychain.
