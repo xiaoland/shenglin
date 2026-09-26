@@ -2,7 +2,7 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let action = arguments.first else {
-    print("用法：nearby-audio control status|pair|enabled|source|target ... | sources | select ... | run")
+    print("用法：nearby-audio control status|pair|enabled|exclude|target ... | sources | exclude ... | run")
     exit(2)
 }
 
@@ -21,14 +21,14 @@ if action == "control" {
         request = ControlRequest(command: "pair.choose", value: parts[2])
     } else if parts == ["enabled", "on"] { request = ControlRequest(command: "enabled.on") }
     else if parts == ["enabled", "off"] { request = ControlRequest(command: "enabled.off") }
-    else if parts.count == 3, parts[0...1] == ["source", "add"] {
-        request = ControlRequest(command: "source.add", value: parts[2])
-    } else if parts.count == 3, parts[0...1] == ["source", "remove"] {
-        request = ControlRequest(command: "source.remove", value: parts[2])
+    else if parts.count == 3, parts[0...1] == ["exclude", "add"] {
+        request = ControlRequest(command: "exclude.add", value: parts[2])
+    } else if parts.count == 3, parts[0...1] == ["exclude", "remove"] {
+        request = ControlRequest(command: "exclude.remove", value: parts[2])
     } else if parts.count == 2, parts[0] == "target" {
         request = ControlRequest(command: "target.set", value: parts[1])
     } else {
-        print("用法：nearby-audio control status | pair start|choose <UUID>|code|cancel | enabled on|off | source add|remove <标识> | target <0...0.5>")
+        print("用法：nearby-audio control status | pair start|choose <UUID>|code|cancel | enabled on|off | exclude add|remove <标识> | target <0...0.5>")
         exit(2)
     }
     do {
@@ -48,24 +48,24 @@ if action == "sources" {
     exit(0)
 }
 
-if action == "select" {
+if action == "exclude" {
     do {
         switch arguments.dropFirst().first {
         case "list":
-            let selected = try SelectionStore.load()
-            print(selected.isEmpty ? "尚未选择输入源；自动音量控制保持空闲。" : selected.sorted().joined(separator: "\n"))
+            let excluded = try ExclusionStore.load()
+            print(excluded.isEmpty ? "无排除应用；所有活动录音进程默认参与。" : excluded.sorted().joined(separator: "\n"))
         case "add", "remove":
-            guard arguments.count == 3, let selector = SelectionStore.normalized(arguments[2]) else {
+            guard arguments.count == 3, let selector = ExclusionStore.normalized(arguments[2]) else {
                 print("请输入 bundle ID（如 nz.owo.koe）或 path:/可执行文件/绝对路径")
                 exit(2)
             }
-            try SelectionStore.change(selector, add: arguments[1] == "add")
-            print("已更新输入源；运行中的程序将在 250 毫秒内重新检查。")
+            try ExclusionStore.change(selector, add: arguments[1] == "add")
+            print("已更新排除应用；运行中的程序将在 250 毫秒内重新检查。")
         default:
-            print("用法：nearby-audio select list|add|remove [标识]")
+            print("用法：nearby-audio exclude list|add|remove [标识]")
             exit(2)
         }
-    } catch { print("无法更新输入源：\(error)"); exit(1) }
+    } catch { print("无法更新排除应用：\(error)"); exit(1) }
     exit(0)
 }
 

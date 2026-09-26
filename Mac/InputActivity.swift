@@ -74,15 +74,15 @@ final class InputActivity {
             unavailable("Core Audio 输入状态查询失败")
             return
         }
-        let selected: Set<String>
+        let excluded: Set<String>
         do {
-            selected = try SelectionStore.load()
+            excluded = try ExclusionStore.load()
         } catch {
-            unavailable("无法读取输入源选择：\(error)")
+            unavailable("无法读取排除设置：\(error)")
             return
         }
         let identities = Dictionary(uniqueKeysWithValues: current.map { ($0, sourceIdentities(pid: $0)) })
-        let considered = InputSelectionPolicy.activePIDs(identities, selected: selected)
+        let considered = InputExclusionPolicy.activePIDs(identities, excluded: excluded)
         guard considered != previous else { return }
         previous = considered
         lastError = nil

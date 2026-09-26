@@ -5,21 +5,17 @@ import Foundation
 import NearbyAudioCore
 #endif
 
-enum SelectionStore {
-    private struct Configuration: Codable { let selected: [String] }
+enum ExclusionStore {
     static let url = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/NearbyAudio/selection.json")
+        .appendingPathComponent("Library/Application Support/NearbyAudio/exclusions.json")
+    private static let legacyURL = url.deletingLastPathComponent().appendingPathComponent("selection.json")
 
     static func load() throws -> Set<String> {
-        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
-        return Set(try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: url)).selected)
+        try InputExclusionStore.load(at: url, legacyURL: legacyURL)
     }
 
     static func change(_ selector: String, add: Bool) throws {
-        var selected = try load()
-        if add { selected.insert(selector) } else { selected.remove(selector) }
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try JSONEncoder().encode(Configuration(selected: selected.sorted())).write(to: url, options: .atomic)
+        try InputExclusionStore.change(selector, add: add, at: url, legacyURL: legacyURL)
     }
 
     static func normalized(_ argument: String) -> String? {
@@ -28,6 +24,11 @@ enum SelectionStore {
         if argument.hasPrefix("bundle:") { return argument.count > 7 ? argument : nil }
         return argument.contains(".") ? "bundle:\(argument)" : nil
     }
+}
+
+func outerApplicationBundleID(path: String) -> String? {
+    guard let range = path.range(of: ".app/") else { return nil }
+    return Bundle(path: String(path[..<range.lowerBound]) + ".app")?.bundleIdentifier
 }
 
 func executablePath(pid: pid_t) -> String? {
@@ -45,8 +46,7 @@ func sourceIdentities(pid: pid_t) -> Set<String> {
     }
     if let path = executablePath(pid: pid) {
         identities.insert("path:\(path)")
-        if let range = path.range(of: ".app/"),
-           let bundle = Bundle(path: String(path[..<range.lowerBound]) + ".app")?.bundleIdentifier {
+        if let bundle = outerApplicationBundleID(path: path) {
             identities.insert("bundle:\(bundle)")
         }
     }
@@ -57,12 +57,12 @@ struct SourceCandidate: Identifiable {
     let selector: String
     let name: String
     let isActive: Bool
-    let isSelected: Bool
+    let isExcluded: Bool
     var id: String { selector }
 }
 
 func availableSources() throws -> [SourceCandidate] {
-    let selected = try SelectionStore.load()
+    let excluded = try ExclusionStore.load()
     guard let active = activeInputPIDs() else {
         throw NSError(domain: "NearbyAudio", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "Core Audio 输入状态查询失败"])
@@ -76,14 +76,15 @@ func availableSources() throws -> [SourceCandidate] {
     }
     for pid in active {
         let identities = sourceIdentities(pid: pid)
-        guard let selector = identities.filter({ $0.hasPrefix("bundle:") }).sorted().first
+        guard let selector = executablePath(pid: pid).flatMap(outerApplicationBundleID(path:)).map({ "bundle:\($0)" })
+                ?? identities.filter({ $0.hasPrefix("bundle:") }).sorted().first
                 ?? identities.filter({ $0.hasPrefix("path:") }).sorted().first else { continue }
         rows[selector] = rows[selector]
             ?? NSRunningApplication(processIdentifier: pid)?.localizedName
             ?? executablePath(pid: pid).map { URL(fileURLWithPath: $0).lastPathComponent }
             ?? "进程 \(pid)"
     }
-    for selector in selected where rows[selector] == nil {
+    for selector in excluded where rows[selector] == nil {
         if selector.hasPrefix("bundle:"),
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: String(selector.dropFirst(7))) {
             rows[selector] = Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
@@ -97,13 +98,13 @@ func availableSources() throws -> [SourceCandidate] {
     return rows.map { selector, name in
         SourceCandidate(selector: selector, name: name,
                         isActive: activeIdentities.contains { $0.contains(selector) },
-                        isSelected: selected.contains(selector))
+                        isExcluded: excluded.contains(selector))
     }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 }
 
 func printSources() throws {
     for source in try availableSources() {
-        print("\(source.isActive ? "●" : " ") \(source.isSelected ? "✓" : " ") \(source.name)\t\(source.selector)")
+        print("\(source.isActive ? "●" : " ") \(source.isExcluded ? "×" : " ") \(source.name)\t\(source.selector)")
     }
-    print("● 正在采集输入；✓ 已选。使用 nearby-audio select add <bundle:标识或path:绝对路径>。")
+    print("● 正在采集输入；× 已排除。使用 nearby-audio exclude add <bundle:标识或path:绝对路径>。")
 }

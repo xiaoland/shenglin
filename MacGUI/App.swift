@@ -97,7 +97,7 @@ private struct ControlPanel: View {
 
             Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
                 .font(.headline)
-            Text("已选应用录音进程：\(model.inputCount) 个。未选中的应用不会改变 iPad 音量。")
+            Text("参与协同的录音进程：\(model.inputCount) 个。默认所有录音应用参与，排除项不参与。")
                 .font(.caption).foregroundStyle(.secondary)
             if let inputError = model.inputError {
                 Text("输入状态未知，已停止降音量请求：\(inputError)")
@@ -106,18 +106,20 @@ private struct ControlPanel: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("触发应用").font(.headline)
+                    Text("排除应用").font(.headline)
                     Spacer()
                     Button("刷新") { model.refreshSources() }
                         .buttonStyle(.link)
-                    Button("添加应用…") { model.chooseApp() }
+                    Button("添加排除…") { model.chooseApp() }
                         .buttonStyle(.link)
                 }
+                Text("开关打开表示该应用录音时不改变 iPad 音量。")
+                    .font(.caption).foregroundStyle(.secondary)
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
                         ForEach(model.sources) { source in
-                            Toggle(isOn: Binding(get: { source.isSelected },
-                                                 set: { _ in model.toggleSource(source) })) {
+                            Toggle(isOn: Binding(get: { source.isExcluded },
+                                                 set: { _ in model.toggleExclusion(source) })) {
                                 HStack {
                                     Text(source.name)
                                     if source.isActive {
@@ -127,6 +129,7 @@ private struct ControlPanel: View {
                                 }
                             }
                             .help(source.selector)
+                            .accessibilityLabel("排除 \(source.name)")
                         }
                     }
                 }

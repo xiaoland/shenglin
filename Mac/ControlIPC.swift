@@ -8,7 +8,7 @@ struct ControlRequest: Codable {
 
 struct ControlStatus: Codable {
     struct Device: Codable { let id: UUID; let name: String }
-    struct Source: Codable { let selector: String; let name: String; let selected: Bool; let active: Bool }
+    struct Source: Codable { let selector: String; let name: String; let excluded: Bool; let active: Bool }
     let connection: String
     let paired: Bool
     let enabled: Bool
@@ -35,7 +35,7 @@ struct ControlResponse: Codable {
 }
 
 enum ControlIPC {
-    static let path = SelectionStore.url.deletingLastPathComponent().appendingPathComponent("control.sock").path
+    static let path = ExclusionStore.url.deletingLastPathComponent().appendingPathComponent("control.sock").path
 
     static func address() throws -> sockaddr_un {
         var address = sockaddr_un()

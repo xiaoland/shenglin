@@ -187,25 +187,25 @@ import UniformTypeIdentifiers
         catch { errorMessage = "无法列出应用：\(error.localizedDescription)" }
     }
 
-    func toggleSource(_ source: SourceCandidate) {
-        _ = setSource(source.selector, add: !source.isSelected)
+    func toggleExclusion(_ source: SourceCandidate) {
+        _ = setExcluded(source.selector, add: !source.isExcluded)
     }
 
-    private func setSource(_ selector: String, add: Bool) -> Bool {
+    private func setExcluded(_ selector: String, add: Bool) -> Bool {
         do {
-            try SelectionStore.change(selector, add: add)
+            try ExclusionStore.change(selector, add: add)
             refreshSources()
             input?.poll()
             return true
         } catch {
-            errorMessage = "无法保存应用选择：\(error.localizedDescription)"
+            errorMessage = "无法保存排除设置：\(error.localizedDescription)"
             return false
         }
     }
 
     func chooseApp() {
         let panel = NSOpenPanel()
-        panel.message = "选择要触发 iPad 音量协同的 Mac 应用"
+        panel.message = "选择不参与 iPad 音量协同的 Mac 应用"
         panel.prompt = "选择应用"
         panel.allowedContentTypes = [.applicationBundle]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
@@ -217,7 +217,7 @@ import UniformTypeIdentifiers
                     self.errorMessage = "所选应用没有可用的 bundle ID"
                     return
                 }
-                _ = self.setSource("bundle:\(bundle)", add: true)
+                _ = self.setExcluded("bundle:\(bundle)", add: true)
             }
         }
     }
@@ -340,7 +340,7 @@ import UniformTypeIdentifiers
                       pairingPendingActivation: pendingKey != nil,
                       nearbyPads: nearbyPads.map { .init(id: $0.id, name: $0.name) },
                       sources: sources.map { .init(selector: $0.selector, name: $0.name,
-                                                   selected: $0.isSelected, active: $0.isActive) },
+                                                   excluded: $0.isExcluded, active: $0.isActive) },
                       error: errorMessage)
     }
 
@@ -361,9 +361,9 @@ import UniformTypeIdentifiers
             else if request.value == nil { problem = "请输入 6 位验证码" }
         case "enabled.on": setEnabled(true)
         case "enabled.off": setEnabled(false)
-        case "source.add", "source.remove":
-            if let value = request.value, let selector = SelectionStore.normalized(value) {
-                if !setSource(selector, add: request.command == "source.add") { problem = errorMessage }
+        case "exclude.add", "exclude.remove":
+            if let value = request.value, let selector = ExclusionStore.normalized(value) {
+                if !setExcluded(selector, add: request.command == "exclude.add") { problem = errorMessage }
             } else { problem = "应用标识无效" }
         case "target.set":
             if let value = request.value, let number = Double(value), (0...0.5).contains(number) {

@@ -93,10 +93,38 @@ public enum VolumePolicy {
     }
 }
 
-public enum InputSelectionPolicy {
-    public static func activePIDs(_ identitiesByPID: [Int32: Set<String>], selected: Set<String>) -> Set<Int32> {
+public enum InputExclusionPolicy {
+    public static func activePIDs(_ identitiesByPID: [Int32: Set<String>], excluded: Set<String>) -> Set<Int32> {
         Set(identitiesByPID.compactMap { pid, identities in
-            identities.isDisjoint(with: selected) ? nil : pid
+            identities.isDisjoint(with: excluded) ? pid : nil
         })
+    }
+}
+
+public enum InputExclusionStore {
+    private struct Configuration: Codable { let excluded: [String] }
+    private struct LegacyConfiguration: Decodable { let selected: [String] }
+
+    public static func load(at url: URL, legacyURL: URL) throws -> Set<String> {
+        if FileManager.default.fileExists(atPath: url.path) {
+            return Set(try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: url)).excluded)
+        }
+        if FileManager.default.fileExists(atPath: legacyURL.path) {
+            // Old selections were permissions, not exclusions; never invert their meaning.
+            _ = try JSONDecoder().decode(LegacyConfiguration.self, from: Data(contentsOf: legacyURL))
+            try save([], at: url)
+        }
+        return []
+    }
+
+    public static func change(_ selector: String, add: Bool, at url: URL, legacyURL: URL) throws {
+        var excluded = try load(at: url, legacyURL: legacyURL)
+        if add { excluded.insert(selector) } else { excluded.remove(selector) }
+        try save(excluded, at: url)
+    }
+
+    private static func save(_ excluded: Set<String>, at url: URL) throws {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(Configuration(excluded: excluded.sorted())).write(to: url, options: .atomic)
     }
 }

@@ -30,18 +30,31 @@ final class ProtocolTests: XCTestCase {
         XCTAssertNil(VolumePolicy.restore(current: 0.1, route: "headphones", snapshot: saved))
     }
 
-    func testSelectedInputSourcesAcrossConcurrentProcessesAndRestart() {
+    func testExcludedInputSourcesAcrossConcurrentProcessesAndRestart() {
         let koe = "bundle:nz.owo.koe"
         let chat = "bundle:com.example.chat"
         let active: [Int32: Set<String>] = [
             14259: [koe, "path:/Applications/Koe.app/Contents/MacOS/Koe"],
             53878: [chat],
         ]
-        XCTAssertEqual(InputSelectionPolicy.activePIDs(active, selected: [koe]), [14259])
-        XCTAssertEqual(InputSelectionPolicy.activePIDs(active, selected: [chat]), [53878])
-        XCTAssertEqual(InputSelectionPolicy.activePIDs(active, selected: [koe, chat]), [14259, 53878])
-        XCTAssertTrue(InputSelectionPolicy.activePIDs(active, selected: []).isEmpty)
-        XCTAssertEqual(InputSelectionPolicy.activePIDs([245: [koe]], selected: [koe]), [245])
-        XCTAssertEqual(InputSelectionPolicy.activePIDs([246: [koe, "bundle:koe.helper"]], selected: [koe]), [246])
+        XCTAssertEqual(InputExclusionPolicy.activePIDs(active, excluded: []), [14259, 53878])
+        XCTAssertEqual(InputExclusionPolicy.activePIDs(active, excluded: [koe]), [53878])
+        XCTAssertEqual(InputExclusionPolicy.activePIDs(active, excluded: [chat]), [14259])
+        XCTAssertTrue(InputExclusionPolicy.activePIDs(active, excluded: [koe, chat]).isEmpty)
+        XCTAssertTrue(InputExclusionPolicy.activePIDs([246: [koe, "bundle:koe.helper"]], excluded: [koe]).isEmpty)
+    }
+
+    func testLegacySelectionDoesNotBecomeAnExclusion() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let legacy = directory.appendingPathComponent("selection.json")
+        let exclusions = directory.appendingPathComponent("exclusions.json")
+        try Data(#"{"selected":["bundle:nz.owo.koe"]}"#.utf8).write(to: legacy)
+        XCTAssertEqual(try InputExclusionStore.load(at: exclusions, legacyURL: legacy), [])
+        try InputExclusionStore.change("bundle:com.openai.codex", add: true, at: exclusions, legacyURL: legacy)
+        XCTAssertEqual(try InputExclusionStore.load(at: exclusions, legacyURL: legacy), ["bundle:com.openai.codex"])
+        try InputExclusionStore.change("bundle:com.openai.codex", add: false, at: exclusions, legacyURL: legacy)
+        XCTAssertEqual(try InputExclusionStore.load(at: exclusions, legacyURL: legacy), [])
     }
 }
