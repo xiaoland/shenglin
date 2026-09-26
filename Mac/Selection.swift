@@ -78,7 +78,10 @@ func availableSources() throws -> [SourceCandidate] {
         let identities = sourceIdentities(pid: pid)
         guard let selector = identities.filter({ $0.hasPrefix("bundle:") }).sorted().first
                 ?? identities.filter({ $0.hasPrefix("path:") }).sorted().first else { continue }
-        rows[selector] = rows[selector] ?? "PID \(pid)"
+        rows[selector] = rows[selector]
+            ?? NSRunningApplication(processIdentifier: pid)?.localizedName
+            ?? executablePath(pid: pid).map { URL(fileURLWithPath: $0).lastPathComponent }
+            ?? "进程 \(pid)"
     }
     for selector in selected where rows[selector] == nil {
         if selector.hasPrefix("bundle:"),
