@@ -15,10 +15,14 @@ if ! command -v cmake >/dev/null 2>&1; then
 else
     cmake=$(command -v cmake)
 fi
-if [ ! -f local/boringssl/include/openssl/curve25519.h ]; then
-    mkdir -p local/boringssl
+if [ "$(cat local/boringssl/.nearby-audio-revision 2>/dev/null || :)" != "$revision" ]; then
+    mkdir -p local
     curl -fL --retry 3 "https://github.com/google/boringssl/archive/$revision.tar.gz" -o local/boringssl.tar.gz
+    tar -tzf local/boringssl.tar.gz >/dev/null
+    rm -rf local/boringssl local/boringssl-macos local/boringssl-ios
+    mkdir -p local/boringssl
     tar -xzf local/boringssl.tar.gz -C local/boringssl --strip-components=1
+    printf '%s\n' "$revision" > local/boringssl/.nearby-audio-revision
 fi
 build() {
     target=$1

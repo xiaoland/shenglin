@@ -51,17 +51,22 @@ enum ControlIPC {
 
     static func exchange(_ request: ControlRequest) throws -> ControlResponse {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { throw error("无法创建本机连接") }
+        guard fd >= 0 else { throw systemError("无法创建本机连接") }
         defer { close(fd) }
         var noSignal: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
+        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        guard setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0,
+              setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0 else {
+            throw systemError("无法设置本机控制超时")
+        }
         var address = try address()
         let connected = withUnsafePointer(to: &address) {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                 connect(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
             }
         }
-        guard connected == 0 else { throw error("菜单栏 App 未运行或本机控制入口不可用") }
+        guard connected == 0 else { throw systemError("菜单栏 App 未运行或本机控制入口不可用") }
         let payload = try JSONEncoder().encode(request) + Data([10])
         try writeAll(payload, to: fd)
         shutdown(fd, SHUT_WR)
@@ -74,7 +79,7 @@ enum ControlIPC {
         var buffer = [UInt8](repeating: 0, count: 1024)
         while data.count < 65_536 {
             let count = buffer.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
-            if count < 0 { throw error("读取本机控制消息失败") }
+            if count < 0 { throw systemError("读取本机控制消息失败") }
             if count == 0 { break }
             data.append(contentsOf: buffer[..<count])
             if let newline = data.firstIndex(of: 10) { return data[..<newline] }
@@ -88,7 +93,7 @@ enum ControlIPC {
             var sent = 0
             while sent < bytes.count {
                 let count = write(fd, base.advanced(by: sent), bytes.count - sent)
-                guard count > 0 else { throw error("发送本机控制消息失败") }
+                guard count > 0 else { throw systemError("发送本机控制消息失败") }
                 sent += count
             }
         }
@@ -97,6 +102,12 @@ enum ControlIPC {
     private static func error(_ message: String) -> NSError {
         NSError(domain: "NearbyAudioIPC", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    private static func systemError(_ message: String) -> NSError {
+        let code = errno
+        return NSError(domain: NSPOSIXErrorDomain, code: Int(code),
+                       userInfo: [NSLocalizedDescriptionKey: "\(message)：\(String(cString: strerror(code)))"])
     }
 }
 
@@ -144,6 +155,7 @@ final class ControlServer {
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
             var timeout = timeval(tv_sec: 3, tv_usec: 0)
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             guard let data = try? ControlIPC.readLine(from: client),
                   let request = try? JSONDecoder().decode(ControlRequest.self, from: data) else {
                 close(client)

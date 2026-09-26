@@ -130,6 +130,7 @@ import UniformTypeIdentifiers
         lastAckSequence = ack.sequence
         if pendingKey == key {
             do {
+                // Keep the old key until the iPad proves it accepted the new one.
                 try MacCredentials.promotePairing(key)
                 currentKey = key
                 pendingKey = nil

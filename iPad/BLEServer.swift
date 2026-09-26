@@ -274,6 +274,7 @@ import UIKit
             let authenticatedKey: Data
             if let pendingKey, command.valid(key: pendingKey, now: now) {
                 do {
+                    // Activate on the first authenticated command; the Mac waits for our signed ACK.
                     key = try PairingStore.promotePending()
                     self.pendingKey = nil
                     lastSequence = 0

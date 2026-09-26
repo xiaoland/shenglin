@@ -15,6 +15,7 @@ import Darwin
 
     init?() {
         _ = dlopen("/System/Library/PrivateFrameworks/MediaExperience.framework/MediaExperience", RTLD_LAZY | RTLD_LOCAL)
+        // Private Objective-C ABI: reject changed signatures before casting IMPs to C functions.
         guard let cls = NSClassFromString("AVSystemController"),
               let shared = class_getClassMethod(cls, NSSelectorFromString("sharedAVSystemController")),
               let get = class_getInstanceMethod(cls, NSSelectorFromString("getVolume:forCategory:")),

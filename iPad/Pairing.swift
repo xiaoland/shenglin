@@ -25,6 +25,7 @@ enum PairingStore {
 
     private static func save(_ data: Data, account: String) throws {
         var entry = query(account)
+        // Background BLE can use the key while locked after the first unlock; it never leaves this iPad.
         entry[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         entry[kSecValueData as String] = data
         let status = SecItemAdd(entry as CFDictionary, nil)
