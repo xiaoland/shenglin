@@ -34,34 +34,58 @@ func activeInputPIDs() -> Set<pid_t>? {
     return running
 }
 
+enum InputObservation {
+    case active(Int)
+    case unavailable(String)
+
+    var count: Int {
+        if case .active(let count) = self { return count }
+        return 0
+    }
+
+    var error: String? {
+        if case .unavailable(let message) = self { return message }
+        return nil
+    }
+
+    var needsQuiet: Bool { count > 0 }
+}
+
 final class InputActivity {
     private var previous: Set<pid_t>?
     private var lastError: String?
-    private let changed: (Bool, Int) -> Void
+    private let changed: (InputObservation) -> Void
 
-    init(changed: @escaping (Bool, Int) -> Void) {
+    init(changed: @escaping (InputObservation) -> Void) {
         self.changed = changed
+    }
+
+    private func unavailable(_ message: String) {
+        guard lastError != message else { return }
+        print(message)
+        lastError = message
+        previous = nil
+        // Unknown input state must not keep a stale request to lower iPad volume.
+        changed(.unavailable(message))
     }
 
     func poll() {
         guard let current = activeInputPIDs() else {
-            let message = "Core Audio 输入状态查询失败"
-            if lastError != message { print(message); lastError = message }
+            unavailable("Core Audio 输入状态查询失败")
             return
         }
         let selected: Set<String>
         do {
             selected = try SelectionStore.load()
-            lastError = nil
         } catch {
-            let message = "无法读取输入源选择：\(error)"
-            if lastError != message { print(message); lastError = message }
+            unavailable("无法读取输入源选择：\(error)")
             return
         }
         let identities = Dictionary(uniqueKeysWithValues: current.map { ($0, sourceIdentities(pid: $0)) })
         let considered = InputSelectionPolicy.activePIDs(identities, selected: selected)
         guard considered != previous else { return }
         previous = considered
-        changed(!considered.isEmpty, considered.count)
+        lastError = nil
+        changed(.active(considered.count))
     }
 }

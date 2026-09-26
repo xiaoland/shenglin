@@ -45,7 +45,7 @@ private struct ControlPanel: View {
             }
 
             HStack(spacing: 8) {
-                Circle().fill(model.connection == "iPad 已连接" ? .green : .orange)
+                Circle().fill(model.isConnected ? .green : .orange)
                     .frame(width: 8, height: 8)
                 Text(model.connection).font(.subheadline)
                 Spacer()
@@ -99,6 +99,10 @@ private struct ControlPanel: View {
                 .font(.headline)
             Text("已选应用录音进程：\(model.inputCount) 个。未选中的应用不会改变 iPad 音量。")
                 .font(.caption).foregroundStyle(.secondary)
+            if let inputError = model.inputError {
+                Text("输入状态未知，已停止降音量请求：\(inputError)")
+                    .font(.caption).foregroundStyle(.red)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {

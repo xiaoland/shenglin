@@ -118,6 +118,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
+        guard !stopped else { return }
         guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == pairServiceID }) else {
             fail("iPad 尚未发布新版配对服务")
             return
@@ -126,6 +127,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        guard !stopped else { return }
         guard error == nil else { fail("无法读取 iPad 配对服务"); return }
         writeCharacteristic = service.characteristics?.first(where: { $0.uuid == writeID })
         responseCharacteristic = service.characteristics?.first(where: { $0.uuid == responseID })
@@ -140,6 +142,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard !stopped else { return }
         guard characteristic.uuid == responseID else { return }
         guard error == nil, characteristic.isNotifying else { fail("无法订阅配对确认"); return }
         responseSubscribed = true
@@ -147,7 +150,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
-        guard error == nil, let data = characteristic.value,
+        guard !stopped, !cancelAfterWrite, error == nil, let data = characteristic.value,
               data.count <= 512, let frame = try? JSONDecoder().decode(PairingFrame.self, from: data) else { return }
         if characteristic.uuid == infoID {
             guard frame.version == 2, frame.kind == .info else { fail("iPad 配对信息无效"); return }
@@ -223,6 +226,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
+        guard !stopped else { return }
         guard characteristic.uuid == writeID else { return }
         if cancelAfterWrite { stop(); return }
         guard error == nil else { fail("iPad 拒绝了配对步骤，请重新开始"); return }

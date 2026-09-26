@@ -13,6 +13,7 @@ struct ControlStatus: Codable {
     let paired: Bool
     let enabled: Bool
     let inputCount: Int
+    let inputError: String?
     let lastAction: String
     let lastAckSequence: UInt64?
     let target: Double?

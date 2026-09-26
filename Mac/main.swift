@@ -109,10 +109,10 @@ guard let runLock = RunLock() else {
 }
 
 let client = BLEClient(key: key)
-let input = InputActivity { active, count in
-    print("\(Date().timeIntervalSince1970) INPUT active=\(active) count=\(count)")
+let input = InputActivity { observation in
+    print("\(Date().timeIntervalSince1970) INPUT active=\(observation.needsQuiet) count=\(observation.count) error=\(observation.error ?? "-")")
     fflush(stdout)
-    client.setDesired(active)
+    client.setDesired(observation.needsQuiet)
 }
 input.poll() // Synchronize a recording that started before this process.
 Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in input.poll() }

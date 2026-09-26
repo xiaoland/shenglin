@@ -4,11 +4,11 @@ import ServiceManagement
 import UniformTypeIdentifiers
 
 @MainActor final class AppModel: ObservableObject {
-    @Published private(set) var connection = "正在启动"
+    @Published private(set) var connectionState = BLEConnectionState.message("正在启动")
     @Published private(set) var lastAction = "尚无音量操作"
     @Published private(set) var lastAckSequence: UInt64?
     @Published private(set) var sources = [SourceCandidate]()
-    @Published private(set) var inputCount = 0
+    @Published private(set) var inputState = InputObservation.active(0)
     @Published private(set) var paired = false
     @Published private(set) var targetKnown = false
     @Published private(set) var loginEnabled = false
@@ -35,18 +35,26 @@ import UniformTypeIdentifiers
     private var timer: Timer?
     private var started = false
     private var targetEditing = false
+    private var clientGeneration = 0
+    private var pairingGeneration = 0
+    private var credentialLoadGeneration = 0
+
+    var connection: String { connectionState.text }
+    var isConnected: Bool { connectionState.isReady }
+    var inputCount: Int { inputState.count }
+    var inputError: String? { inputState.error }
 
     var iconName: String {
         if runLock == nil || !paired { return "exclamationmark.triangle.fill" }
         if !enabled { return "waveform.slash" }
-        if connection != "iPad 已连接" { return "exclamationmark.circle" }
+        if !isConnected { return "exclamationmark.circle" }
         return inputCount > 0 ? "waveform.circle.fill" : "waveform"
     }
 
     init() {
         enabled = preferences.object(forKey: "coordinationEnabled") as? Bool ?? true
         loginEnabled = SMAppService.mainApp.status == .enabled
-        if runLock == nil { connection = "另一个 Nearby Audio 控制程序正在运行" }
+        if runLock == nil { connectionState = .message("另一个 Nearby Audio 控制程序正在运行") }
         Task { @MainActor [weak self] in self?.start() }
     }
 
@@ -59,11 +67,11 @@ import UniformTypeIdentifiers
             }
         } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
-        input = InputActivity { [weak self] active, count in
+        input = InputActivity { [weak self] observation in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.inputCount = count
-                self.client?.setDesired(self.enabled && active)
+                self.inputState = observation
+                self.client?.setDesired(self.enabled && observation.needsQuiet)
             }
         }
         input?.poll()
@@ -73,7 +81,8 @@ import UniformTypeIdentifiers
                 self?.expirePendingPairing()
             }
         }
-        connection = "正在读取本机配对信息"
+        connectionState = .message("正在读取本机配对信息")
+        let generation = credentialLoadGeneration
         Task.detached { [weak self] in
             do {
                 let key = try MacCredentials.read("pairingKey")
@@ -81,14 +90,18 @@ import UniformTypeIdentifiers
                 var pendingError: String?
                 do { pending = try MacCredentials.pendingPairing() }
                 catch { pendingError = "无法读取待激活配对：\(error.localizedDescription)" }
-                await self?.loadedKeys(key, pending: pending, errorMessage: pendingError)
+                await self?.loadedKeys(key, pending: pending, errorMessage: pendingError, generation: generation)
             } catch {
-                await self?.startupFailed(error.localizedDescription)
+                await self?.startupFailed(error.localizedDescription, generation: generation)
             }
         }
     }
 
-    private func loadedKeys(_ key: Data?, pending: (key: Data, expiresAt: Date)?, errorMessage: String?) {
+    private func loadedKeys(_ key: Data?, pending: (key: Data, expiresAt: Date)?, errorMessage: String?, generation: Int) {
+        if generation != credentialLoadGeneration {
+            if currentKey == nil { currentKey = key }
+            return
+        }
         currentKey = key
         if let pending {
             pendingKey = pending.key
@@ -100,30 +113,39 @@ import UniformTypeIdentifiers
         if let errorMessage { self.errorMessage = errorMessage }
     }
 
-    private func startupFailed(_ message: String) {
-        connection = "无法读取配对信息"
+    private func startupFailed(_ message: String, generation: Int) {
+        guard generation == credentialLoadGeneration else { return }
+        connectionState = .message("无法读取配对信息")
         errorMessage = message
     }
 
     private func useKey(_ key: Data?) {
+        clientGeneration += 1
+        let generation = clientGeneration
         client?.stop()
         client = nil
         guard let key, key.count == 32 else {
             paired = false
-            connection = "尚未配对"
+            connectionState = .message("尚未配对")
             showPairing = true
             return
         }
         paired = true
         showPairing = false
         errorMessage = ""
-        connection = "正在连接 iPad"
+        connectionState = .message("正在连接 iPad")
         client = BLEClient(key: key, onStatus: { [weak self] status in
-            Task { @MainActor [weak self] in self?.connection = status }
+            Task { @MainActor [weak self] in
+                guard let self, self.clientGeneration == generation else { return }
+                self.connectionState = status
+            }
         }, onAck: { [weak self] ack in
-            Task { @MainActor [weak self] in self?.accept(ack, key: key) }
+            Task { @MainActor [weak self] in
+                guard let self, self.clientGeneration == generation else { return }
+                self.accept(ack, key: key)
+            }
         })
-        client?.setDesired(enabled && inputCount > 0)
+        client?.setDesired(enabled && inputState.needsQuiet)
     }
 
     private func accept(_ ack: ControlAck, key: Data) {
@@ -157,7 +179,7 @@ import UniformTypeIdentifiers
     func setEnabled(_ value: Bool) {
         enabled = value
         preferences.set(value, forKey: "coordinationEnabled")
-        client?.setDesired(value && inputCount > 0)
+        client?.setDesired(value && inputState.needsQuiet)
     }
 
     func refreshSources() {
@@ -207,11 +229,15 @@ import UniformTypeIdentifiers
             pendingKey = nil
             pendingExpiresAt = nil
         }
+        credentialLoadGeneration += 1
+        pairingGeneration += 1
+        let generation = pairingGeneration
         pairClient?.stop()
+        clientGeneration += 1
         client?.setDesired(false)
         client?.stop()
         client = nil
-        connection = "正在配对"
+        connectionState = .message("正在配对")
         showPairing = true
         nearbyPads = []
         pairingCodeInput = ""
@@ -221,14 +247,18 @@ import UniformTypeIdentifiers
         pairingStatus = "正在查找附近的 iPad"
         errorMessage = ""
         pairClient = PairClient(onDevices: { [weak self] devices in
-            self?.nearbyPads = devices
+            guard let self, self.pairingGeneration == generation else { return }
+            self.nearbyPads = devices
         }, onStatus: { [weak self] status in
-            self?.pairingStatus = status
+            guard let self, self.pairingGeneration == generation else { return }
+            self.pairingStatus = status
         }, onNeedCode: { [weak self] name in
-            self?.pairingPadName = name
-            self?.pairingAwaitingCode = true
+            guard let self, self.pairingGeneration == generation else { return }
+            self.pairingPadName = name
+            self.pairingAwaitingCode = true
         }, onComplete: { [weak self] key in
-            guard let self else { return }
+            guard let self, self.pairingGeneration == generation else { return }
+            self.pairingGeneration += 1
             self.pairClient = nil
             self.pairingActive = false
             self.pairingCodeInput = ""
@@ -244,7 +274,8 @@ import UniformTypeIdentifiers
                 self.errorMessage = "无法保存新配对：\(error.localizedDescription)"
             }
         }, onFailure: { [weak self] message in
-            guard let self else { return }
+            guard let self, self.pairingGeneration == generation else { return }
+            self.pairingGeneration += 1
             self.pairClient = nil
             self.pairingActive = false
             self.pairingStatus = message
@@ -273,6 +304,7 @@ import UniformTypeIdentifiers
     }
 
     func cancelPairing() {
+        pairingGeneration += 1
         pairClient?.reject()
         pairClient = nil
         pairingActive = false
@@ -284,7 +316,7 @@ import UniformTypeIdentifiers
 
     private func restorePreviousPairing() {
         if let currentKey { useKey(currentKey) }
-        else { paired = false; connection = "尚未配对" }
+        else { paired = false; connectionState = .message("尚未配对") }
     }
 
     private func expirePendingPairing() {
@@ -299,6 +331,7 @@ import UniformTypeIdentifiers
 
     private func controlStatus() -> ControlStatus {
         ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
+                      inputError: inputError,
                       lastAction: lastAction, lastAckSequence: lastAckSequence,
                       target: targetKnown ? target : nil,
                       loginEnabled: loginEnabled, pairingActive: pairingActive,
@@ -357,9 +390,11 @@ import UniformTypeIdentifiers
     }
 
     func quit() {
+        pairingGeneration += 1
         pairClient?.stop()
         client?.setDesired(false)
-        connection = "正在恢复音量并退出"
+        clientGeneration += 1
+        connectionState = .message("正在恢复音量并退出")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.client?.stop()
             NSApp.terminate(nil)
