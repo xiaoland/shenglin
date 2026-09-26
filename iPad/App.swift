@@ -33,7 +33,7 @@ struct SystemVolumeView: UIViewRepresentable {
                 }
                 Section("Mac 配对") {
                     Text(server.pairingPendingActivation ? "新配对已验证，等待 Mac 连接。"
-                         : server.isPaired ? "已有 Mac 配对。新配对成功连接后会替换旧 Mac。" : "尚未配对 Mac。")
+                         : server.isPaired ? "已配对 \(server.pairedCount) 台 Mac。新增配对不会撤销已有设备。" : "尚未配对 Mac。")
                     Text(server.pairingStatus).font(.footnote)
                     if let code = server.shortCode {
                         Text(code).font(.system(size: 34, weight: .bold, design: .monospaced))

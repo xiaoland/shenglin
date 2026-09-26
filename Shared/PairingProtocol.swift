@@ -145,8 +145,8 @@ private enum PairingCrypto {
     }
 }
 
-enum PairingCode {
-    static func generate() throws -> String {
+public enum PairingCode {
+    public static func generate() throws -> String {
         var value: UInt32 = 0
         // Rejection sampling keeps all six-digit codes equally likely.
         repeat {

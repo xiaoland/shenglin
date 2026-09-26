@@ -15,6 +15,7 @@ import UIKit
 
     @Published private(set) var status = "正在启动"
     @Published private(set) var isPaired = false
+    @Published private(set) var pairedCount = 0
     @Published private(set) var pairingMode = false
     @Published private(set) var pairingStatus = "配对模式未开启"
     @Published private(set) var shortCode: String?
@@ -23,19 +24,21 @@ import UIKit
     @Published private(set) var enabled = UserDefaults.standard.object(forKey: "listeningEnabled") as? Bool ?? true
     @Published private(set) var spaceMode = SpaceMode(rawValue: UserDefaults.standard.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
     @Published private(set) var bleAuthenticated = false
-    private var authenticatedCentral: UUID?
-    private var lastBLEProofAt: Int64?
+    private struct BLEProof { let key: Data; var at: Int64 }
+    private var bleProofs = [UUID: BLEProof]()
     @Published private(set) var wifiVerified = false
     @Published private(set) var wifiIssue: String?
     @Published private(set) var spaceAllowed = false
-    private var rawSpaceAllowed: Bool { spaceMode.allows(ble: bleAuthenticated, wifi: wifiVerified) }
     var spaceStatus: String {
-        let summary = "蓝牙\(bleAuthenticated ? "已验证" : "未验证") · Wi-Fi 局域网\(wifiVerified ? "已认证互通" : "未验证") · \(!enabled ? "已暂停" : rawSpaceAllowed ? "允许协同" : spaceAllowed ? "短断连宽限" : "等待空间条件")"
+        let summary = "蓝牙已验证 \(bleProofs.count) 台 · Wi-Fi 局域网\(wifiVerified ? "已认证互通" : "未验证") · \(!enabled ? "已暂停" : "符合空间条件 \(allowedSources.count) 台")"
         return wifiIssue.map { "\(summary) · Wi-Fi 错误：\($0)" } ?? summary
     }
     private var manager: CBPeripheralManager?
-    private var wifiPeer: WiFiPeer?
-    private var spaceGate = SpaceGate()
+    private var wifiPeers = [String: WiFiPeer]()
+    private var wifiVerifiedSources = Set<String>()
+    private var wifiIssues = [String: String]()
+    private var spaceGates = [String: SpaceGate]()
+    private var allowedSources = Set<String>()
     private var ackCharacteristic: CBMutableCharacteristic?
     private var peerStateCharacteristic: CBMutableCharacteristic?
     private var pairResponseCharacteristic: CBMutableCharacteristic?
@@ -43,7 +46,8 @@ import UIKit
     private var controlRegistered = false
     private var pairRegistered = false
     private var subscribed = Set<UUID>()
-    private var key: Data?
+    private var pairedKeys = [Data]()
+    private var lastAckByCentral = [UUID: Data]()
     private var pendingKey: Data?
     var pairingPendingActivation: Bool { pendingKey != nil }
     private var pairing: PairingResponder?
@@ -52,14 +56,12 @@ import UIKit
     private var pairAttempts = 0
     private var pairingTimer: Timer?
     private var volume: VolumeCoordinator?
-    private var lastSequence = UInt64(UserDefaults.standard.integer(forKey: "lastSequence"))
-    private var lastAckData = UserDefaults.standard.data(forKey: "lastAck")
+    private var legacySequences = UserDefaults.standard.dictionary(forKey: "legacySequences") as? [String: String] ?? [:]
     private var peerLedger = (UserDefaults.standard.data(forKey: "peerDemandLedger")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
     private var peerProtocolActive = UserDefaults.standard.bool(forKey: "peerProtocolActive")
     private var localQuiet = false
     private var localRevision = UserDefaults.standard.string(forKey: "localPeerRevision").flatMap(UInt64.init) ?? 0
-    private var localStateData: Data?
     private var peerTimer: Timer?
 
     private func note(_ text: String) {
@@ -76,10 +78,12 @@ import UIKit
     override init() {
         super.init()
         do {
-            key = try PairingStore.current()
+            let peers = try PairingStore.all()
+            pairedKeys = peers.map(\.key)
+            pairedCount = pairedKeys.count
             do { pendingKey = try PairingStore.pending() }
             catch { pairingStatus = "待激活配对不可用：\(error.localizedDescription)" }
-            isPaired = key != nil
+            isPaired = !pairedKeys.isEmpty
             volume = VolumeCoordinator()
             status = volume == nil ? "当前系统的媒体音量接口不兼容" : "等待蓝牙"
             note("BLUETOOTH_AUTHORIZATION \(CBPeripheralManager.authorization.rawValue)")
@@ -101,8 +105,9 @@ import UIKit
     func setEnabled(_ value: Bool) {
         enabled = value
         UserDefaults.standard.set(value, forKey: "listeningEnabled")
-        wifiPeer?.sendCurrentState()
+        publishWiFiState()
         if value {
+            refreshSpace()
             guard manager?.state == .poweredOn else { return }
             publishService()
         } else {
@@ -116,9 +121,7 @@ import UIKit
             controlRegistered = false
             pairRegistered = false
             subscribed.removeAll()
-            bleAuthenticated = false
-            authenticatedCentral = nil
-            lastBLEProofAt = nil
+            bleProofs.removeAll()
             refreshSpace()
             let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
             persistPeerLedger()
@@ -131,38 +134,49 @@ import UIKit
     func setSpaceMode(_ mode: SpaceMode) {
         spaceMode = mode
         UserDefaults.standard.set(mode.rawValue, forKey: "spaceMode")
-        spaceGate.reset()
+        spaceGates.removeAll()
         refreshSpace()
         publishLocalState()
-        wifiPeer?.sendCurrentState()
+        publishWiFiState()
     }
 
     private func refreshSpace() {
         let now = Int64(Date().timeIntervalSince1970)
-        if let lastBLEProofAt, now >= lastBLEProofAt + PeerTiming.leaseSeconds {
-            bleAuthenticated = false
-            authenticatedCentral = nil
-            self.lastBLEProofAt = nil
+        for central in Array(bleProofs.keys) where now >= (bleProofs[central]?.at ?? 0) + PeerTiming.leaseSeconds {
+            bleProofs.removeValue(forKey: central)
         }
-        let allowed = spaceGate.allows(spaceMode, ble: bleAuthenticated, wifi: wifiVerified, at: now)
-        guard allowed != spaceAllowed else { return }
-        spaceAllowed = allowed
-        if !allowed {
-            let change = peerLedger.stopResponding(at: now)
-            persistPeerLedger()
+        bleAuthenticated = !bleProofs.isEmpty
+        var next = Set<String>()
+        for peerKey in pairedKeys where enabled {
+            let source = sourceID(for: peerKey)
+            var gate = spaceGates[source] ?? SpaceGate()
+            let ble = bleProofs.values.contains { $0.key == peerKey }
+            let wifi = wifiVerifiedSources.contains(source)
+            if gate.allows(spaceMode, ble: ble, wifi: wifi, at: now) { next.insert(source) }
+            spaceGates[source] = gate
+        }
+        let removed = allowedSources.subtracting(next)
+        let changed = next != allowedSources
+        allowedSources = next
+        spaceAllowed = !next.isEmpty
+        for source in removed {
+            let change = peerLedger.stopResponding(to: source, at: now)
             if change.ended {
                 if peerProtocolActive { _ = volume?.release(manual: change.manualAtEnd) }
                 else { _ = volume?.apply(quiet: false, target: 0) }
             }
         }
-        publishLocalState()
-        wifiPeer?.sendCurrentState()
+        if !removed.isEmpty { persistPeerLedger() }
+        if changed {
+            publishLocalState()
+            publishWiFiState()
+        }
     }
 
-    private func recordBLEProof(from central: UUID, at now: Int64) {
-        authenticatedCentral = central
-        lastBLEProofAt = now
-        bleAuthenticated = true
+    private func sourceID(for key: Data) -> String { Authentication.sign("paired-peer-id", key: key) }
+
+    private func recordBLEProof(from central: UUID, key: Data, at now: Int64) {
+        bleProofs[central] = BLEProof(key: key, at: now)
         refreshSpace()
     }
 
@@ -223,7 +237,7 @@ import UIKit
     private func finishPairing(_ frame: PairingFrame) {
         guard let key = pairing?.confirmedKey, let central = pairingCentral else { return }
         do {
-            try PairingStore.stage(key)
+            try PairingStore.stage(key, name: peerName)
             pendingKey = key
             pairingStatus = "验证码已通过，等待新 Mac 使用新密钥连接"
             pairingMode = false
@@ -283,9 +297,7 @@ import UIKit
         note("BLUETOOTH_STATE \(peripheral.state.rawValue)")
         if peripheral.state == .poweredOn { publishService() }
         else {
-            bleAuthenticated = false
-            authenticatedCentral = nil
-            lastBLEProofAt = nil
+            bleProofs.removeAll()
             refreshSpace()
             if pairingMode { cancelPairing(reason: "蓝牙已关闭，配对中止") }
         }
@@ -330,18 +342,19 @@ import UIKit
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
-        if request.central.identifier == authenticatedCentral,
+        let central = request.central.identifier
+        if let proof = bleProofs[central],
            request.characteristic.uuid == Self.ackID || request.characteristic.uuid == Self.peerStateID {
-            recordBLEProof(from: request.central.identifier,
+            recordBLEProof(from: central, key: proof.key,
                            at: Int64(Date().timeIntervalSince1970))
         }
         let data: Data
         switch request.characteristic.uuid {
         case Self.ackID:
-            data = lastAckData ?? Data()
+            data = lastAckByCentral[central] ?? Data()
         case Self.peerStateID:
             expirePeerRequests()
-            data = currentLocalState() ?? Data()
+            data = bleProofs[central].flatMap { currentLocalState(key: $0.key) } ?? Data()
         case Self.pairInfoID:
             data = (try? JSONEncoder().encode(PairingFrame(kind: .info, session: Data(),
                 name: deviceName, pairingMode: pairingMode && (pairingDeadline.map { $0 > Date() } ?? false)))) ?? Data()
@@ -386,59 +399,61 @@ import UIKit
             if let pendingKey, command.valid(key: pendingKey, now: now) {
                 do {
                     // Activate on the first authenticated command; the Mac waits for our signed ACK.
-                    key = try PairingStore.promotePending()
+                    _ = try PairingStore.promotePending()
                     self.pendingKey = nil
+                    pairedKeys = try PairingStore.all().map(\.key)
+                    pairedCount = pairedKeys.count
                     startWiFi()
-                    lastSequence = 0
-                    lastAckData = nil
-                    peerLedger = PeerDemandLedger()
-                    persistPeerLedger()
-                    peerProtocolActive = false
-                    UserDefaults.standard.set(false, forKey: "peerProtocolActive")
                     isPaired = true
-                    pairingStatus = "配对完成，新 Mac 已连接并替换旧配对"
+                    pairingStatus = "配对完成，已添加一台 Mac"
                     authenticatedKey = pendingKey
-                    UserDefaults.standard.set(0, forKey: "lastSequence")
-                    UserDefaults.standard.removeObject(forKey: "lastAck")
                 } catch {
                     peripheral.respond(to: request, withResult: .unlikelyError)
                     pairingStatus = "无法激活新配对：\(error.localizedDescription)"
                     continue
                 }
-            } else if let key, command.valid(key: key, now: now) {
-                authenticatedKey = key
+            } else if let matched = pairedKeys.first(where: { command.valid(key: $0, now: now) }) {
+                authenticatedKey = matched
             } else {
                 peripheral.respond(to: request, withResult: .unlikelyError)
                 continue
             }
-            recordBLEProof(from: request.central.identifier, at: now)
-            if command.sequence < lastSequence {
+            let central = request.central.identifier
+            recordBLEProof(from: central, key: authenticatedKey, at: now)
+            let source = sourceID(for: authenticatedKey)
+            let previous = UInt64(legacySequences[source] ?? "") ??
+                (pairedKeys.count == 1 ? UInt64(UserDefaults.standard.integer(forKey: "lastSequence")) : 0)
+            if command.sequence < previous {
                 peripheral.respond(to: request, withResult: .unlikelyError)
                 continue
             }
-            if command.sequence == lastSequence {
+            if command.sequence == previous {
+                let target = Float(UserDefaults.standard.double(forKey: "targetVolume"))
+                let duplicate = ControlAck(sequence: command.sequence, quiet: command.quiet,
+                    result: "duplicate", volumeMilli: Int(((volume?.current() ?? 0) * 1000).rounded()),
+                    targetMilli: Int((target * 1000).rounded()), key: authenticatedKey)
+                lastAckByCentral[central] = try? JSONEncoder().encode(duplicate)
                 peripheral.respond(to: request, withResult: .success)
-                publishAck()
+                publishAck(to: central)
                 continue
             }
             if let targetMilli = command.targetMilli {
                 UserDefaults.standard.set(Double(targetMilli) / 1000, forKey: "targetVolume")
             }
             let target = Float(UserDefaults.standard.double(forKey: "targetVolume"))
-            let result = command.quiet && !spaceAllowed ? ("outsideSpace", -1)
+            let result = command.quiet && !allowedSources.contains(source) ? ("outsideSpace", -1)
                          : volume?.apply(quiet: command.quiet, target: target) ?? ("unsupported", -1)
             let ack = ControlAck(sequence: command.sequence, quiet: command.quiet,
                                  result: result.0, volumeMilli: result.1,
                                  targetMilli: Int((target * 1000).rounded()), key: authenticatedKey)
-            lastSequence = command.sequence
-            lastAckData = try? JSONEncoder().encode(ack)
-            UserDefaults.standard.set(Int64(bitPattern: lastSequence), forKey: "lastSequence")
-            UserDefaults.standard.set(lastAckData, forKey: "lastAck")
+            legacySequences[source] = String(command.sequence)
+            lastAckByCentral[central] = try? JSONEncoder().encode(ack)
+            UserDefaults.standard.set(legacySequences, forKey: "legacySequences")
             UserDefaults.standard.synchronize()
             lastAction = "\(command.quiet ? "降低" : "恢复")：\(result.0)（\(result.1)‰）"
             note("APPLIED seq=\(command.sequence) quiet=\(command.quiet) result=\(result.0) volumeMilli=\(result.1)")
             peripheral.respond(to: request, withResult: .success)
-            publishAck()
+            publishAck(to: central)
         }
     }
 
@@ -473,52 +488,47 @@ import UIKit
         let authenticatedKey: Data
         if let pendingKey, update.valid(key: pendingKey, expectedOrigin: "mac", now: now) {
             do {
-                _ = volume?.apply(quiet: false, target: 0)
-                key = try PairingStore.promotePending()
+                _ = try PairingStore.promotePending()
                 self.pendingKey = nil
+                pairedKeys = try PairingStore.all().map(\.key)
+                pairedCount = pairedKeys.count
                 startWiFi()
-                peerLedger = PeerDemandLedger()
-                persistPeerLedger()
-                lastSequence = 0
-                lastAckData = nil
-                UserDefaults.standard.removeObject(forKey: "lastAck")
                 isPaired = true
-                pairingStatus = "配对完成，新 Mac 已连接并替换旧配对"
+                pairingStatus = "配对完成，已添加一台 Mac"
                 authenticatedKey = pendingKey
-                UserDefaults.standard.set(0, forKey: "lastSequence")
             } catch {
                 peripheral.respond(to: request, withResult: .unlikelyError)
                 pairingStatus = "无法激活新配对：\(error.localizedDescription)"
                 return
             }
-        } else if let key, update.valid(key: key, expectedOrigin: "mac", now: now) {
-            authenticatedKey = key
+        } else if let matched = pairedKeys.first(where: { update.valid(key: $0, expectedOrigin: "mac", now: now) }) {
+            authenticatedKey = matched
         } else {
             peripheral.respond(to: request, withResult: .unlikelyError)
             return
         }
-        recordBLEProof(from: request.central.identifier, at: now)
+        let central = request.central.identifier
+        recordBLEProof(from: central, key: authenticatedKey, at: now)
         let ack = processPeerUpdate(update, key: authenticatedKey, now: now)
-        lastAckData = try? JSONEncoder().encode(ack)
-        UserDefaults.standard.set(lastAckData, forKey: "lastAck")
+        lastAckByCentral[central] = try? JSONEncoder().encode(ack)
         lastAction = "对等请求：\(ack.result)"
         peripheral.respond(to: request, withResult: .success)
-        publishAck()
+        publishAck(to: central)
         publishLocalState()
     }
 
     private func processPeerUpdate(_ update: PeerQuietUpdate, key: Data, now: Int64) -> PeerStateAck {
         let currentTarget = Float(UserDefaults.standard.double(forKey: "targetVolume"))
+        let source = sourceID(for: key)
         guard enabled else {
             return PeerStateAck(origin: "ipad", revision: update.revision, quiet: update.quiet,
                                 result: "paused", targetMilli: Int((currentTarget * 1000).rounded()), key: key)
         }
-        guard spaceAllowed else {
+        guard allowedSources.contains(source) else {
             return PeerStateAck(origin: "ipad", revision: update.revision, quiet: update.quiet,
                                 result: "outsideSpace", targetMilli: Int((currentTarget * 1000).rounded()), key: key)
         }
         observeManualTakeover(at: now)
-        let source = Authentication.sign("paired-peer-id", key: key)
         let change = peerLedger.accept(update, from: source, expectedOrigin: "mac",
                                        key: key, at: now)
         peerProtocolActive = true
@@ -542,11 +552,9 @@ import UIKit
                             result: result.0, targetMilli: Int((target * 1000).rounded()), key: key)
     }
 
-    private func currentLocalState() -> Data? {
-        guard let key else { return nil }
+    private func currentLocalState(key: Data) -> Data? {
         let update = makeLocalState(key: key)
-        localStateData = try? JSONEncoder().encode(update)
-        return localStateData
+        return try? JSONEncoder().encode(update)
     }
 
     private func makeLocalState(key: Data) -> PeerQuietUpdate {
@@ -555,50 +563,61 @@ import UIKit
         localRevision = max(clock, localRevision &+ 1)
         UserDefaults.standard.set(String(localRevision), forKey: "localPeerRevision")
         return PeerQuietUpdate(origin: "ipad", revision: localRevision,
-                               quiet: localQuiet && enabled && spaceAllowed,
+                               quiet: localQuiet && enabled && allowedSources.contains(sourceID(for: key)),
                                validUntil: now + PeerTiming.leaseSeconds, key: key)
     }
 
     private func startWiFi() {
-        wifiPeer?.stop()
-        wifiPeer = nil
-        wifiVerified = false
-        wifiIssue = nil
-        refreshSpace()
-        guard let key else { return }
-        wifiPeer = WiFiPeer(role: .ipad, key: key, localUpdate: { [unowned self] in
-            self.makeLocalState(key: key)
-        }, receiveUpdate: { [unowned self] update in
-            guard self.key == key else { return ("stalePairing", nil) }
-            let ack = self.processPeerUpdate(update, key: key,
-                                             now: Int64(Date().timeIntervalSince1970))
-            self.lastAction = "Wi-Fi 对等请求：\(ack.result)"
-            return (ack.result, ack.targetMilli)
-        }, verifiedChanged: { [unowned self] verified in
-            self.wifiVerified = verified
-            self.refreshSpace()
-            if verified { self.wifiPeer?.sendCurrentState() }
-        }, onIssue: { [unowned self] issue in
-            self.wifiIssue = issue
-        })
-        wifiPeer?.start()
+        for peerKey in pairedKeys {
+            let source = sourceID(for: peerKey)
+            guard wifiPeers[source] == nil else { continue }
+            let peer = WiFiPeer(localOrigin: "ipad", remoteOrigin: "mac", listens: false,
+                                key: peerKey, localUpdate: { [unowned self] in
+                self.makeLocalState(key: peerKey)
+            }, receiveUpdate: { [unowned self] update in
+                guard self.pairedKeys.contains(peerKey) else { return ("stalePairing", nil) }
+                let ack = self.processPeerUpdate(update, key: peerKey,
+                                                 now: Int64(Date().timeIntervalSince1970))
+                self.lastAction = "Wi-Fi 对等请求：\(ack.result)"
+                return (ack.result, ack.targetMilli)
+            }, verifiedChanged: { [unowned self] verified in
+                if verified { self.wifiVerifiedSources.insert(source) }
+                else { self.wifiVerifiedSources.remove(source) }
+                self.wifiVerified = !self.wifiVerifiedSources.isEmpty
+                self.refreshSpace()
+                if verified { self.wifiPeers[source]?.sendCurrentState() }
+            }, onIssue: { [unowned self] issue in
+                self.wifiIssues[source] = issue
+                self.wifiIssue = self.wifiIssues.values.sorted().first
+            })
+            wifiPeers[source] = peer
+            peer.start()
+        }
+    }
+
+    private func publishWiFiState() {
+        for peer in wifiPeers.values { peer.sendCurrentState() }
     }
 
     private func publishLocalState() {
-        guard let manager, let characteristic = peerStateCharacteristic,
-              let data = currentLocalState() else { return }
-        _ = manager.updateValue(data, for: characteristic, onSubscribedCentrals: nil)
+        guard let manager, let characteristic = peerStateCharacteristic else { return }
+        for central in characteristic.subscribedCentrals ?? [] {
+            guard let key = bleProofs[central.identifier]?.key,
+                  let data = currentLocalState(key: key) else { continue }
+            _ = manager.updateValue(data, for: characteristic, onSubscribedCentrals: [central])
+        }
     }
 
     func setLocalQuiet(_ quiet: Bool) {
         guard localQuiet != quiet else { return }
         localQuiet = quiet
         publishLocalState()
-        wifiPeer?.sendCurrentState()
+        publishWiFiState()
     }
 
     private func receivePeerAck(_ request: CBATTRequest, peripheral: CBPeripheralManager) {
-        guard let key, let data = request.value, data.count <= 512,
+        guard let key = bleProofs[request.central.identifier]?.key,
+              let data = request.value, data.count <= 512,
               let ack = try? JSONDecoder().decode(PeerStateAck.self, from: data),
               ack.valid(key: key, expectedOrigin: "mac") else {
             peripheral.respond(to: request, withResult: .unlikelyError)
@@ -666,9 +685,10 @@ import UIKit
         else { pairingStatus = "\(reason)；还可尝试 \(3 - pairAttempts) 次" }
     }
 
-    private func publishAck() {
-        guard let manager, let ackCharacteristic, let lastAckData else { return }
-        _ = manager.updateValue(lastAckData, for: ackCharacteristic, onSubscribedCentrals: nil)
+    private func publishAck(to id: UUID) {
+        guard let manager, let ackCharacteristic, let data = lastAckByCentral[id],
+              let central = ackCharacteristic.subscribedCentrals?.first(where: { $0.identifier == id }) else { return }
+        _ = manager.updateValue(data, for: ackCharacteristic, onSubscribedCentrals: [central])
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
@@ -688,15 +708,13 @@ import UIKit
         }
         guard characteristic.uuid == Self.ackID else { return }
         subscribed.remove(central.identifier)
-        if authenticatedCentral == central.identifier {
-            bleAuthenticated = false
-            authenticatedCentral = nil
-            lastBLEProofAt = nil
+        lastAckByCentral.removeValue(forKey: central.identifier)
+        if bleProofs.removeValue(forKey: central.identifier) != nil {
             refreshSpace()
         }
         if subscribed.isEmpty {
             publishLocalState()
-            wifiPeer?.sendCurrentState()
+            publishWiFiState()
             if peerProtocolActive {
                 expirePeerRequests()
             } else {

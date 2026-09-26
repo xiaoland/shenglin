@@ -30,6 +30,33 @@ final class ProtocolTests: XCTestCase {
         XCTAssertFalse(WiFiProof.valid(proof, role: "ipad", nonce: nonce, key: Data(repeating: 6, count: 32)))
     }
 
+    func testDirectMacPeersKeepKeysAcksAndDemandIndependent() {
+        let keyA = Data(repeating: 21, count: 32)
+        let keyB = Data(repeating: 22, count: 32)
+        let nonce = Data(repeating: 23, count: 16).base64EncodedString()
+        let proofA = WiFiProof.sign(role: "mac-initiator", nonce: nonce, key: keyA)
+        XCTAssertTrue(WiFiProof.valid(proofA, role: "mac-initiator", nonce: nonce, key: keyA))
+        XCTAssertFalse(WiFiProof.valid(proofA, role: "mac-initiator", nonce: nonce, key: keyB))
+        XCTAssertFalse(WiFiProof.valid(proofA, role: "mac-responder", nonce: nonce, key: keyA))
+
+        let a = PeerQuietUpdate(origin: "mac-initiator", revision: 1, quiet: true,
+                                validUntil: 120, key: keyA)
+        let b = PeerQuietUpdate(origin: "mac-responder", revision: 1, quiet: true,
+                                validUntil: 120, key: keyB)
+        var ledger = PeerDemandLedger()
+        XCTAssertTrue(ledger.accept(a, from: "mac-a", expectedOrigin: "mac-initiator",
+                                    key: keyA, at: 100).started)
+        XCTAssertEqual(ledger.accept(b, from: "mac-b", expectedOrigin: "mac-responder",
+                                     key: keyB, at: 100).activeCount, 2)
+        XCTAssertFalse(ledger.stopResponding(to: "mac-a", at: 101).ended)
+        XCTAssertEqual(ledger.activeCount(at: 101), 1)
+        let ack = PeerStateAck(origin: "mac-responder", revision: 1, quiet: true,
+                               result: "alreadyQuiet", key: keyA)
+        XCTAssertTrue(ack.valid(key: keyA, expectedOrigin: "mac-responder"))
+        XCTAssertFalse(ack.valid(key: keyB, expectedOrigin: "mac-responder"))
+        XCTAssertTrue(ledger.stopResponding(to: "mac-b", at: 102).ended)
+    }
+
     func testPeerRequestsRemainIndependentAcrossRetriesExpiryAndManualTakeover() throws {
         let key = Data(repeating: 9, count: 32)
         func update(_ revision: UInt64, _ quiet: Bool, _ until: Int64) -> PeerQuietUpdate {
@@ -74,7 +101,9 @@ final class ProtocolTests: XCTestCase {
                                     expectedOrigin: "ipad", key: key, at: 140)
         }
         XCTAssertEqual(threeSources.activeCount(at: 140), 3)
-        for source in ["mac-a", "mac-b"] {
+        XCTAssertFalse(threeSources.stopResponding(to: "mac-a", at: 141).ended)
+        XCTAssertEqual(threeSources.activeCount(at: 141), 2)
+        for source in ["mac-b"] {
             XCTAssertFalse(threeSources.accept(update(11, false, 155), from: source,
                                                expectedOrigin: "ipad", key: key, at: 141).ended)
         }

@@ -14,10 +14,8 @@ public enum WiFiProof {
 
 /// One paired Mac/iPad link. Bonjour finds candidates; the pairing key proves identity.
 @MainActor final class WiFiPeer {
-    enum Role: String { case mac, ipad }
-
     private struct Frame: Codable {
-        enum Kind: String, Codable { case challenge, proof, update, ack }
+        enum Kind: String, Codable { case challenge, proof, ready, update, ack }
         let kind: Kind
         var nonce: String? = nil
         var signature: String? = nil
@@ -26,7 +24,10 @@ public enum WiFiProof {
     }
 
     private static let service = "_nearbyaudio._tcp"
-    private let role: Role
+    private let localOrigin: String
+    private let remoteOrigin: String
+    private let listens: Bool
+    private let serviceName: String
     private let key: Data
     private let localUpdate: () -> PeerQuietUpdate
     private let receiveUpdate: (PeerQuietUpdate) -> (String, Int?)
@@ -40,19 +41,25 @@ public enum WiFiProof {
     private var connection: NWConnection?
     private var buffer = Data()
     private var nonce: String?
+    private var remoteProven = false
     private var verified = false
     private var lastAckAt = Date.distantPast
     private var pendingRevisions = Set<UInt64>()
     private var timer: Timer?
     private var stopped = false
 
-    init(role: Role, key: Data, localUpdate: @escaping () -> PeerQuietUpdate,
+    init(localOrigin: String, remoteOrigin: String, listens: Bool, key: Data,
+         localUpdate: @escaping () -> PeerQuietUpdate,
          receiveUpdate: @escaping (PeerQuietUpdate) -> (String, Int?),
          receiveAck: @escaping (PeerStateAck) -> Void = { _ in },
          verifiedChanged: @escaping (Bool) -> Void,
          onIssue: @escaping (String?) -> Void = { _ in }) {
-        self.role = role
+        self.localOrigin = localOrigin
+        self.remoteOrigin = remoteOrigin
+        self.listens = listens
         self.key = key
+        let serviceID = Data(base64Encoded: Authentication.sign("wifi-service", key: key))!.prefix(8)
+        self.serviceName = "Nearby-" + serviceID.map { String(format: "%02x", $0) }.joined()
         self.localUpdate = localUpdate
         self.receiveUpdate = receiveUpdate
         self.receiveAck = receiveAck
@@ -65,10 +72,10 @@ public enum WiFiProof {
         let parameters = NWParameters.tcp
         parameters.requiredInterfaceType = .wifi
         parameters.includePeerToPeer = false
-        if role == .mac {
+        if listens {
             do {
                 let listener = try NWListener(using: parameters)
-                listener.service = NWListener.Service(name: "Nearby Audio", type: Self.service)
+                listener.service = NWListener.Service(name: serviceName, type: Self.service)
                 listener.newConnectionHandler = { [weak self] candidate in
                     Task { @MainActor [weak self] in
                         guard let self, !self.stopped else { candidate.cancel(); return }
@@ -94,7 +101,11 @@ public enum WiFiProof {
             browser.browseResultsChangedHandler = { [weak self] results, _ in
                 Task { @MainActor [weak self] in
                     guard let self, !self.stopped else { return }
-                    self.endpoints = results.map(\.endpoint)
+                    self.endpoints = results.compactMap { result in
+                        guard case .service(let name, _, _, _) = result.endpoint,
+                              name == self.serviceName else { return nil }
+                        return result.endpoint
+                    }
                     self.connectNext()
                 }
             }
@@ -145,7 +156,7 @@ public enum WiFiProof {
     }
 
     private func connectNext() {
-        guard !stopped, role == .ipad, connection == nil, !endpoints.isEmpty else { return }
+        guard !stopped, !listens, connection == nil, !endpoints.isEmpty else { return }
         let endpoint = endpoints[nextEndpoint % endpoints.count]
         nextEndpoint += 1
         let parameters = NWParameters.tcp
@@ -158,6 +169,7 @@ public enum WiFiProof {
         self.connection = connection
         buffer.removeAll()
         nonce = nil
+        remoteProven = false
         pendingRevisions.removeAll()
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self, weak connection] in
             guard let self, let connection, self.connection === connection, !self.verified else { return }
@@ -185,9 +197,10 @@ public enum WiFiProof {
         self.connection = nil
         buffer.removeAll()
         nonce = nil
+        remoteProven = false
         pendingRevisions.removeAll()
         setVerified(false)
-        if role == .ipad && !stopped {
+        if !listens && !stopped {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.connectNext() }
         }
     }
@@ -218,28 +231,31 @@ public enum WiFiProof {
     }
 
     private func handle(_ frame: Frame, on connection: NWConnection) -> Bool {
-        let other: Role = role == .mac ? .ipad : .mac
         switch frame.kind {
         case .challenge:
             guard let nonce = frame.nonce, Data(base64Encoded: nonce)?.count == 16 else { return false }
             send(Frame(kind: .proof, nonce: nonce,
-                       signature: WiFiProof.sign(role: role.rawValue, nonce: nonce, key: key)),
+                       signature: WiFiProof.sign(role: localOrigin, nonce: nonce, key: key)),
                  on: connection)
         case .proof:
             guard let nonce, frame.nonce == nonce, let signature = frame.signature,
-                  WiFiProof.valid(signature, role: other.rawValue, nonce: nonce, key: key) else { return false }
+                  WiFiProof.valid(signature, role: remoteOrigin, nonce: nonce, key: key) else { return false }
             self.nonce = nil
+            remoteProven = true
+            send(Frame(kind: .ready), on: connection)
+        case .ready:
+            guard remoteProven else { return false }
             setVerified(true)
         case .update:
             guard verified, let update = frame.update,
-                  update.valid(key: key, expectedOrigin: other.rawValue,
+                  update.valid(key: key, expectedOrigin: remoteOrigin,
                                now: Int64(Date().timeIntervalSince1970)) else { return false }
             let (result, targetMilli) = receiveUpdate(update)
-            send(Frame(kind: .ack, ack: PeerStateAck(origin: role.rawValue,
+            send(Frame(kind: .ack, ack: PeerStateAck(origin: localOrigin,
                  revision: update.revision, quiet: update.quiet, result: result,
                  targetMilli: targetMilli, key: key)), on: connection)
         case .ack:
-            guard verified, let ack = frame.ack, ack.valid(key: key, expectedOrigin: other.rawValue),
+            guard verified, let ack = frame.ack, ack.valid(key: key, expectedOrigin: remoteOrigin),
                   pendingRevisions.remove(ack.revision) != nil else { return false }
             lastAckAt = Date()
             receiveAck(ack)

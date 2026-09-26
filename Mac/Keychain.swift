@@ -12,6 +12,27 @@ enum MacCredentials {
     private static let service = "local.nearbyaudio.mac"
     private static let pendingAccount = "pendingPairingKey"
     private struct Pending: Codable { let key: Data; let expiresAt: Date }
+    struct MacPeer: Codable {
+        let key: Data
+        let name: String
+        let isInitiator: Bool
+    }
+
+    static func macPeers() throws -> [MacPeer] {
+        guard let data = try read("pairedMacs") else { return [] }
+        let peers = try JSONDecoder().decode([MacPeer].self, from: data)
+        guard peers.allSatisfy({ $0.key.count == 32 }) else { throw PairingError.invalidMessage }
+        return peers
+    }
+
+    static func addMacPeer(key: Data, name: String, isInitiator: Bool) throws {
+        guard key.count == 32 else { throw PairingError.invalidMessage }
+        var peers = try macPeers()
+        if !peers.contains(where: { $0.key == key }) {
+            peers.append(MacPeer(key: key, name: name, isInitiator: isInitiator))
+            try save(JSONEncoder().encode(peers), account: "pairedMacs")
+        }
+    }
 
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,

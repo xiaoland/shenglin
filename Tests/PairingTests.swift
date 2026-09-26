@@ -48,4 +48,18 @@ final class PairingTests: XCTestCase {
             XCTAssertEqual($0 as? PairingError, .wrongCode)
         }
     }
+
+    func testDirectMacHandshakeUsesSeparatePairKeys() throws {
+        func pair(_ initiatorName: String) throws -> Data {
+            let initiator = try PairingInitiator(code: "384620", macName: initiatorName)
+            let responder = try PairingResponder(start: initiator.startFrame, code: "384620",
+                                                 padName: "Desk Mac")
+            let confirmation = try initiator.receiveOffer(responder.offerFrame)
+            let finish = try responder.receiveConfirm(confirmation)
+            let key = try initiator.receiveFinish(finish)
+            XCTAssertEqual(key, responder.confirmedKey)
+            return key
+        }
+        XCTAssertNotEqual(try pair("Travel Mac A"), try pair("Travel Mac B"))
+    }
 }

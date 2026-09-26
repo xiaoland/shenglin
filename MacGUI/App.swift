@@ -49,7 +49,7 @@ private struct ControlPanel: View {
                     .frame(width: 8, height: 8)
                 Text(model.connection).font(.subheadline)
                 Spacer()
-                Button(model.paired ? "更换配对" : "开始配对") { model.beginPairing() }
+                Button(model.paired ? "切换 iPad" : "配对 iPad") { model.beginPairing() }
                     .buttonStyle(.link)
             }
 
@@ -59,7 +59,7 @@ private struct ControlPanel: View {
                     Text("在 iPad App 点按“开始 2 分钟配对”，然后选择下方的 iPad。")
                         .font(.caption).foregroundStyle(.secondary)
                     if model.paired {
-                        Text("新配对生效后，旧 Mac 将无法再控制这台 iPad。")
+                        Text("此 Mac 会切换到新 iPad；原 iPad 上的其他 Mac 配对不受影响。")
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Text(model.pairingStatus).font(.caption)
@@ -93,6 +93,36 @@ private struct ControlPanel: View {
                 .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Mac 直连：已配对 \(model.macPeerCount) 台，已连接 \(model.directMacCount) 台")
+                    .font(.headline)
+                HStack {
+                    Button("显示配对码") { model.offerMacPairing() }
+                    Button("查找另一台 Mac") { model.browseMacPairing() }
+                    if model.macPairCode != nil || model.macPairBrowsing {
+                        Button("取消") { model.cancelMacPairing() }.buttonStyle(.link)
+                    }
+                }
+                if let code = model.macPairCode {
+                    Text(code).font(.title2.monospacedDigit()).textSelection(.enabled)
+                }
+                if model.macPairBrowsing {
+                    ForEach(model.nearbyMacs) { mac in
+                        Button(mac.name) { model.chooseMac(mac.id) }.buttonStyle(.bordered)
+                    }
+                    if model.macPairAwaitingCode {
+                        TextField("另一台 Mac 的 6 位配对码", text: $model.macPairCodeInput)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { model.submitMacPairCode() }
+                        Button("验证并配对") { model.submitMacPairCode() }
+                            .disabled(model.macPairCodeInput.count != 6)
+                    }
+                }
+                if !model.macPairStatus.isEmpty {
+                    Text(model.macPairStatus).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
             Divider()
 
             Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
@@ -103,6 +133,10 @@ private struct ControlPanel: View {
             }
             .pickerStyle(.segmented)
             Text(model.spaceStatus).font(.caption).foregroundStyle(.secondary)
+            if model.macPeerCount > 0 && model.spaceMode == .nearbyAndWiFi {
+                Text("Mac 直连目前只有 Wi-Fi 认证；“蓝牙且 Wi-Fi”不会放行 Mac↔Mac。")
+                    .font(.caption).foregroundStyle(.orange)
+            }
             Text("参与协同的录音进程：\(model.inputCount) 个。默认所有录音应用参与，排除项不参与。")
                 .font(.caption).foregroundStyle(.secondary)
             if let inputError = model.inputError {

@@ -134,6 +134,13 @@ public struct PeerDemandLedger: Codable {
         }
     }
 
+    public mutating func stopResponding(to source: String, at now: Int64) -> QuietChange {
+        change(at: now) { records in
+            records[source]?.validUntil = nil
+            return false
+        }
+    }
+
     private mutating func change(at now: Int64, _ edit: (inout [String: Record]) -> Bool) -> QuietChange {
         let wasActive = records.values.contains { $0.validUntil != nil }
         for source in records.keys where (records[source]?.validUntil ?? 0) <= now {

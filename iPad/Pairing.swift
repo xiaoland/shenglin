@@ -3,8 +3,10 @@ import Security
 
 enum PairingStore {
     private static let currentAccount = "NearbyAudioPairingKey" // Also used by the original version.
+    private static let peersAccount = "NearbyAudioPairedMacs"
     private static let pendingAccount = "NearbyAudioPendingPairingKey"
-    private struct Pending: Codable { let key: Data; let expiresAt: Date }
+    struct PairedMac: Codable { let key: Data; let name: String }
+    private struct Pending: Codable { let key: Data; let expiresAt: Date; let name: String? }
 
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: account]
@@ -46,9 +48,18 @@ enum PairingStore {
     }
 
     static func current() throws -> Data? {
-        guard let key = try read(currentAccount) else { return nil }
+        try all().last?.key
+    }
+
+    static func all() throws -> [PairedMac] {
+        if let data = try read(peersAccount) {
+            let peers = try JSONDecoder().decode([PairedMac].self, from: data)
+            guard peers.allSatisfy({ $0.key.count == 32 }) else { throw PairingError.invalidMessage }
+            return peers
+        }
+        guard let key = try read(currentAccount) else { return [] }
         guard key.count == 32 else { throw PairingError.invalidMessage }
-        return key
+        return [PairedMac(key: key, name: "原有 Mac")]
     }
 
     static func pending() throws -> Data? {
@@ -62,17 +73,23 @@ enum PairingStore {
         return record.key
     }
 
-    static func stage(_ key: Data) throws {
+    static func stage(_ key: Data, name: String = "Mac") throws {
         guard key.count == 32 else { throw PairingError.invalidMessage }
-        try save(JSONEncoder().encode(Pending(key: key, expiresAt: Date().addingTimeInterval(300))),
+        try save(JSONEncoder().encode(Pending(key: key, expiresAt: Date().addingTimeInterval(300), name: name)),
                  account: pendingAccount)
     }
 
     static func promotePending() throws -> Data {
-        guard let key = try pending() else { throw PairingError.expired }
-        try save(key, account: currentAccount)
+        guard let data = try read(pendingAccount) else { throw PairingError.expired }
+        let pending = try JSONDecoder().decode(Pending.self, from: data)
+        guard pending.expiresAt > Date(), pending.key.count == 32 else { throw PairingError.expired }
+        var peers = try all()
+        if !peers.contains(where: { $0.key == pending.key }) {
+            peers.append(PairedMac(key: pending.key, name: pending.name ?? "Mac"))
+        }
+        try save(JSONEncoder().encode(peers), account: peersAccount)
         try? delete(pendingAccount)
-        return key
+        return pending.key
     }
 
     static func clearPending() throws { try delete(pendingAccount) }
