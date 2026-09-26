@@ -194,11 +194,7 @@ import UniformTypeIdentifiers
                     self.errorMessage = "所选应用没有可用的 bundle ID"
                     return
                 }
-                do {
-                    try SelectionStore.change("bundle:\(bundle)", add: true)
-                    self.refreshSources()
-                    self.input?.poll()
-                } catch { self.errorMessage = "无法保存应用选择：\(error.localizedDescription)" }
+                _ = self.setSource("bundle:\(bundle)", add: true)
             }
         }
     }

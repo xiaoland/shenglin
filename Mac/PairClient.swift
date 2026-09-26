@@ -10,11 +10,11 @@ struct NearbyPad: Identifiable {
 }
 
 final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    private let serviceID = CBUUID(string: "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF")
-    private let pairServiceID = CBUUID(string: "C985D59E-9D34-4F37-8F14-03C942690C78")
-    private let writeID = CBUUID(string: "01FA287F-9E5C-4A8A-8B58-23A9808981F4")
-    private let responseID = CBUUID(string: "D56446C2-AB92-43C6-B80F-BE5E964015B4")
-    private let infoID = CBUUID(string: "BF903515-CC03-4056-A7D0-16E3267ABEB4")
+    private let serviceID = CBUUID(string: BLEIdentifiers.service)
+    private let pairServiceID = CBUUID(string: BLEIdentifiers.pairingService)
+    private let writeID = CBUUID(string: BLEIdentifiers.pairingWrite)
+    private let responseID = CBUUID(string: BLEIdentifiers.pairingResponse)
+    private let infoID = CBUUID(string: BLEIdentifiers.pairingInfo)
     private let onDevices: ([NearbyPad]) -> Void
     private let onStatus: (String) -> Void
     private let onNeedCode: (String) -> Void

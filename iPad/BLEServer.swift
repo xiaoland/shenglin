@@ -3,13 +3,13 @@ import Foundation
 import UIKit
 
 @MainActor final class BLEServer: NSObject, ObservableObject, @preconcurrency CBPeripheralManagerDelegate {
-    static let serviceID = CBUUID(string: "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF")
-    static let pairServiceID = CBUUID(string: "C985D59E-9D34-4F37-8F14-03C942690C78")
-    static let commandID = CBUUID(string: "E1FA496A-299F-4C84-9621-63396F75A3F2")
-    static let ackID = CBUUID(string: "0F20B426-BBC9-48A4-A518-82827239AA9E")
-    static let pairWriteID = CBUUID(string: "01FA287F-9E5C-4A8A-8B58-23A9808981F4")
-    static let pairResponseID = CBUUID(string: "D56446C2-AB92-43C6-B80F-BE5E964015B4")
-    static let pairInfoID = CBUUID(string: "BF903515-CC03-4056-A7D0-16E3267ABEB4")
+    static let serviceID = CBUUID(string: BLEIdentifiers.service)
+    static let pairServiceID = CBUUID(string: BLEIdentifiers.pairingService)
+    static let commandID = CBUUID(string: BLEIdentifiers.command)
+    static let ackID = CBUUID(string: BLEIdentifiers.ack)
+    static let pairWriteID = CBUUID(string: BLEIdentifiers.pairingWrite)
+    static let pairResponseID = CBUUID(string: BLEIdentifiers.pairingResponse)
+    static let pairInfoID = CBUUID(string: BLEIdentifiers.pairingInfo)
 
     @Published private(set) var status = "正在启动"
     @Published private(set) var isPaired = false

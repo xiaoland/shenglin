@@ -5,9 +5,9 @@ import NearbyAudioCore
 #endif
 
 final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
-    private let serviceID = CBUUID(string: "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF")
-    private let commandID = CBUUID(string: "E1FA496A-299F-4C84-9621-63396F75A3F2")
-    private let ackID = CBUUID(string: "0F20B426-BBC9-48A4-A518-82827239AA9E")
+    private let serviceID = CBUUID(string: BLEIdentifiers.service)
+    private let commandID = CBUUID(string: BLEIdentifiers.command)
+    private let ackID = CBUUID(string: BLEIdentifiers.ack)
     private let key: Data
     private let onStatus: (String) -> Void
     private let onAck: (ControlAck) -> Void
