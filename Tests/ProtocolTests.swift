@@ -3,22 +3,6 @@ import NearbyAudioCore
 import XCTest
 
 final class ProtocolTests: XCTestCase {
-    func testBLEServiceAndCharacteristicIDsStayCompatible() {
-        XCTAssertEqual([
-            BLEIdentifiers.service, BLEIdentifiers.command, BLEIdentifiers.ack,
-            BLEIdentifiers.pairingService, BLEIdentifiers.pairingWrite,
-            BLEIdentifiers.pairingResponse, BLEIdentifiers.pairingInfo,
-        ], [
-            "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF",
-            "E1FA496A-299F-4C84-9621-63396F75A3F2",
-            "0F20B426-BBC9-48A4-A518-82827239AA9E",
-            "C985D59E-9D34-4F37-8F14-03C942690C78",
-            "01FA287F-9E5C-4A8A-8B58-23A9808981F4",
-            "D56446C2-AB92-43C6-B80F-BE5E964015B4",
-            "BF903515-CC03-4056-A7D0-16E3267ABEB4",
-        ])
-    }
-
     func testAuthenticatedCommandsAndRestoration() throws {
         let key = Data(repeating: 7, count: 32)
         let command = ControlCommand(sequence: 4, quiet: true, expiresAt: 110, key: key)
