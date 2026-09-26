@@ -114,12 +114,30 @@ import Darwin
         guard let now = current() else { return ("readFailed", -1) }
         if quiet {
             if restoreTimer != nil {
+                // Keep the baseline if a new request interrupts the restore ramp.
                 restoreTimer?.invalidate()
                 restoreTimer = nil
-                snapshot = nil
-                save()
             }
-            if snapshot != nil { return ("alreadyQuiet", Int((now * 1000).rounded())) }
+            if let saved = snapshot {
+                guard route() == saved.route, abs(now - saved.applied) <= 0.005 else {
+                    snapshot = nil
+                    save()
+                    return ("preservedManualOrRoute", Int((now * 1000).rounded()))
+                }
+                guard let wanted = VolumePolicy.target(current: now, configured: target) else {
+                    return ("alreadyQuiet", Int((now * 1000).rounded()))
+                }
+                snapshot = QuietSnapshot(original: saved.original, applied: wanted, route: saved.route)
+                save()
+                guard write(wanted), let actual = current() else {
+                    snapshot = saved
+                    save()
+                    return ("setFailed", -1)
+                }
+                snapshot = QuietSnapshot(original: saved.original, applied: actual, route: saved.route)
+                save()
+                return ("applied", Int((actual * 1000).rounded()))
+            }
             guard let wanted = VolumePolicy.target(current: now, configured: target) else {
                 return ("alreadyBelowTarget", Int((now * 1000).rounded()))
             }
