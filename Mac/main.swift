@@ -2,7 +2,7 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let action = arguments.first else {
-    print("用法：nearby-audio control status|pair|enabled|exclude|target ... | sources | exclude ... | run")
+    print("用法：nearby-audio control status|pair|enabled|exclude|mute|target ... | sources | exclude|mute ... | run")
     exit(2)
 }
 
@@ -25,10 +25,14 @@ if action == "control" {
         request = ControlRequest(command: "exclude.add", value: parts[2])
     } else if parts.count == 3, parts[0...1] == ["exclude", "remove"] {
         request = ControlRequest(command: "exclude.remove", value: parts[2])
+    } else if parts.count == 3, parts[0...1] == ["mute", "add"] {
+        request = ControlRequest(command: "mute.add", value: parts[2])
+    } else if parts.count == 3, parts[0...1] == ["mute", "remove"] {
+        request = ControlRequest(command: "mute.remove", value: parts[2])
     } else if parts.count == 2, parts[0] == "target" {
         request = ControlRequest(command: "target.set", value: parts[1])
     } else {
-        print("用法：nearby-audio control status | pair start|choose <UUID>|code|cancel | enabled on|off | exclude add|remove <标识> | target <0...0.5>")
+        print("用法：nearby-audio control status | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute add|remove <标识> | target <0...0.5>")
         exit(2)
     }
     do {
@@ -66,6 +70,27 @@ if action == "exclude" {
             exit(2)
         }
     } catch { print("无法更新排除应用：\(error)"); exit(1) }
+    exit(0)
+}
+
+if action == "mute" {
+    do {
+        switch arguments.dropFirst().first {
+        case "list":
+            let muted = try MuteStore.load()
+            print(muted.isEmpty ? "无静音应用" : muted.sorted().joined(separator: "\n"))
+        case "add", "remove":
+            guard arguments.count == 3, let selector = ExclusionStore.normalized(arguments[2]) else {
+                print("请输入 bundle ID 或 path:/可执行文件/绝对路径")
+                exit(2)
+            }
+            try MuteStore.change(selector, add: arguments[1] == "add")
+            print("已更新静音设置；运行中的程序将在 250 毫秒内重新检查。")
+        default:
+            print("用法：nearby-audio mute list|add|remove [标识]")
+            exit(2)
+        }
+    } catch { print("无法更新静音应用：\(error)"); exit(1) }
     exit(0)
 }
 

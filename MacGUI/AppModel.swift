@@ -8,6 +8,7 @@ import UniformTypeIdentifiers
     @Published private(set) var lastAction = "尚无音量操作"
     @Published private(set) var lastAckSequence: UInt64?
     @Published private(set) var sources = [SourceCandidate]()
+    @Published private(set) var virtualMicrophoneAvailable = false
     @Published private(set) var inputState = InputObservation.active(0)
     @Published private(set) var paired = false
     @Published private(set) var targetKnown = false
@@ -183,6 +184,7 @@ import UniformTypeIdentifiers
     }
 
     func refreshSources() {
+        virtualMicrophoneAvailable = VirtualMicrophone() != nil
         do { sources = try availableSources() }
         catch { errorMessage = "无法列出应用：\(error.localizedDescription)" }
     }
@@ -203,9 +205,28 @@ import UniformTypeIdentifiers
         }
     }
 
-    func chooseApp() {
+    func toggleMute(_ source: SourceCandidate) {
+        _ = setMuted(source.selector, add: !source.isMuted)
+    }
+
+    private func setMuted(_ selector: String, add: Bool) -> Bool {
+        do {
+            try MuteStore.change(selector, add: add)
+            refreshSources()
+            input?.poll()
+            return true
+        } catch {
+            errorMessage = "无法保存麦克风静音设置：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func chooseApp() { chooseApp(mute: false) }
+    func chooseMutedApp() { chooseApp(mute: true) }
+
+    private func chooseApp(mute: Bool) {
         let panel = NSOpenPanel()
-        panel.message = "选择不参与 iPad 音量协同的 Mac 应用"
+        panel.message = mute ? "选择使用虚拟麦克风时要静音的 Mac 应用" : "选择不参与 iPad 音量协同的 Mac 应用"
         panel.prompt = "选择应用"
         panel.allowedContentTypes = [.applicationBundle]
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
@@ -217,7 +238,8 @@ import UniformTypeIdentifiers
                     self.errorMessage = "所选应用没有可用的 bundle ID"
                     return
                 }
-                _ = self.setExcluded("bundle:\(bundle)", add: true)
+                if mute { _ = self.setMuted("bundle:\(bundle)", add: true) }
+                else { _ = self.setExcluded("bundle:\(bundle)", add: true) }
             }
         }
     }
@@ -340,7 +362,8 @@ import UniformTypeIdentifiers
                       pairingPendingActivation: pendingKey != nil,
                       nearbyPads: nearbyPads.map { .init(id: $0.id, name: $0.name) },
                       sources: sources.map { .init(selector: $0.selector, name: $0.name,
-                                                   excluded: $0.isExcluded, active: $0.isActive) },
+                                                   excluded: $0.isExcluded, muted: $0.isMuted,
+                                                   active: $0.isActive) },
                       error: errorMessage)
     }
 
@@ -364,6 +387,10 @@ import UniformTypeIdentifiers
         case "exclude.add", "exclude.remove":
             if let value = request.value, let selector = ExclusionStore.normalized(value) {
                 if !setExcluded(selector, add: request.command == "exclude.add") { problem = errorMessage }
+            } else { problem = "应用标识无效" }
+        case "mute.add", "mute.remove":
+            if let value = request.value, let selector = ExclusionStore.normalized(value) {
+                if !setMuted(selector, add: request.command == "mute.add") { problem = errorMessage }
             } else { problem = "应用标识无效" }
         case "target.set":
             if let value = request.value, let number = Double(value), (0...0.5).contains(number) {

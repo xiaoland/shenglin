@@ -57,4 +57,17 @@ final class ProtocolTests: XCTestCase {
         try InputExclusionStore.change("bundle:com.openai.codex", add: false, at: exclusions, legacyURL: legacy)
         XCTAssertEqual(try InputExclusionStore.load(at: exclusions, legacyURL: legacy), [])
     }
+
+    func testMuteChoicesPersistIndependentlyOfExclusions() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let muted = directory.appendingPathComponent("muted.json")
+        XCTAssertEqual(try InputMuteStore.load(at: muted), [])
+        try InputMuteStore.change("bundle:nz.owo.koe", add: true, at: muted)
+        try InputMuteStore.change("bundle:com.openai.codex", add: true, at: muted)
+        XCTAssertEqual(try InputMuteStore.load(at: muted),
+                       ["bundle:nz.owo.koe", "bundle:com.openai.codex"])
+        try InputMuteStore.change("bundle:nz.owo.koe", add: false, at: muted)
+        XCTAssertEqual(try InputMuteStore.load(at: muted), ["bundle:com.openai.codex"])
+    }
 }

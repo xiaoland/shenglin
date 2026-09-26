@@ -128,3 +128,19 @@ public enum InputExclusionStore {
         try JSONEncoder().encode(Configuration(excluded: excluded.sorted())).write(to: url, options: .atomic)
     }
 }
+
+public enum InputMuteStore {
+    private struct Configuration: Codable { let muted: [String] }
+
+    public static func load(at url: URL) throws -> Set<String> {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        return Set(try JSONDecoder().decode(Configuration.self, from: Data(contentsOf: url)).muted)
+    }
+
+    public static func change(_ selector: String, add: Bool, at url: URL) throws {
+        var muted = try load(at: url)
+        if add { muted.insert(selector) } else { muted.remove(selector) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(Configuration(muted: muted.sorted())).write(to: url, options: .atomic)
+    }
+}

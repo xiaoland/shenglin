@@ -26,6 +26,15 @@ enum ExclusionStore {
     }
 }
 
+enum MuteStore {
+    static let url = ExclusionStore.url.deletingLastPathComponent().appendingPathComponent("muted.json")
+
+    static func load() throws -> Set<String> { try InputMuteStore.load(at: url) }
+    static func change(_ selector: String, add: Bool) throws {
+        try InputMuteStore.change(selector, add: add, at: url)
+    }
+}
+
 func outerApplicationBundleID(path: String) -> String? {
     guard let range = path.range(of: ".app/") else { return nil }
     return Bundle(path: String(path[..<range.lowerBound]) + ".app")?.bundleIdentifier
@@ -58,11 +67,13 @@ struct SourceCandidate: Identifiable {
     let name: String
     let isActive: Bool
     let isExcluded: Bool
+    let isMuted: Bool
     var id: String { selector }
 }
 
 func availableSources() throws -> [SourceCandidate] {
     let excluded = try ExclusionStore.load()
+    let muted = try MuteStore.load()
     guard let active = activeInputPIDs() else {
         throw NSError(domain: "NearbyAudio", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "Core Audio 输入状态查询失败"])
@@ -84,7 +95,7 @@ func availableSources() throws -> [SourceCandidate] {
             ?? executablePath(pid: pid).map { URL(fileURLWithPath: $0).lastPathComponent }
             ?? "进程 \(pid)"
     }
-    for selector in excluded where rows[selector] == nil {
+    for selector in excluded.union(muted) where rows[selector] == nil {
         if selector.hasPrefix("bundle:"),
            let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: String(selector.dropFirst(7))) {
             rows[selector] = Bundle(url: url)?.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
@@ -98,7 +109,7 @@ func availableSources() throws -> [SourceCandidate] {
     return rows.map { selector, name in
         SourceCandidate(selector: selector, name: name,
                         isActive: activeIdentities.contains { $0.contains(selector) },
-                        isExcluded: excluded.contains(selector))
+                        isExcluded: excluded.contains(selector), isMuted: muted.contains(selector))
     }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
 }
 

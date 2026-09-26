@@ -8,7 +8,7 @@ struct ControlRequest: Codable {
 
 struct ControlStatus: Codable {
     struct Device: Codable { let id: UUID; let name: String }
-    struct Source: Codable { let selector: String; let name: String; let excluded: Bool; let active: Bool }
+    struct Source: Codable { let selector: String; let name: String; let excluded: Bool; let muted: Bool; let active: Bool }
     let connection: String
     let paired: Bool
     let enabled: Bool

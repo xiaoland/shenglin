@@ -13,7 +13,7 @@ func audioProperty(_ object: AudioObjectID, _ selector: AudioObjectPropertySelec
     return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &result) == noErr ? result : nil
 }
 
-func activeInputPIDs() -> Set<pid_t>? {
+func activeInputPIDs(on device: AudioObjectID? = nil) -> Set<pid_t>? {
     var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                              mScope: kAudioObjectPropertyScopeGlobal,
                                              mElement: kAudioObjectPropertyElementMain)
@@ -29,7 +29,22 @@ func activeInputPIDs() -> Set<pid_t>? {
     for object in objects {
         guard let pid = audioProperty(object, kAudioProcessPropertyPID),
               let active = audioProperty(object, kAudioProcessPropertyIsRunningInput) else { return nil }
-        if active == 1 { running.insert(pid_t(pid)) }
+        guard active == 1 else { continue }
+        if let device {
+            var devicesAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
+                                                            mScope: kAudioObjectPropertyScopeInput,
+                                                            mElement: kAudioObjectPropertyElementMain)
+            var devicesSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(object, &devicesAddress, 0, nil, &devicesSize) == noErr else { return nil }
+            var devices = [AudioObjectID](repeating: 0, count: Int(devicesSize) / MemoryLayout<AudioObjectID>.size)
+            guard !devices.isEmpty else { continue }
+            let devicesStatus = devices.withUnsafeMutableBufferPointer { buffer in
+                AudioObjectGetPropertyData(object, &devicesAddress, 0, nil, &devicesSize, buffer.baseAddress!)
+            }
+            guard devicesStatus == noErr else { return nil }
+            guard devices.contains(device) else { continue }
+        }
+        running.insert(pid_t(pid))
     }
     return running
 }
@@ -54,6 +69,7 @@ enum InputObservation {
 final class InputActivity {
     private var previous: Set<pid_t>?
     private var lastError: String?
+    private let virtualMicrophone = VirtualMicrophone()
     private let changed: (InputObservation) -> Void
 
     init(changed: @escaping (InputObservation) -> Void) {
@@ -61,6 +77,7 @@ final class InputActivity {
     }
 
     private func unavailable(_ message: String) {
+        virtualMicrophone?.suspend()
         guard lastError != message else { return }
         print(message)
         lastError = message
@@ -70,19 +87,37 @@ final class InputActivity {
     }
 
     func poll() {
-        guard let current = activeInputPIDs() else {
+        guard var current = activeInputPIDs() else {
             unavailable("Core Audio 输入状态查询失败")
             return
         }
+        current.remove(getpid())
         let excluded: Set<String>
+        let muted: Set<String>
         do {
             excluded = try ExclusionStore.load()
+            muted = try MuteStore.load()
         } catch {
-            unavailable("无法读取排除设置：\(error)")
+            unavailable("无法读取应用设置：\(error)")
             return
         }
         let identities = Dictionary(uniqueKeysWithValues: current.map { ($0, sourceIdentities(pid: $0)) })
-        let considered = InputExclusionPolicy.activePIDs(identities, excluded: excluded)
+        var considered = InputExclusionPolicy.activePIDs(identities, excluded: excluded)
+        if let virtualMicrophone {
+            guard let virtualClients = activeInputPIDs(on: virtualMicrophone.deviceID) else {
+                unavailable("Core Audio 虚拟麦克风输入状态查询失败")
+                return
+            }
+            let clients = virtualClients.subtracting([getpid()])
+            let mutedClients = clients.filter { !(identities[$0] ?? []).isDisjoint(with: muted) }
+            do {
+                try virtualMicrophone.update(activeClients: clients, mutedClients: mutedClients)
+            } catch {
+                unavailable("虚拟麦克风不可用：\(error.localizedDescription)")
+                return
+            }
+            considered.subtract(mutedClients)
+        }
         guard considered != previous else { return }
         previous = considered
         lastError = nil

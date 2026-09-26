@@ -136,6 +136,32 @@ private struct ControlPanel: View {
                 .frame(height: 150)
             }
 
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("虚拟麦克风静音").font(.headline)
+                    Spacer()
+                    if model.virtualMicrophoneAvailable {
+                        Button("添加静音…") { model.chooseMutedApp() }.buttonStyle(.link)
+                    }
+                }
+                Text(model.virtualMicrophoneAvailable
+                     ? "在目标应用中选择 Nearby Audio Microphone；这里的静音只影响对应应用，不影响其他应用。"
+                     : "安装 Nearby Audio 虚拟麦克风后，可分别静音使用它的应用。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if model.virtualMicrophoneAvailable {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 4) {
+                            ForEach(model.sources) { source in
+                                Toggle("静音 \(source.name)", isOn: Binding(
+                                    get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
+                                .help(source.selector)
+                            }
+                        }
+                    }
+                    .frame(height: 110)
+                }
+            }
+
             Divider()
 
             VStack(alignment: .leading, spacing: 6) {
