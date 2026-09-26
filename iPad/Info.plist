@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+    <key>CFBundleExecutable</key><string>NearbyAudioPad</string>
+    <key>CFBundleIdentifier</key><string>local.nearbyaudio.pad</string>
+    <key>CFBundleName</key><string>Nearby Audio</string>
+    <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleShortVersionString</key><string>0.1</string>
+    <key>CFBundleVersion</key><string>1</string>
+    <key>MinimumOSVersion</key><string>17.0</string>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>接收同一用户的 Mac 录音状态，以调整媒体音量。</string>
+    <key>UIBackgroundModes</key><array><string>bluetooth-peripheral</string></array>
+    <key>UIDeviceFamily</key><array><integer>2</integer></array>
+    <key>UILaunchScreen</key><dict/>
+    <key>UISupportedInterfaceOrientations</key><array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+</dict></plist>

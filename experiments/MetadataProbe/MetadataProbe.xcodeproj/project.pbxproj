@@ -1,0 +1,20 @@
+// !$*UTF8*$!
+{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+000000000000000000000011 = {isa = PBXFileReference; path = DuckProbe.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000012 = {isa = PBXBuildFile; fileRef = 000000000000000000000011;};
+000000000000000000000013 = {isa = PBXFileReference; path = BLEProbe.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000014 = {isa = PBXBuildFile; fileRef = 000000000000000000000013;};
+00000000000000000000000F = {isa = PBXFileReference; path = LANProbe.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000010 = {isa = PBXBuildFile; fileRef = 00000000000000000000000F;};
+000000000000000000000001 = {isa = PBXFileReference; path = Inspector.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000002 = {isa = PBXFileReference; path = Scan.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000004 = {isa = PBXFileReference; path = MetadataProbe.app; sourceTree = BUILT_PRODUCTS_DIR; explicitFileType = wrapper.application;};
+000000000000000000000005 = {isa = PBXBuildFile; fileRef = 000000000000000000000001;};
+000000000000000000000006 = {isa = PBXBuildFile; fileRef = 000000000000000000000002;};
+000000000000000000000008 = {isa = PBXSourcesBuildPhase; files = (000000000000000000000014,000000000000000000000012,000000000000000000000010,000000000000000000000005,000000000000000000000006,); buildActionMask = 2147483647; runOnlyForDeploymentPostprocessing = 0;};
+00000000000000000000000A = {isa = PBXGroup; children = (000000000000000000000013,000000000000000000000011,00000000000000000000000F,000000000000000000000001,000000000000000000000002,000000000000000000000004,); sourceTree = "<group>";};
+00000000000000000000000B = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 2; PRODUCT_NAME = MetadataProbe; PRODUCT_BUNDLE_IDENTIFIER = local.experimental.MetadataProbe; INFOPLIST_FILE = Info.plist; CODE_SIGN_STYLE = Automatic;};};
+00000000000000000000000C = {isa = XCConfigurationList; buildConfigurations = (00000000000000000000000B,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+00000000000000000000000D = {isa = PBXNativeTarget; name = MetadataProbe; productName = MetadataProbe; productReference = 000000000000000000000004; productType = "com.apple.product-type.application"; buildConfigurationList = 00000000000000000000000C; buildPhases = (000000000000000000000008,); buildRules = (); dependencies = ();};
+00000000000000000000000E = {isa = PBXProject; attributes = {LastUpgradeCheck = 2620;}; buildConfigurationList = 00000000000000000000000C; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en,Base,); mainGroup = 00000000000000000000000A; projectDirPath = ""; projectRoot = ""; targets = (00000000000000000000000D,);};
+}; rootObject = 00000000000000000000000E; }

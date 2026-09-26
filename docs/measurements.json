@@ -1,0 +1,389 @@
+{
+  "description": "局域网命令与返回值，不含设备标识/地址/令牌/媒体内容。",
+  "records": [
+    {
+      "time": 1790405691.0082738,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 39.7,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790405701.222933,
+      "command": "volume",
+      "success": true,
+      "interface": "en0",
+      "ms": 3219.0,
+      "reply": "TEST_BASELINE 0.3375 TARGET 0.275 systemSlider=Optional(0.3375)\nTEST_SET_RETURN true\nTEST_AFTER private=0.275 public=0.35 systemSlider=Optional(0.275) read=true\nTEST_RESTORE_RETURN true\nTEST_RESTORED private=0.3375 public=0.35 systemSlider=Optional(0.3375) read=true"
+    },
+    {
+      "time": 1790405710.83642,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 59.9,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790405740.769692,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790405750.463916,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 6.0,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790405771.56449,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 4.3,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790405859.117523,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 199.3,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790405862.274539,
+      "command": "volume",
+      "success": true,
+      "interface": "en0",
+      "ms": 3110.6,
+      "reply": "TEST_BASELINE 0.3375 TARGET 0.275 systemSlider=Optional(0.3375)\nTEST_SET_RETURN true\nTEST_AFTER private=0.275 public=0.35 systemSlider=Optional(0.275) read=true\nTEST_RESTORE_RETURN true\nTEST_RESTORED private=0.3375 public=0.35 systemSlider=Optional(0.3375) read=true"
+    },
+    {
+      "time": 1790406028.146851,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 38.8,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790406028.492088,
+      "command": "duck",
+      "success": true,
+      "interface": "en0",
+      "ms": 314.8,
+      "reply": "DUCK_ACTIVE lease=3.0；没有播放音频、没有采集麦克风"
+    },
+    {
+      "time": 1790406064.732553,
+      "command": "hold",
+      "success": true,
+      "interface": "en0",
+      "ms": 437.8,
+      "reply": "DUCK_ACTIVE lease=20.0；没有播放音频、没有采集麦克风"
+    },
+    {
+      "time": 1790406065.6450088,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 3.4,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790406078.6821592,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406092.670561,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.2,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406097.113596,
+      "command": "stop",
+      "success": true,
+      "interface": "en0",
+      "ms": 4.2,
+      "reply": "DUCK_ALREADY_INACTIVE"
+    },
+    {
+      "time": 1790406097.146374,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 4.1,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790406114.0166998,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 5.7,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790406385.409497,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.3,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406402.175339,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406410.1787899,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.2,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406427.203267,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406580.0721521,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.2,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406737.734111,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406868.20499,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.4,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790406937.370889,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 6.0,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790406956.048249,
+      "command": "stop",
+      "success": true,
+      "interface": "en0",
+      "ms": 50.4,
+      "reply": "DUCK_ALREADY_INACTIVE"
+    },
+    {
+      "time": 1790406956.0810912,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 4.4,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790407099.916136,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 5.2,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790407116.930759,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.2,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790407139.954557,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.2,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790407383.87279,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 20.4,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790407634.002271,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 42.8,
+      "reply": "pong state=0"
+    },
+    {
+      "time": 1790407635.2130501,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 4.9,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790407652.228555,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790407671.558371,
+      "command": "ping",
+      "success": false,
+      "interface": "en0",
+      "ms": 5001.1,
+      "reply": "timeout"
+    },
+    {
+      "time": 1790407672.879118,
+      "command": "ping",
+      "success": true,
+      "interface": "en0",
+      "ms": 49.6,
+      "reply": "pong state=1"
+    },
+    {
+      "time": 1790407689.0955122,
+      "command": "stop",
+      "success": true,
+      "interface": "en0",
+      "ms": 5.3,
+      "reply": "DUCK_ALREADY_INACTIVE"
+    }
+  ],
+  "debuggerHeartbeat": {
+    "foregroundPingMs": 42.8,
+    "backgroundLastHeartbeat": 1790407638.836412,
+    "foregroundResumedHeartbeat": 1790407673.111516,
+    "gapSeconds": 34.275104,
+    "debuggerStatusDuringGap": "running",
+    "interpretation": "后台独立工作队列心跳和UDP响应均停止；恢复前台后恢复。",
+    "cleanup": "DUCK_ALREADY_INACTIVE；debugger detached and quit；probe terminated"
+  },
+  "bleBackground": {
+    "backgroundLastHeartbeat": 1790408667.420759,
+    "lanPing": {
+      "time": 1790408692.487096,
+      "success": false,
+      "timeoutMs": 5001.1
+    },
+    "macPingSent": 1790408699.5493069,
+    "backgroundHeartbeatResumed": 1790408700.029228,
+    "ipadPingReceived": 1790408700.035626,
+    "ipadApplicationState": 2,
+    "heartbeatGapSeconds": 32.608469,
+    "macVolumeSent": 1790408704.7976642,
+    "ipadVolumeReceived": 1790408705.247885,
+    "volumeResult": "private and MPVolumeView 0.3375 → 0.275 → 0.3375; setters and readback succeeded",
+    "macClientRestart": "with iPad still background, rediscovered/reconnected; second ping and volume cycle succeeded",
+    "noActivateUnlocked": "Wi-Fi devicectl launched the app without activation; volume cycle succeeded",
+    "cleanup": "BLE advertising/services stopped, enable flag cleared, final probe process terminated"
+  },
+  "bleLocked": {
+    "lockStateBefore": "passcodeRequired=true; unlockedSinceBoot=true",
+    "lockStateAfter": "passcodeRequired=true; unlockedSinceBoot=true",
+    "priorLANPing": {
+      "success": false,
+      "timeoutMs": 5001.2
+    },
+    "firstPing": {
+      "macSent": 1790409555.551701,
+      "gattAck": 1790409555.6015859,
+      "ipadReceived": 1790409556.0358582,
+      "ipadState": 2
+    },
+    "firstVolume": {
+      "macSent": 1790409560.646563,
+      "gattAck": 1790409560.7015061,
+      "ipadReceived": 1790409561.127667,
+      "resultAt": 1790409564.173012,
+      "result": "private and MPVolumeView 0.3375 → 0.275 → 0.3375; setter and restore returned true"
+    },
+    "macClientRestart": {
+      "connectedAt": 1790409574.481868,
+      "readyAt": 1790409575.255904,
+      "ipadSecondPingReceived": 1790409585.645246,
+      "ipadSecondVolumeReceived": 1790409590.797608,
+      "resultAt": 1790409594.004365,
+      "result": "same private and MPVolumeView decrease and restore while locked"
+    },
+    "appUpdateWhileLocked": {
+      "installed": true,
+      "newProcessHandledAuthenticatedStop": true,
+      "enabledPreferenceAfterStop": false,
+      "note": "App update/process replacement is not the same as OS memory-pressure termination."
+    },
+    "cleanup": "BLE enable preference false; writable service removed; Mac client exited; probe process terminated; volume last confirmed restored"
+  },
+  "macInputActivity": {
+    "macOS": "15.4.1",
+    "signal": "CoreAudio process IsRunningInput; read-only 250ms observation",
+    "sampleApp": "KOE 1.0.17 used as validation, not a product-only trigger",
+    "baseline": {
+      "activeInputProcesses": 1,
+      "koeInputActive": false,
+      "defaultInputDeviceRunningSomewhere": 1
+    },
+    "koeStart": {
+      "time": 1790410602.181569,
+      "activeInputProcesses": 2,
+      "koeInputActive": true,
+      "defaultInputDeviceRunningSomewhere": 1
+    },
+    "koeEnd": {
+      "time": 1790410605.5758471,
+      "activeInputProcesses": 1,
+      "koeInputActive": false,
+      "defaultInputDeviceRunningSomewhere": 1
+    },
+    "observedActiveSeconds": 3.3942781,
+    "privacy": "No microphone capture, audio samples, transcription, or microphone permission request by probe."
+  }
+}

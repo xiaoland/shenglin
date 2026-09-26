@@ -1,0 +1,20 @@
+// !$*UTF8*$!
+{ archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
+000000000000000000000001 = {isa = PBXFileReference; path = App.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000002 = {isa = PBXFileReference; path = BLEServer.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000003 = {isa = PBXFileReference; path = Pairing.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000004 = {isa = PBXFileReference; path = Volume.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000005 = {isa = PBXFileReference; path = ../Shared/Protocol.swift; sourceTree = "<group>"; lastKnownFileType = sourcecode.swift;};
+000000000000000000000006 = {isa = PBXFileReference; path = NearbyAudioPad.app; sourceTree = BUILT_PRODUCTS_DIR; explicitFileType = wrapper.application;};
+000000000000000000000011 = {isa = PBXBuildFile; fileRef = 000000000000000000000001;};
+000000000000000000000012 = {isa = PBXBuildFile; fileRef = 000000000000000000000002;};
+000000000000000000000013 = {isa = PBXBuildFile; fileRef = 000000000000000000000003;};
+000000000000000000000014 = {isa = PBXBuildFile; fileRef = 000000000000000000000004;};
+000000000000000000000015 = {isa = PBXBuildFile; fileRef = 000000000000000000000005;};
+000000000000000000000020 = {isa = PBXSourcesBuildPhase; files = (000000000000000000000011,000000000000000000000012,000000000000000000000013,000000000000000000000014,000000000000000000000015,); buildActionMask = 2147483647; runOnlyForDeploymentPostprocessing = 0;};
+000000000000000000000021 = {isa = PBXGroup; children = (000000000000000000000001,000000000000000000000002,000000000000000000000003,000000000000000000000004,000000000000000000000005,000000000000000000000006,); sourceTree = "<group>";};
+000000000000000000000022 = {isa = XCBuildConfiguration; name = Debug; buildSettings = {SDKROOT = iphoneos; IPHONEOS_DEPLOYMENT_TARGET = 17.0; SWIFT_VERSION = 5.0; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; TARGETED_DEVICE_FAMILY = 2; PRODUCT_NAME = NearbyAudioPad; PRODUCT_BUNDLE_IDENTIFIER = local.nearbyaudio.pad; INFOPLIST_FILE = Info.plist; CODE_SIGN_STYLE = Automatic;};};
+000000000000000000000023 = {isa = XCConfigurationList; buildConfigurations = (000000000000000000000022,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug;};
+000000000000000000000024 = {isa = PBXNativeTarget; name = NearbyAudioPad; productName = NearbyAudioPad; productReference = 000000000000000000000006; productType = "com.apple.product-type.application"; buildConfigurationList = 000000000000000000000023; buildPhases = (000000000000000000000020,); buildRules = (); dependencies = ();};
+000000000000000000000025 = {isa = PBXProject; attributes = {LastUpgradeCheck = 2620;}; buildConfigurationList = 000000000000000000000023; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; knownRegions = (en,Base,); mainGroup = 000000000000000000000021; projectDirPath = ""; projectRoot = ""; targets = (000000000000000000000024,);};
+}; rootObject = 000000000000000000000025; }
