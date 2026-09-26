@@ -4,6 +4,7 @@ import UIKit
 
 @MainActor final class BLEServer: NSObject, ObservableObject, @preconcurrency CBPeripheralManagerDelegate {
     static let serviceID = CBUUID(string: "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF")
+    static let pairServiceID = CBUUID(string: "C985D59E-9D34-4F37-8F14-03C942690C78")
     static let commandID = CBUUID(string: "E1FA496A-299F-4C84-9621-63396F75A3F2")
     static let ackID = CBUUID(string: "0F20B426-BBC9-48A4-A518-82827239AA9E")
     static let pairWriteID = CBUUID(string: "01FA287F-9E5C-4A8A-8B58-23A9808981F4")
@@ -15,7 +16,6 @@ import UIKit
     @Published private(set) var pairingMode = false
     @Published private(set) var pairingStatus = "配对模式未开启"
     @Published private(set) var shortCode: String?
-    @Published private(set) var localConfirmed = false
     @Published private(set) var peerName = ""
     @Published private(set) var lastAction = "尚无命令"
     @Published private(set) var enabled = UserDefaults.standard.object(forKey: "listeningEnabled") as? Bool ?? true
@@ -23,10 +23,12 @@ import UIKit
     private var ackCharacteristic: CBMutableCharacteristic?
     private var pairResponseCharacteristic: CBMutableCharacteristic?
     private var pairResponseData: Data?
-    private var restoredServices = false
+    private var controlRegistered = false
+    private var pairRegistered = false
     private var subscribed = Set<UUID>()
     private var key: Data?
     private var pendingKey: Data?
+    var pairingPendingActivation: Bool { pendingKey != nil }
     private var pairing: PairingResponder?
     private var pairingCentral: UUID?
     private var pairingDeadline: Date?
@@ -76,7 +78,9 @@ import UIKit
             manager?.stopAdvertising()
             manager?.removeAllServices()
             ackCharacteristic = nil
-            restoredServices = false
+            pairResponseCharacteristic = nil
+            controlRegistered = false
+            pairRegistered = false
             subscribed.removeAll()
             _ = volume?.apply(quiet: false, target: 0)
             status = "已停止监听"
@@ -101,12 +105,11 @@ import UIKit
             pairingCentral = nil
             pairResponseData = nil
             pairAttempts = 0
-            shortCode = nil
-            localConfirmed = false
+            shortCode = try PairingCode.generate()
             peerName = ""
             pairingMode = true
             pairingDeadline = Date().addingTimeInterval(120)
-            pairingStatus = "已开放 2 分钟，请在 Mac 菜单栏开始查找"
+            pairingStatus = "2 分钟内在 Mac 输入下方验证码；最多尝试 3 次"
             pairingTimer?.invalidate()
             pairingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -115,16 +118,6 @@ import UIKit
                 }
             }
         } catch { pairingStatus = "无法准备配对：\(error.localizedDescription)" }
-    }
-
-    func confirmPairing() {
-        guard let pairing, shortCode != nil, !localConfirmed else { return }
-        do {
-            let finish = try pairing.confirmLocal()
-            localConfirmed = true
-            if let finish { finishPairing(finish) }
-            else { pairingStatus = "本机已确认，等待 Mac 确认" }
-        } catch { cancelPairing(reason: error.localizedDescription) }
     }
 
     func rejectPairing() { cancelPairing(reason: "已拒绝配对") }
@@ -136,7 +129,6 @@ import UIKit
         pairing = nil
         pairingCentral = nil
         shortCode = nil
-        localConfirmed = false
         peerName = ""
         pairingMode = false
         pairingDeadline = nil
@@ -150,7 +142,7 @@ import UIKit
         do {
             try PairingStore.stage(key)
             pendingKey = key
-            pairingStatus = "双方已确认，等待 Mac 自动连接"
+            pairingStatus = "验证码已通过，等待新 Mac 使用新密钥连接"
             pairingMode = false
             pairingDeadline = nil
             pairingTimer?.invalidate()
@@ -159,7 +151,6 @@ import UIKit
             pairing = nil
             pairingCentral = nil
             shortCode = nil
-            localConfirmed = false
             peerName = ""
         } catch { cancelPairing(reason: "无法保存新配对：\(error.localizedDescription)") }
     }
@@ -175,21 +166,30 @@ import UIKit
 
     private func publishService() {
         guard enabled, let manager, manager.state == .poweredOn else { return }
-        if restoredServices {
+        if controlRegistered && pairRegistered {
             if !manager.isAdvertising { advertise() }
             status = "蓝牙已就绪"
             return
         }
-        let command = CBMutableCharacteristic(type: Self.commandID, properties: [.write], value: nil, permissions: [.writeable])
-        let ack = CBMutableCharacteristic(type: Self.ackID, properties: [.read, .notify], value: nil, permissions: [.readable])
-        let pairWrite = CBMutableCharacteristic(type: Self.pairWriteID, properties: [.write], value: nil, permissions: [.writeable])
-        let pairResponse = CBMutableCharacteristic(type: Self.pairResponseID, properties: [.read, .notify], value: nil, permissions: [.readable])
-        let pairInfo = CBMutableCharacteristic(type: Self.pairInfoID, properties: [.read], value: nil, permissions: [.readable])
-        ackCharacteristic = ack
-        pairResponseCharacteristic = pairResponse
-        let service = CBMutableService(type: Self.serviceID, primary: true)
-        service.characteristics = [command, ack, pairWrite, pairResponse, pairInfo]
-        manager.add(service)
+        if !controlRegistered {
+            let command = CBMutableCharacteristic(type: Self.commandID, properties: [.write], value: nil, permissions: [.writeable])
+            let ack = CBMutableCharacteristic(type: Self.ackID, properties: [.read, .notify], value: nil, permissions: [.readable])
+            let service = CBMutableService(type: Self.serviceID, primary: true)
+            service.characteristics = [command, ack]
+            ackCharacteristic = ack
+            controlRegistered = true
+            manager.add(service)
+        }
+        if !pairRegistered {
+            let pairWrite = CBMutableCharacteristic(type: Self.pairWriteID, properties: [.write], value: nil, permissions: [.writeable])
+            let pairResponse = CBMutableCharacteristic(type: Self.pairResponseID, properties: [.read, .notify], value: nil, permissions: [.readable])
+            let pairInfo = CBMutableCharacteristic(type: Self.pairInfoID, properties: [.read], value: nil, permissions: [.readable])
+            let service = CBMutableService(type: Self.pairServiceID, primary: true)
+            service.characteristics = [pairWrite, pairResponse, pairInfo]
+            pairResponseCharacteristic = pairResponse
+            pairRegistered = true
+            manager.add(service)
+        }
     }
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
@@ -200,25 +200,35 @@ import UIKit
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState state: [String: Any]) {
-        if let services = state[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService],
-           let service = services.first(where: { $0.uuid == Self.serviceID }) {
+        for service in state[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] ?? [] {
             let characteristics = service.characteristics ?? []
-            if let ack = characteristics.first(where: { $0.uuid == Self.ackID }) as? CBMutableCharacteristic,
-               let pairResponse = characteristics.first(where: { $0.uuid == Self.pairResponseID }) as? CBMutableCharacteristic {
-                restoredServices = true
+            if service.uuid == Self.serviceID,
+               let ack = characteristics.first(where: { $0.uuid == Self.ackID }) as? CBMutableCharacteristic,
+               characteristics.contains(where: { $0.uuid == Self.commandID }) {
+                controlRegistered = true
                 ackCharacteristic = ack
-                pairResponseCharacteristic = pairResponse
+            } else if service.uuid == Self.pairServiceID,
+                      let response = characteristics.first(where: { $0.uuid == Self.pairResponseID }) as? CBMutableCharacteristic,
+                      characteristics.contains(where: { $0.uuid == Self.pairWriteID }),
+                      characteristics.contains(where: { $0.uuid == Self.pairInfoID }) {
+                pairRegistered = true
+                pairResponseCharacteristic = response
             } else {
-                peripheral.removeAllServices()
-                if peripheral.state == .poweredOn { publishService() }
+                peripheral.remove(service)
             }
         }
+        if peripheral.state == .poweredOn { publishService() }
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
         note("SERVICE \(error.map(String.init(describing:)) ?? "ready")")
-        if let error { status = "发布服务失败：\(error.localizedDescription)"; return }
-        advertise()
+        if let error {
+            if service.uuid == Self.serviceID { controlRegistered = false }
+            if service.uuid == Self.pairServiceID { pairRegistered = false }
+            status = "发布服务失败：\(error.localizedDescription)"
+            return
+        }
+        if controlRegistered && pairRegistered && !peripheral.isAdvertising { advertise() }
     }
 
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
@@ -269,6 +279,7 @@ import UIKit
                     lastSequence = 0
                     lastAckData = nil
                     isPaired = true
+                    pairingStatus = "配对完成，新 Mac 已连接并替换旧配对"
                     authenticatedKey = pendingKey
                     UserDefaults.standard.set(0, forKey: "lastSequence")
                     UserDefaults.standard.removeObject(forKey: "lastAck")
@@ -314,23 +325,23 @@ import UIKit
 
     private func receivePairWrite(_ request: CBATTRequest, peripheral: CBPeripheralManager) {
         guard enabled, let data = request.value, data.count <= 512,
-              let frame = try? JSONDecoder().decode(PairingFrame.self, from: data), frame.version == 1 else {
+              let frame = try? JSONDecoder().decode(PairingFrame.self, from: data), frame.version == 2 else {
             peripheral.respond(to: request, withResult: .unlikelyError)
             return
         }
         if frame.kind == .start {
-            guard pairingMode, pairingDeadline.map({ $0 > Date() }) == true,
+            guard pairingMode, shortCode != nil, pairingDeadline.map({ $0 > Date() }) == true,
                   pairAttempts < 3, pairing == nil else {
                 peripheral.respond(to: request, withResult: .unlikelyError)
                 return
             }
             do {
-                let session = try PairingResponder(start: frame, padName: deviceName)
+                let session = try PairingResponder(start: frame, code: shortCode!, padName: deviceName)
                 pairAttempts += 1
                 pairing = session
                 pairingCentral = request.central.identifier
                 peerName = frame.name ?? "Mac"
-                pairingStatus = "已连接 \(peerName)，正在生成验证码"
+                pairingStatus = "正在核验 \(peerName) 输入的验证码"
                 peripheral.respond(to: request, withResult: .success)
                 publishPair(session.offerFrame, to: request.central.identifier)
             } catch { peripheral.respond(to: request, withResult: .unlikelyError) }
@@ -343,18 +354,10 @@ import UIKit
         }
         do {
             switch frame.kind {
-            case .nonceA:
-                let response = try pairing.receiveNonceA(frame)
-                shortCode = pairing.shortCode
-                localConfirmed = false
-                pairingStatus = "请核对 Mac 与 iPad 的 6 位验证码；一致才确认"
-                peripheral.respond(to: request, withResult: .success)
-                publishPair(response, to: request.central.identifier)
             case .confirm:
                 let finish = try pairing.receiveConfirm(frame)
                 peripheral.respond(to: request, withResult: .success)
-                if let finish { finishPairing(finish) }
-                else { pairingStatus = "Mac 已确认，请在 iPad 核对后确认" }
+                finishPairing(finish)
             case .reject:
                 peripheral.respond(to: request, withResult: .success)
                 cancelPairing(reason: "Mac 已取消配对")
@@ -362,9 +365,20 @@ import UIKit
                 peripheral.respond(to: request, withResult: .unlikelyError)
             }
         } catch {
-            peripheral.respond(to: request, withResult: .unlikelyError)
-            cancelPairing(reason: "配对失败：\(error.localizedDescription)")
+            peripheral.respond(to: request, withResult: .success)
+            failPairingAttempt(reason: error.localizedDescription)
         }
+    }
+
+    private func failPairingAttempt(reason: String) {
+        if let pairing, let central = pairingCentral {
+            publishPair(PairingFrame(kind: .reject, session: pairing.session), to: central)
+        }
+        pairing = nil
+        pairingCentral = nil
+        peerName = ""
+        if pairAttempts >= 3 { cancelPairing(reason: "验证码尝试次数已用完，请重新开启配对") }
+        else { pairingStatus = "\(reason)；还可尝试 \(3 - pairAttempts) 次" }
     }
 
     private func publishAck() {
@@ -383,10 +397,8 @@ import UIKit
             pairing = nil
             pairingCentral = nil
             pairResponseData = nil
-            shortCode = nil
-            localConfirmed = false
             peerName = ""
-            pairingStatus = "连接中断，请在 Mac 重试配对"
+            pairingStatus = "连接中断；配对时间内可用同一验证码重试"
         }
         guard characteristic.uuid == Self.ackID else { return }
         subscribed.remove(central.identifier)

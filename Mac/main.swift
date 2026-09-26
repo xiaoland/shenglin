@@ -2,8 +2,45 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let action = arguments.first else {
-    print("用法：nearby-audio pair | sources | select list|add|remove [标识] | run")
+    print("用法：nearby-audio control status|pair|enabled|source|target ... | sources | select ... | run")
     exit(2)
+}
+
+if action == "control" {
+    let parts = Array(arguments.dropFirst())
+    let request: ControlRequest
+    if parts == ["status"] { request = ControlRequest(command: "status") }
+    else if parts == ["pair", "start"] { request = ControlRequest(command: "pair.start") }
+    else if parts == ["pair", "cancel"] { request = ControlRequest(command: "pair.cancel") }
+    else if parts == ["pair", "code"] {
+        print("请输入 iPad 显示的 6 位验证码：", terminator: "")
+        fflush(stdout)
+        request = ControlRequest(command: "pair.code", value: readLine())
+    }
+    else if parts.count == 3, parts[0...1] == ["pair", "choose"] {
+        request = ControlRequest(command: "pair.choose", value: parts[2])
+    } else if parts == ["enabled", "on"] { request = ControlRequest(command: "enabled.on") }
+    else if parts == ["enabled", "off"] { request = ControlRequest(command: "enabled.off") }
+    else if parts.count == 3, parts[0...1] == ["source", "add"] {
+        request = ControlRequest(command: "source.add", value: parts[2])
+    } else if parts.count == 3, parts[0...1] == ["source", "remove"] {
+        request = ControlRequest(command: "source.remove", value: parts[2])
+    } else if parts.count == 2, parts[0] == "target" {
+        request = ControlRequest(command: "target.set", value: parts[1])
+    } else {
+        print("用法：nearby-audio control status | pair start|choose <UUID>|code|cancel | enabled on|off | source add|remove <标识> | target <0...0.5>")
+        exit(2)
+    }
+    do {
+        let response = try ControlIPC.exchange(request)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        print(String(decoding: try encoder.encode(response), as: UTF8.self))
+        exit(response.ok ? 0 : 1)
+    } catch {
+        print("本机控制失败：\(error.localizedDescription)")
+        exit(1)
+    }
 }
 
 if action == "sources" {

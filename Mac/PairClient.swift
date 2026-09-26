@@ -11,12 +11,13 @@ struct NearbyPad: Identifiable {
 
 final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private let serviceID = CBUUID(string: "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF")
+    private let pairServiceID = CBUUID(string: "C985D59E-9D34-4F37-8F14-03C942690C78")
     private let writeID = CBUUID(string: "01FA287F-9E5C-4A8A-8B58-23A9808981F4")
     private let responseID = CBUUID(string: "D56446C2-AB92-43C6-B80F-BE5E964015B4")
     private let infoID = CBUUID(string: "BF903515-CC03-4056-A7D0-16E3267ABEB4")
     private let onDevices: ([NearbyPad]) -> Void
     private let onStatus: (String) -> Void
-    private let onCode: (String, String) -> Void
+    private let onNeedCode: (String) -> Void
     private let onComplete: (Data) -> Void
     private let onFailure: (String) -> Void
     private var central: CBCentralManager!
@@ -28,6 +29,8 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var infoCharacteristic: CBCharacteristic?
     private var responseSubscribed = false
     private var infoAllowsPairing = false
+    private var codeRequested = false
+    private var cancelAfterWrite = false
     private var handshake: PairingInitiator?
     private var handled = Set<PairingFrame.Kind>()
     private var stopped = false
@@ -35,11 +38,11 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var timer: Timer?
 
     init(onDevices: @escaping ([NearbyPad]) -> Void, onStatus: @escaping (String) -> Void,
-         onCode: @escaping (String, String) -> Void, onComplete: @escaping (Data) -> Void,
+         onNeedCode: @escaping (String) -> Void, onComplete: @escaping (Data) -> Void,
          onFailure: @escaping (String) -> Void) {
         self.onDevices = onDevices
         self.onStatus = onStatus
-        self.onCode = onCode
+        self.onNeedCode = onNeedCode
         self.onComplete = onComplete
         self.onFailure = onFailure
         super.init()
@@ -103,7 +106,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         guard !stopped else { return }
         onStatus("已连接，正在检查 iPad 配对模式")
         peripheral.delegate = self
-        peripheral.discoverServices([serviceID])
+        peripheral.discoverServices([pairServiceID])
     }
 
     func centralManager(_ manager: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
@@ -115,11 +118,11 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == serviceID }) else {
-            fail("未找到 Nearby Audio 服务")
+        guard error == nil, let service = peripheral.services?.first(where: { $0.uuid == pairServiceID }) else {
+            fail("iPad 尚未发布新版配对服务")
             return
         }
-        peripheral.discoverCharacteristics([writeID, responseID, infoID], for: service)
+        peripheral.discoverCharacteristics(nil, for: service)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
@@ -128,7 +131,8 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         responseCharacteristic = service.characteristics?.first(where: { $0.uuid == responseID })
         infoCharacteristic = service.characteristics?.first(where: { $0.uuid == infoID })
         guard writeCharacteristic != nil, let responseCharacteristic, let infoCharacteristic else {
-            fail("iPad App 版本过旧，请先更新")
+            let found = (service.characteristics ?? []).map { $0.uuid.uuidString }.joined(separator: ",")
+            fail("iPad 配对服务缺少新特征（已发现：\(found)）")
             return
         }
         peripheral.setNotifyValue(true, for: responseCharacteristic)
@@ -146,7 +150,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         guard error == nil, let data = characteristic.value,
               data.count <= 512, let frame = try? JSONDecoder().decode(PairingFrame.self, from: data) else { return }
         if characteristic.uuid == infoID {
-            guard frame.version == 1, frame.kind == .info else { fail("iPad 配对信息无效"); return }
+            guard frame.version == 2, frame.kind == .info else { fail("iPad 配对信息无效"); return }
             if let name = frame.name, let id = selected?.identifier {
                 names[id] = name
                 publishDevices()
@@ -165,7 +169,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         }
         guard characteristic.uuid == responseID, let handshake,
               frame.session == handshake.session else { return }
-        if frame.kind == .reject { fail("iPad 已拒绝或取消配对"); return }
+        if frame.kind == .reject { fail("验证码未通过或 iPad 已取消配对，请重新开始"); return }
         guard !handled.contains(frame.kind) else { return }
         do {
             switch frame.kind {
@@ -173,11 +177,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                 let next = try handshake.receiveOffer(frame)
                 handled.insert(.offer)
                 send(next)
-            case .nonceB:
-                try handshake.receiveNonceB(frame)
-                handled.insert(.nonceB)
-                onCode(handshake.shortCode!, handshake.peerName ?? "iPad")
-                onStatus("请逐位核对两端的 6 位验证码")
+                onStatus("正在核验验证码并等待 iPad 确认")
             case .finish:
                 let key = try handshake.receiveFinish(frame)
                 handled.insert(.finish)
@@ -189,28 +189,27 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     }
 
     private func beginIfReady() {
-        guard !stopped, responseSubscribed, infoAllowsPairing, handshake == nil else { return }
-        do {
-            let macName = Host.current().localizedName ?? "Mac"
-            let session = try PairingInitiator(macName: macName)
-            handshake = session
-            deadline = Date().addingTimeInterval(90)
-            onStatus("正在与 iPad 交换临时密钥")
-            send(session.startFrame)
-        } catch { fail("无法开始安全配对：\(error.localizedDescription)") }
+        guard !stopped, responseSubscribed, infoAllowsPairing, !codeRequested else { return }
+        codeRequested = true
+        onNeedCode(selected.flatMap { names[$0.identifier] } ?? "iPad")
+        onStatus("请输入 iPad 显示的 6 位验证码")
     }
 
-    func confirm() {
-        guard let handshake, !stopped else { return }
-        do {
-            send(try handshake.confirm())
-            onStatus("Mac 已确认，等待 iPad 确认")
-        } catch { fail("无法确认配对：\(error.localizedDescription)") }
+    func enterCode(_ code: String) throws {
+        guard !stopped, codeRequested, handshake == nil else { throw PairingError.wrongStep }
+        let macName = Host.current().localizedName ?? "Mac"
+        let session = try PairingInitiator(code: code, macName: macName)
+        handshake = session
+        deadline = Date().addingTimeInterval(90)
+        onStatus("正在进行安全配对")
+        send(session.startFrame)
     }
 
     func reject() {
-        if let handshake, !stopped { send(PairingFrame(kind: .reject, session: handshake.session)) }
-        stop()
+        guard let handshake, !stopped else { stop(); return }
+        cancelAfterWrite = true
+        send(PairingFrame(kind: .reject, session: handshake.session))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [self] in stop() }
     }
 
     private func send(_ frame: PairingFrame) {
@@ -225,6 +224,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == writeID else { return }
+        if cancelAfterWrite { stop(); return }
         guard error == nil else { fail("iPad 拒绝了配对步骤，请重新开始"); return }
         if let responseCharacteristic {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in

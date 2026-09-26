@@ -1,32 +1,29 @@
 import CryptoKit
 import Foundation
 import Security
+#if canImport(NativePAKE)
+import NativePAKE
+#endif
 
 public struct PairingFrame: Codable {
-    public enum Kind: String, Codable { case info, start, offer, nonceA, nonceB, confirm, finish, reject }
+    public enum Kind: String, Codable { case info, start, offer, confirm, finish, reject }
     private enum CodingKeys: String, CodingKey {
-        case version = "v", kind = "k", session = "s", publicKey = "p", nonce = "n"
-        case commitment = "c", name = "d", proof = "f", pairingMode = "m"
+        case version = "v", kind = "k", session = "s", message = "p", name = "d", proof = "f", pairingMode = "m"
     }
     public let version: Int
     public let kind: Kind
     public let session: Data
-    public let publicKey: Data?
-    public let nonce: Data?
-    public let commitment: Data?
+    public let message: Data?
     public let name: String?
     public let proof: Data?
     public let pairingMode: Bool?
 
-    public init(kind: Kind, session: Data, publicKey: Data? = nil, nonce: Data? = nil,
-                commitment: Data? = nil, name: String? = nil, proof: Data? = nil,
-                pairingMode: Bool? = nil) {
-        version = 1
+    public init(kind: Kind, session: Data, message: Data? = nil, name: String? = nil,
+                proof: Data? = nil, pairingMode: Bool? = nil) {
+        version = 2
         self.kind = kind
         self.session = session
-        self.publicKey = publicKey
-        self.nonce = nonce
-        self.commitment = commitment
+        self.message = message
         self.name = name
         self.proof = proof
         self.pairingMode = pairingMode
@@ -34,23 +31,60 @@ public struct PairingFrame: Codable {
 }
 
 public enum PairingError: Error, Equatable, LocalizedError {
-    case invalidMessage, wrongSession, wrongCommitment, wrongProof, expired, wrongStep
+    case invalidMessage, wrongSession, wrongCode, expired, wrongStep, cryptoFailed
 
     public var errorDescription: String? {
         switch self {
         case .invalidMessage: "配对消息无效"
         case .wrongSession: "配对会话不一致"
-        case .wrongCommitment: "配对承诺校验失败"
-        case .wrongProof: "配对确认校验失败"
+        case .wrongCode: "验证码错误或配对消息被修改"
         case .expired: "配对已超时"
         case .wrongStep: "配对步骤不正确"
+        case .cryptoFailed: "安全配对计算失败"
         }
     }
 }
 
+private final class SPAKE2 {
+    private var state: OpaquePointer?
+    let message: Data
+
+    init(code: String, role: Int32) throws {
+        guard code.utf8.count == 6, code.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else {
+            throw PairingError.wrongCode
+        }
+        var output = Data(count: 32)
+        let codeBytes = Data(code.utf8)
+        state = codeBytes.withUnsafeBytes { secret in
+            output.withUnsafeMutableBytes { message in
+                na_spake_start(role, secret.bindMemory(to: UInt8.self).baseAddress,
+                               secret.count, message.bindMemory(to: UInt8.self).baseAddress)
+            }
+        }
+        guard state != nil else { throw PairingError.cryptoFailed }
+        message = output
+    }
+
+    func finish(peer: Data) throws -> Data {
+        guard peer.count == 32, let state else { throw PairingError.invalidMessage }
+        var key = Data(count: 64)
+        let success = peer.withUnsafeBytes { bytes in
+            key.withUnsafeMutableBytes { output in
+                na_spake_finish(state, bytes.bindMemory(to: UInt8.self).baseAddress,
+                                output.bindMemory(to: UInt8.self).baseAddress)
+            }
+        }
+        na_spake_free(state)
+        self.state = nil
+        guard success == 1 else { throw PairingError.invalidMessage }
+        return key
+    }
+
+    deinit { if let state { na_spake_free(state) } }
+}
+
 private struct PairingKeys {
     let control: Data
-    let sas: SymmetricKey
     let proof: SymmetricKey
     let transcriptHash: Data
 }
@@ -59,7 +93,7 @@ private enum PairingCrypto {
     static func random16() throws -> Data {
         var data = Data(count: 16)
         let status = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
-        guard status == errSecSuccess else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+        guard status == errSecSuccess else { throw PairingError.cryptoFailed }
         return data
     }
 
@@ -83,36 +117,20 @@ private enum PairingCrypto {
         data.append(field)
     }
 
-    static func context(session: Data, macKey: Data, padKey: Data, macName: String, padName: String) -> Data {
-        var data = Data("NearbyAudio-Pair-v1".utf8)
-        for field in [session, macKey, padKey, Data(macName.utf8), Data(padName.utf8)] { append(field, to: &data) }
-        return data
-    }
-
-    static func commitment(context: Data, nonceB: Data) -> Data {
-        Data(HMAC<SHA256>.authenticationCode(for: Data("pad-commit".utf8) + context,
-                                             using: SymmetricKey(data: nonceB)))
-    }
-
-    static func derive(privateKey: P256.KeyAgreement.PrivateKey, peer: P256.KeyAgreement.PublicKey,
-                       context: Data, nonceA: Data, nonceB: Data) throws -> PairingKeys {
-        var transcript = context
-        append(nonceA, to: &transcript)
-        append(nonceB, to: &transcript)
-        let hash = Data(SHA256.hash(data: transcript))
-        let secret = try privateKey.sharedSecretFromKeyAgreement(with: peer)
-        func key(_ purpose: String) -> SymmetricKey {
-            secret.hkdfDerivedSymmetricKey(using: SHA256.self, salt: hash,
-                                           sharedInfo: Data("NearbyAudio-Pair-v1/\(purpose)".utf8), outputByteCount: 32)
+    static func derive(secret: Data, session: Data, macName: String, padName: String,
+                       macMessage: Data, padMessage: Data) -> PairingKeys {
+        var transcript = Data("NearbyAudio-SPAKE2-v2".utf8)
+        for field in [session, Data(macName.utf8), Data(padName.utf8), macMessage, padMessage] {
+            append(field, to: &transcript)
         }
-        let control = key("control").withUnsafeBytes { Data($0) }
-        return PairingKeys(control: control, sas: key("sas"), proof: key("proof"), transcriptHash: hash)
-    }
-
-    static func code(_ keys: PairingKeys) -> String {
-        let digest = Data(HMAC<SHA256>.authenticationCode(for: keys.transcriptHash, using: keys.sas))
-        let number = digest.prefix(4).reduce(UInt32(0)) { ($0 << 8) | UInt32($1) } % 1_000_000
-        return String(format: "%06d", number)
+        let hash = Data(SHA256.hash(data: transcript))
+        let material = SymmetricKey(data: secret)
+        func key(_ purpose: String) -> SymmetricKey {
+            HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: hash,
+                                   info: Data("NearbyAudio-SPAKE2-v2/\(purpose)".utf8), outputByteCount: 32)
+        }
+        return PairingKeys(control: key("control").withUnsafeBytes { Data($0) },
+                           proof: key("proof"), transcriptHash: hash)
     }
 
     static func proof(_ role: String, keys: PairingKeys) -> Data {
@@ -127,68 +145,61 @@ private enum PairingCrypto {
     }
 }
 
+enum PairingCode {
+    static func generate() throws -> String {
+        var value: UInt32 = 0
+        // Rejection sampling keeps all six-digit codes equally likely.
+        repeat {
+            let status = withUnsafeMutableBytes(of: &value) {
+                SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!)
+            }
+            guard status == errSecSuccess else { throw PairingError.cryptoFailed }
+        } while value >= 4_294_000_000
+        return String(format: "%06d", value % 1_000_000)
+    }
+}
+
 public final class PairingInitiator {
-    private enum Step { case started, offered, ready, confirmed, finished }
-    private let privateKey = P256.KeyAgreement.PrivateKey()
-    private let nonceA: Data
+    private enum Step { case started, ready, confirmed, finished }
+    private let pake: SPAKE2
     private let macName: String
     private let deadline: Date
     private var step: Step = .started
-    private var peerKey: P256.KeyAgreement.PublicKey?
-    public private(set) var peerName: String?
-    private var peerCommitment: Data?
     private var keys: PairingKeys?
+    public private(set) var peerName: String?
     public let session: Data
-    public private(set) var shortCode: String?
 
-    public init(macName: String, now: Date = Date()) throws {
+    public init(code: String, macName: String, now: Date = Date()) throws {
         self.macName = PairingCrypto.name(macName)
-        nonceA = try PairingCrypto.random16()
+        pake = try SPAKE2(code: code, role: 0)
         session = try PairingCrypto.random16()
         deadline = now.addingTimeInterval(90)
     }
 
     public var startFrame: PairingFrame {
-        PairingFrame(kind: .start, session: session,
-                     publicKey: privateKey.publicKey.x963Representation, name: macName)
+        PairingFrame(kind: .start, session: session, message: pake.message, name: macName)
     }
 
     private func check(_ frame: PairingFrame, kind: PairingFrame.Kind, now: Date) throws {
         guard now < deadline else { throw PairingError.expired }
-        guard frame.version == 1, frame.kind == kind else { throw PairingError.invalidMessage }
+        guard frame.version == 2, frame.kind == kind else { throw PairingError.invalidMessage }
         guard frame.session == session else { throw PairingError.wrongSession }
     }
 
     public func receiveOffer(_ frame: PairingFrame, now: Date = Date()) throws -> PairingFrame {
         guard step == .started else { throw PairingError.wrongStep }
         try check(frame, kind: .offer, now: now)
-        guard let bytes = frame.publicKey, bytes.count == 65,
-              let name = PairingCrypto.validName(frame.name),
-              let commitment = frame.commitment, commitment.count == 32,
-              let peer = try? P256.KeyAgreement.PublicKey(x963Representation: bytes) else { throw PairingError.invalidMessage }
-        peerKey = peer
+        guard let message = frame.message, message.count == 32,
+              let name = PairingCrypto.validName(frame.name) else { throw PairingError.invalidMessage }
+        let secret = try pake.finish(peer: message)
+        keys = PairingCrypto.derive(secret: secret, session: session, macName: macName,
+                                    padName: name, macMessage: pake.message, padMessage: message)
         peerName = name
-        peerCommitment = commitment
-        step = .offered
-        return PairingFrame(kind: .nonceA, session: session, nonce: nonceA)
-    }
-
-    public func receiveNonceB(_ frame: PairingFrame, now: Date = Date()) throws {
-        guard step == .offered, let peerKey, let peerName, let peerCommitment else { throw PairingError.wrongStep }
-        try check(frame, kind: .nonceB, now: now)
-        guard let nonceB = frame.nonce, nonceB.count == 16 else { throw PairingError.invalidMessage }
-        let context = PairingCrypto.context(session: session, macKey: privateKey.publicKey.x963Representation,
-                                            padKey: peerKey.x963Representation, macName: macName, padName: peerName)
-        guard PairingCrypto.matches(peerCommitment, PairingCrypto.commitment(context: context, nonceB: nonceB))
-        else { throw PairingError.wrongCommitment }
-        let derived = try PairingCrypto.derive(privateKey: privateKey, peer: peerKey,
-                                               context: context, nonceA: nonceA, nonceB: nonceB)
-        keys = derived
-        shortCode = PairingCrypto.code(derived)
         step = .ready
+        return try confirm(now: now)
     }
 
-    public func confirm(now: Date = Date()) throws -> PairingFrame {
+    private func confirm(now: Date) throws -> PairingFrame {
         guard now < deadline else { throw PairingError.expired }
         guard step == .ready, let keys else { throw PairingError.wrongStep }
         step = .confirmed
@@ -201,91 +212,45 @@ public final class PairingInitiator {
         try check(frame, kind: .finish, now: now)
         guard let proof = frame.proof,
               PairingCrypto.matches(proof, PairingCrypto.proof("pad-confirm", keys: keys))
-        else { throw PairingError.wrongProof }
+        else { throw PairingError.wrongCode }
         step = .finished
         return keys.control
     }
 }
 
 public final class PairingResponder {
-    private enum Step { case offered, ready, finished }
-    private let privateKey = P256.KeyAgreement.PrivateKey()
-    private let nonceB: Data
-    private let peerKey: P256.KeyAgreement.PublicKey
-    private let macName: String
-    private let padName: String
+    private enum Step { case offered, finished }
+    private let keys: PairingKeys
     private let deadline: Date
     private var step: Step = .offered
-    private var keys: PairingKeys?
-    private var macConfirmed = false
-    private var padConfirmed = false
     public let session: Data
     public let offerFrame: PairingFrame
-    public private(set) var shortCode: String?
-    public var confirmedKey: Data? { step == .finished ? keys?.control : nil }
+    public var confirmedKey: Data? { step == .finished ? keys.control : nil }
 
-    public init(start: PairingFrame, padName: String, now: Date = Date()) throws {
-        guard start.version == 1, start.kind == .start, start.session.count == 16,
-              let bytes = start.publicKey, bytes.count == 65,
-              let name = PairingCrypto.validName(start.name),
-              let peer = try? P256.KeyAgreement.PublicKey(x963Representation: bytes) else { throw PairingError.invalidMessage }
+    public init(start: PairingFrame, code: String, padName: String, now: Date = Date()) throws {
+        guard start.version == 2, start.kind == .start, start.session.count == 16,
+              let message = start.message, message.count == 32,
+              let macName = PairingCrypto.validName(start.name) else { throw PairingError.invalidMessage }
         session = start.session
-        peerKey = peer
-        macName = name
-        self.padName = PairingCrypto.name(padName)
-        nonceB = try PairingCrypto.random16()
         deadline = now.addingTimeInterval(90)
-        let context = PairingCrypto.context(session: session, macKey: bytes,
-                                            padKey: privateKey.publicKey.x963Representation,
-                                            macName: macName, padName: self.padName)
-        offerFrame = PairingFrame(kind: .offer, session: session,
-                                  publicKey: privateKey.publicKey.x963Representation,
-                                  commitment: PairingCrypto.commitment(context: context, nonceB: nonceB),
-                                  name: self.padName)
+        let normalizedPadName = PairingCrypto.name(padName)
+        let pake = try SPAKE2(code: code, role: 1)
+        let secret = try pake.finish(peer: message)
+        keys = PairingCrypto.derive(secret: secret, session: session, macName: macName,
+                                    padName: normalizedPadName, macMessage: message, padMessage: pake.message)
+        offerFrame = PairingFrame(kind: .offer, session: session, message: pake.message, name: normalizedPadName)
     }
 
-    private func check(_ frame: PairingFrame, kind: PairingFrame.Kind, now: Date) throws {
-        guard now < deadline else { throw PairingError.expired }
-        guard frame.version == 1, frame.kind == kind else { throw PairingError.invalidMessage }
-        guard frame.session == session else { throw PairingError.wrongSession }
-    }
-
-    public func receiveNonceA(_ frame: PairingFrame, now: Date = Date()) throws -> PairingFrame {
+    public func receiveConfirm(_ frame: PairingFrame, now: Date = Date()) throws -> PairingFrame {
         guard step == .offered else { throw PairingError.wrongStep }
-        try check(frame, kind: .nonceA, now: now)
-        guard let nonceA = frame.nonce, nonceA.count == 16 else { throw PairingError.invalidMessage }
-        let context = PairingCrypto.context(session: session, macKey: peerKey.x963Representation,
-                                            padKey: privateKey.publicKey.x963Representation,
-                                            macName: macName, padName: padName)
-        let derived = try PairingCrypto.derive(privateKey: privateKey, peer: peerKey,
-                                               context: context, nonceA: nonceA, nonceB: nonceB)
-        keys = derived
-        shortCode = PairingCrypto.code(derived)
-        step = .ready
-        return PairingFrame(kind: .nonceB, session: session, nonce: nonceB)
-    }
-
-    private func finishIfBothConfirmed() -> PairingFrame? {
-        guard macConfirmed, padConfirmed, step == .ready, let keys else { return nil }
+        guard now < deadline else { throw PairingError.expired }
+        guard frame.version == 2, frame.kind == .confirm else { throw PairingError.invalidMessage }
+        guard frame.session == session else { throw PairingError.wrongSession }
+        guard let proof = frame.proof,
+              PairingCrypto.matches(proof, PairingCrypto.proof("mac-confirm", keys: keys))
+        else { throw PairingError.wrongCode }
         step = .finished
         return PairingFrame(kind: .finish, session: session,
                             proof: PairingCrypto.proof("pad-confirm", keys: keys))
-    }
-
-    public func confirmLocal(now: Date = Date()) throws -> PairingFrame? {
-        guard now < deadline else { throw PairingError.expired }
-        guard step == .ready else { throw PairingError.wrongStep }
-        padConfirmed = true
-        return finishIfBothConfirmed()
-    }
-
-    public func receiveConfirm(_ frame: PairingFrame, now: Date = Date()) throws -> PairingFrame? {
-        guard step == .ready, let keys else { throw PairingError.wrongStep }
-        try check(frame, kind: .confirm, now: now)
-        guard let proof = frame.proof,
-              PairingCrypto.matches(proof, PairingCrypto.proof("mac-confirm", keys: keys))
-        else { throw PairingError.wrongProof }
-        macConfirmed = true
-        return finishIfBothConfirmed()
     }
 }

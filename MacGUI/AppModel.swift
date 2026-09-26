@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 @MainActor final class AppModel: ObservableObject {
     @Published private(set) var connection = "正在启动"
     @Published private(set) var lastAction = "尚无音量操作"
+    @Published private(set) var lastAckSequence: UInt64?
     @Published private(set) var sources = [SourceCandidate]()
     @Published private(set) var inputCount = 0
     @Published private(set) var paired = false
@@ -13,10 +14,10 @@ import UniformTypeIdentifiers
     @Published private(set) var loginEnabled = false
     @Published private(set) var nearbyPads = [NearbyPad]()
     @Published private(set) var pairingStatus = ""
-    @Published private(set) var pairingCode: String?
+    @Published var pairingCodeInput = ""
+    @Published private(set) var pairingAwaitingCode = false
     @Published private(set) var pairingPadName = ""
     @Published private(set) var pairingActive = false
-    @Published private(set) var pairingConfirmed = false
     @Published var target = 0.0
     @Published var showPairing = false
     @Published var errorMessage = ""
@@ -26,6 +27,7 @@ import UniformTypeIdentifiers
     private let runLock = RunLock()
     private var client: BLEClient?
     private var pairClient: PairClient?
+    private var controlServer: ControlServer?
     private var currentKey: Data?
     private var pendingKey: Data?
     private var pendingExpiresAt: Date?
@@ -51,6 +53,11 @@ import UniformTypeIdentifiers
     func start() {
         guard !started, runLock != nil else { return }
         started = true
+        do {
+            controlServer = try ControlServer { [weak self] request in
+                self?.handleControl(request) ?? ControlResponse(ok: false, message: "应用正在退出", status: nil)
+            }
+        } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
         input = InputActivity { [weak self] active, count in
             Task { @MainActor [weak self] in
@@ -61,8 +68,10 @@ import UniformTypeIdentifiers
         }
         input?.poll()
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
-            self?.input?.poll()
-            self?.expirePendingPairing()
+            Task { @MainActor [weak self] in
+                self?.input?.poll()
+                self?.expirePendingPairing()
+            }
         }
         connection = "正在读取本机配对信息"
         Task.detached { [weak self] in
@@ -72,21 +81,28 @@ import UniformTypeIdentifiers
                 var pendingError: String?
                 do { pending = try MacCredentials.pendingPairing() }
                 catch { pendingError = "无法读取待激活配对：\(error.localizedDescription)" }
-                await MainActor.run {
-                    guard let self else { return }
-                    self.currentKey = key
-                    if let pending {
-                        self.pendingKey = pending.key
-                        self.pendingExpiresAt = pending.expiresAt
-                        self.useKey(pending.key)
-                    } else if let key { self.useKey(key) }
-                    else { self.beginPairing() }
-                    if let pendingError { self.errorMessage = pendingError }
-                }
+                await self?.loadedKeys(key, pending: pending, errorMessage: pendingError)
             } catch {
-                await MainActor.run { self?.connection = "无法读取配对信息"; self?.errorMessage = error.localizedDescription }
+                await self?.startupFailed(error.localizedDescription)
             }
         }
+    }
+
+    private func loadedKeys(_ key: Data?, pending: (key: Data, expiresAt: Date)?, errorMessage: String?) {
+        currentKey = key
+        if let pending {
+            pendingKey = pending.key
+            pendingExpiresAt = pending.expiresAt
+            pairingStatus = "正在验证上次的新配对"
+            useKey(pending.key)
+        } else if let key { useKey(key) }
+        else { beginPairing() }
+        if let errorMessage { self.errorMessage = errorMessage }
+    }
+
+    private func startupFailed(_ message: String) {
+        connection = "无法读取配对信息"
+        errorMessage = message
     }
 
     private func useKey(_ key: Data?) {
@@ -111,13 +127,18 @@ import UniformTypeIdentifiers
     }
 
     private func accept(_ ack: ControlAck, key: Data) {
+        lastAckSequence = ack.sequence
         if pendingKey == key {
             do {
                 try MacCredentials.promotePairing(key)
                 currentKey = key
                 pendingKey = nil
                 pendingExpiresAt = nil
-            } catch { errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)" }
+                pairingStatus = "配对完成，iPad 已接受新密钥"
+            } catch {
+                errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)"
+                pairingStatus = errorMessage
+            }
         }
         if !targetEditing, (0...500).contains(ack.targetMilli) {
             target = Double(ack.targetMilli) / 1000
@@ -144,11 +165,19 @@ import UniformTypeIdentifiers
     }
 
     func toggleSource(_ source: SourceCandidate) {
+        _ = setSource(source.selector, add: !source.isSelected)
+    }
+
+    private func setSource(_ selector: String, add: Bool) -> Bool {
         do {
-            try SelectionStore.change(source.selector, add: !source.isSelected)
+            try SelectionStore.change(selector, add: add)
             refreshSources()
             input?.poll()
-        } catch { errorMessage = "无法保存应用选择：\(error.localizedDescription)" }
+            return true
+        } catch {
+            errorMessage = "无法保存应用选择：\(error.localizedDescription)"
+            return false
+        }
     }
 
     func chooseApp() {
@@ -188,27 +217,30 @@ import UniformTypeIdentifiers
         connection = "正在配对"
         showPairing = true
         nearbyPads = []
-        pairingCode = nil
+        pairingCodeInput = ""
+        pairingAwaitingCode = false
         pairingPadName = ""
         pairingActive = true
-        pairingConfirmed = false
         pairingStatus = "正在查找附近的 iPad"
         errorMessage = ""
         pairClient = PairClient(onDevices: { [weak self] devices in
             self?.nearbyPads = devices
         }, onStatus: { [weak self] status in
             self?.pairingStatus = status
-        }, onCode: { [weak self] code, name in
-            self?.pairingCode = code
+        }, onNeedCode: { [weak self] name in
             self?.pairingPadName = name
+            self?.pairingAwaitingCode = true
         }, onComplete: { [weak self] key in
             guard let self else { return }
             self.pairClient = nil
             self.pairingActive = false
+            self.pairingCodeInput = ""
+            self.pairingAwaitingCode = false
             do {
                 let deadline = try MacCredentials.stagePairing(key)
                 self.pendingKey = key
                 self.pendingExpiresAt = deadline
+                self.pairingStatus = "验证码已通过，正在验证新密钥"
                 self.useKey(key)
             } catch {
                 self.restorePreviousPairing()
@@ -219,17 +251,28 @@ import UniformTypeIdentifiers
             self.pairClient = nil
             self.pairingActive = false
             self.pairingStatus = message
-            self.pairingCode = nil
+            self.pairingCodeInput = ""
+            self.pairingAwaitingCode = false
             self.restorePreviousPairing()
             self.errorMessage = message
         })
     }
 
     func choosePad(_ id: UUID) { pairClient?.choose(id) }
-    func confirmPairing() {
-        guard !pairingConfirmed, let pairClient else { return }
-        pairingConfirmed = true
-        pairClient.confirm()
+    @discardableResult func submitPairingCode(_ code: String) -> Bool {
+        guard pairingAwaitingCode, let pairClient else {
+            pairingStatus = "请先选择处于配对模式的 iPad"
+            return false
+        }
+        do {
+            try pairClient.enterCode(code.trimmingCharacters(in: .whitespacesAndNewlines))
+            pairingCodeInput = ""
+            pairingAwaitingCode = false
+            return true
+        } catch {
+            pairingStatus = error.localizedDescription
+            return false
+        }
     }
 
     func cancelPairing() {
@@ -237,7 +280,8 @@ import UniformTypeIdentifiers
         pairClient = nil
         pairingActive = false
         showPairing = false
-        pairingCode = nil
+        pairingCodeInput = ""
+        pairingAwaitingCode = false
         restorePreviousPairing()
     }
 
@@ -254,6 +298,51 @@ import UniformTypeIdentifiers
         self.pendingExpiresAt = nil
         restorePreviousPairing()
         errorMessage = "新配对未能连接 iPad，旧配对已保留；请重新配对。"
+    }
+
+    private func controlStatus() -> ControlStatus {
+        ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
+                      lastAction: lastAction, lastAckSequence: lastAckSequence,
+                      target: targetKnown ? target : nil,
+                      loginEnabled: loginEnabled, pairingActive: pairingActive,
+                      pairingStatus: pairingStatus, pairingAwaitingCode: pairingAwaitingCode,
+                      pairingPadName: pairingPadName,
+                      pairingPendingActivation: pendingKey != nil,
+                      nearbyPads: nearbyPads.map { .init(id: $0.id, name: $0.name) },
+                      sources: sources.map { .init(selector: $0.selector, name: $0.name,
+                                                   selected: $0.isSelected, active: $0.isActive) },
+                      error: errorMessage)
+    }
+
+    private func handleControl(_ request: ControlRequest) -> ControlResponse {
+        var problem: String?
+        switch request.command {
+        case "status": refreshSources()
+        case "pair.start":
+            beginPairing()
+            if !pairingActive { problem = errorMessage }
+        case "pair.cancel": cancelPairing()
+        case "pair.choose":
+            if let value = request.value, let id = UUID(uuidString: value),
+               nearbyPads.contains(where: { $0.id == id }), pairingActive { choosePad(id) }
+            else { problem = "设备不在当前扫描列表或配对未启动" }
+        case "pair.code":
+            if let value = request.value, !submitPairingCode(value) { problem = pairingStatus }
+            else if request.value == nil { problem = "请输入 6 位验证码" }
+        case "enabled.on": setEnabled(true)
+        case "enabled.off": setEnabled(false)
+        case "source.add", "source.remove":
+            if let value = request.value, let selector = SelectionStore.normalized(value) {
+                if !setSource(selector, add: request.command == "source.add") { problem = errorMessage }
+            } else { problem = "应用标识无效" }
+        case "target.set":
+            if let value = request.value, let number = Double(value), (0...0.5).contains(number) {
+                target = number
+                targetEditChanged(false)
+            } else { problem = "目标音量须为 0 到 0.5" }
+        default: problem = "未知命令"
+        }
+        return ControlResponse(ok: problem == nil, message: problem, status: controlStatus())
     }
 
     func targetEditChanged(_ editing: Bool) {

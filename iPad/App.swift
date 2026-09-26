@@ -27,19 +27,15 @@ struct SystemVolumeView: UIViewRepresentable {
                     SystemVolumeView().frame(height: 44)
                 }
                 Section("Mac 配对") {
-                    Text(server.isPaired ? "已有 Mac 配对。新配对成功连接后会替换旧 Mac。" : "尚未配对 Mac。")
+                    Text(server.pairingPendingActivation ? "新配对已验证，等待 Mac 连接。"
+                         : server.isPaired ? "已有 Mac 配对。新配对成功连接后会替换旧 Mac。" : "尚未配对 Mac。")
                     Text(server.pairingStatus).font(.footnote)
                     if let code = server.shortCode {
-                        Text("请求配对：\(server.peerName)")
                         Text(code).font(.system(size: 34, weight: .bold, design: .monospaced))
                             .accessibilityLabel("配对验证码 \(code)")
-                        Text("请逐位核对 Mac 上显示的 6 位数字；不一致请拒绝。")
+                        Text("在 Mac 输入这 6 位数字。验证码仅在本次配对中有效。")
                             .font(.footnote)
-                        HStack {
-                            Button("数字一致，确认配对") { server.confirmPairing() }
-                                .disabled(server.localConfirmed)
-                            Button("拒绝") { server.rejectPairing() }
-                        }
+                        Button("取消配对") { server.rejectPairing() }
                     } else if server.pairingMode {
                         Button("取消配对") { server.rejectPairing() }
                     } else {

@@ -3,73 +3,49 @@ import NearbyAudioCore
 import XCTest
 
 final class PairingTests: XCTestCase {
-    func testBothUsersMustConfirmSameShortCodeBeforeControlKeyExists() throws {
-        let mac = try PairingInitiator(macName: "My Mac")
-        let pad = try PairingResponder(start: mac.startFrame, padName: "My iPad")
-        for name in [String(repeating: "测", count: 32), String(repeating: "\\", count: 32)] {
-            XCTAssertLessThanOrEqual(try JSONEncoder().encode(PairingInitiator(macName: name).startFrame).count, 182)
-        }
-        let nonceA = try mac.receiveOffer(pad.offerFrame)
-        let nonceB = try pad.receiveNonceA(nonceA)
-        try mac.receiveNonceB(nonceB)
-        XCTAssertEqual(mac.shortCode, pad.shortCode)
-        XCTAssertEqual(mac.shortCode?.count, 6)
+    func testOneTimeCodeAuthenticatesBothSidesBeforeKeyIsUsable() throws {
+        let mac = try PairingInitiator(code: "004219", macName: "My Mac")
+        let pad = try PairingResponder(start: mac.startFrame, code: "004219", padName: "My iPad")
         XCTAssertNil(pad.confirmedKey)
-
-        let macProof = try mac.confirm()
-        XCTAssertNil(try pad.receiveConfirm(macProof))
+        let proof = try mac.receiveOffer(pad.offerFrame)
         XCTAssertNil(pad.confirmedKey)
-        let finish = try XCTUnwrap(pad.confirmLocal())
-        let macKey = try mac.receiveFinish(finish)
-        XCTAssertEqual(macKey, pad.confirmedKey)
-        XCTAssertEqual(macKey.count, 32)
+        let finish = try pad.receiveConfirm(proof)
+        XCTAssertEqual(try mac.receiveFinish(finish), pad.confirmedKey)
+        XCTAssertEqual(pad.confirmedKey?.count, 32)
     }
 
-    func testTamperReplayAndFalseConfirmationFail() throws {
-        let mac = try PairingInitiator(macName: "Mac")
-        let pad = try PairingResponder(start: mac.startFrame, padName: "iPad")
-        let anotherMac = try PairingInitiator(macName: "Mac")
-        XCTAssertThrowsError(try anotherMac.receiveOffer(pad.offerFrame)) {
-            XCTAssertEqual($0 as? PairingError, .wrongSession)
+    func testWrongCodeAndModifiedTranscriptNeverConfirmKey() throws {
+        let mac = try PairingInitiator(code: "123456", macName: "Mac")
+        let pad = try PairingResponder(start: mac.startFrame, code: "654321", padName: "iPad")
+        XCTAssertThrowsError(try pad.receiveConfirm(mac.receiveOffer(pad.offerFrame))) {
+            XCTAssertEqual($0 as? PairingError, .wrongCode)
         }
-        let forgedOffer = PairingFrame(kind: .offer, session: pad.session,
-                                       publicKey: pad.offerFrame.publicKey,
-                                       commitment: Data(repeating: 0, count: 32), name: pad.offerFrame.name)
-        let nonceA = try mac.receiveOffer(forgedOffer)
-        let nonceB = try pad.receiveNonceA(nonceA)
-        XCTAssertThrowsError(try mac.receiveNonceB(nonceB)) {
-            XCTAssertEqual($0 as? PairingError, .wrongCommitment)
-        }
+        XCTAssertNil(pad.confirmedKey)
 
-        let honestMac = try PairingInitiator(macName: "Mac")
-        let honestPad = try PairingResponder(start: honestMac.startFrame, padName: "iPad")
-        try honestMac.receiveNonceB(honestPad.receiveNonceA(honestMac.receiveOffer(honestPad.offerFrame)))
-        let forgedProof = PairingFrame(kind: .confirm, session: honestPad.session,
-                                       proof: Data(repeating: 0, count: 32))
-        XCTAssertThrowsError(try honestPad.receiveConfirm(forgedProof)) {
-            XCTAssertEqual($0 as? PairingError, .wrongProof)
+        let honestMac = try PairingInitiator(code: "123456", macName: "Mac")
+        let honestPad = try PairingResponder(start: honestMac.startFrame, code: "123456", padName: "iPad")
+        let changedOffer = PairingFrame(kind: .offer, session: honestPad.session,
+                                        message: honestPad.offerFrame.message, name: "Other iPad")
+        XCTAssertThrowsError(try honestPad.receiveConfirm(honestMac.receiveOffer(changedOffer))) {
+            XCTAssertEqual($0 as? PairingError, .wrongCode)
         }
         XCTAssertNil(honestPad.confirmedKey)
     }
 
-    func testExpiredOrUnconfirmedSessionCannotFinish() throws {
+    func testSessionReplayAndExpiryAreRejected() throws {
         let start = Date(timeIntervalSince1970: 100)
-        let mac = try PairingInitiator(macName: "Mac", now: start)
-        let pad = try PairingResponder(start: mac.startFrame, padName: "iPad", now: start)
+        let mac = try PairingInitiator(code: "000000", macName: "Mac", now: start)
+        let pad = try PairingResponder(start: mac.startFrame, code: "000000", padName: "iPad", now: start)
+        let anotherMac = try PairingInitiator(code: "000000", macName: "Mac", now: start)
+        XCTAssertThrowsError(try anotherMac.receiveOffer(pad.offerFrame, now: start)) {
+            XCTAssertEqual($0 as? PairingError, .wrongSession)
+        }
         XCTAssertThrowsError(try mac.receiveOffer(pad.offerFrame, now: start.addingTimeInterval(91))) {
             XCTAssertEqual($0 as? PairingError, .expired)
         }
         XCTAssertNil(pad.confirmedKey)
-
-        let freshMac = try PairingInitiator(macName: "Mac")
-        let freshPad = try PairingResponder(start: freshMac.startFrame, padName: "iPad")
-        try freshMac.receiveNonceB(freshPad.receiveNonceA(freshMac.receiveOffer(freshPad.offerFrame)))
-        XCTAssertNil(try freshPad.confirmLocal())
-        XCTAssertNil(freshPad.confirmedKey)
-        let prematureFinish = PairingFrame(kind: .finish, session: freshMac.session,
-                                           proof: Data(repeating: 0, count: 32))
-        XCTAssertThrowsError(try freshMac.receiveFinish(prematureFinish)) {
-            XCTAssertEqual($0 as? PairingError, .wrongStep)
+        XCTAssertThrowsError(try PairingInitiator(code: "12x456", macName: "Mac")) {
+            XCTAssertEqual($0 as? PairingError, .wrongCode)
         }
     }
 }

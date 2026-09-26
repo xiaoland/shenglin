@@ -63,15 +63,16 @@ private struct ControlPanel: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                     Text(model.pairingStatus).font(.caption)
-                    if let code = model.pairingCode {
+                    if model.pairingAwaitingCode {
                         Text(model.pairingPadName).font(.subheadline)
-                        Text(code).font(.system(size: 34, weight: .bold, design: .monospaced))
-                            .accessibilityLabel("配对验证码 \(code)")
-                        Text("请逐位核对 iPad 上的 6 位数字；不一致请取消。")
+                        TextField("iPad 上的 6 位验证码", text: $model.pairingCodeInput)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit { model.submitPairingCode(model.pairingCodeInput) }
+                        Text("输入 iPad 显示的数字，一次完成验证。")
                             .font(.caption)
                         HStack {
-                            Button("数字一致，确认配对") { model.confirmPairing() }
-                                .disabled(model.pairingConfirmed)
+                            Button("验证并配对") { model.submitPairingCode(model.pairingCodeInput) }
+                                .disabled(model.pairingCodeInput.count != 6)
                             Button("取消") { model.cancelPairing() }
                         }
                     } else {

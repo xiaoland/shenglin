@@ -3,6 +3,7 @@ set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$repo"
+scripts/build-pake.sh macos
 xcodebuild -project MacGUI/NearbyAudioMac.xcodeproj -scheme NearbyAudioMac \
     -configuration Release -sdk macosx -destination 'generic/platform=macOS' \
     -derivedDataPath local/MacDerived CODE_SIGNING_ALLOWED=NO build
