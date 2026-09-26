@@ -20,6 +20,12 @@ import UniformTypeIdentifiers
     @Published private(set) var pairingPadName = ""
     @Published private(set) var pairingActive = false
     @Published var target = 0.0
+    @Published var macTarget = 0.0
+    @Published private(set) var spaceMode: SpaceMode
+    @Published private(set) var bleReachable = false
+    @Published private(set) var wifiVerified = false
+    @Published private(set) var wifiIssue: String?
+    @Published private(set) var spaceAllowed = false
     @Published var showPairing = false
     @Published var errorMessage = ""
     @Published private(set) var enabled: Bool
@@ -27,12 +33,19 @@ import UniformTypeIdentifiers
     private let preferences = MacPreferences.defaults
     private let runLock = RunLock()
     private var client: BLEClient?
+    private var wifiPeer: WiFiPeer?
+    private var spaceGate = SpaceGate()
+    private var pendingTargetMilli: Int?
+    private var quitting = false
     private var pairClient: PairClient?
     private var controlServer: ControlServer?
     private var currentKey: Data?
     private var pendingKey: Data?
     private var pendingExpiresAt: Date?
     private var input: InputActivity?
+    private var localOutput: MacQuietVolume?
+    private var peerLedger = (MacPreferences.defaults.data(forKey: "peerDemandLedger")
+        .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
     private var timer: Timer?
     private var started = false
     private var targetEditing = false
@@ -40,10 +53,15 @@ import UniformTypeIdentifiers
     private var pairingGeneration = 0
     private var credentialLoadGeneration = 0
 
-    var connection: String { connectionState.text }
-    var isConnected: Bool { connectionState.isReady }
+    var connection: String { wifiVerified && !connectionState.isReady ? "Wi-Fi 已认证连接" : connectionState.text }
+    var isConnected: Bool { connectionState.isReady || wifiVerified }
     var inputCount: Int { inputState.count }
     var inputError: String? { inputState.error }
+    private var rawSpaceAllowed: Bool { spaceMode.allows(ble: bleReachable, wifi: wifiVerified) }
+    var spaceStatus: String {
+        let summary = "蓝牙\(bleReachable ? "已验证" : "未验证") · Wi-Fi 局域网\(wifiVerified ? "已认证互通" : "未验证") · \(rawSpaceAllowed ? "允许协同" : spaceAllowed ? "短断连宽限" : "等待空间条件")"
+        return wifiIssue.map { "\(summary) · Wi-Fi 错误：\($0)" } ?? summary
+    }
 
     var iconName: String {
         if runLock == nil || !paired { return "exclamationmark.triangle.fill" }
@@ -54,6 +72,8 @@ import UniformTypeIdentifiers
 
     init() {
         enabled = preferences.object(forKey: "coordinationEnabled") as? Bool ?? true
+        spaceMode = SpaceMode(rawValue: preferences.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
+        macTarget = preferences.object(forKey: "localOutputTarget") as? Double ?? 0
         loginEnabled = SMAppService.mainApp.status == .enabled
         if runLock == nil { connectionState = .message("另一个 Nearby Audio 控制程序正在运行") }
         Task { @MainActor [weak self] in self?.start() }
@@ -68,11 +88,18 @@ import UniformTypeIdentifiers
             }
         } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
+        localOutput = MacQuietVolume { [weak self] in
+            guard let self else { return }
+            self.peerLedger.takeOver(at: Int64(Date().timeIntervalSince1970))
+            self.persistPeerLedger()
+            self.lastAction = "保留了你手动调整的 Mac 音量"
+        }
+        localOutput?.recoverPreviousRound()
         input = InputActivity { [weak self] observation in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.inputState = observation
-                self.client?.setDesired(self.enabled && observation.needsQuiet)
+                self.publishLocalDemand()
             }
         }
         input?.poll()
@@ -80,6 +107,8 @@ import UniformTypeIdentifiers
             Task { @MainActor [weak self] in
                 self?.input?.poll()
                 self?.expirePendingPairing()
+                self?.refreshSpace()
+                self?.expirePeerRequests()
             }
         }
         connectionState = .message("正在读取本机配对信息")
@@ -125,11 +154,25 @@ import UniformTypeIdentifiers
         let generation = clientGeneration
         client?.stop()
         client = nil
+        wifiPeer?.stop()
+        wifiPeer = nil
+        bleReachable = false
+        wifiVerified = false
+        wifiIssue = nil
+        spaceGate.reset()
+        spaceAllowed = false
         guard let key, key.count == 32 else {
             paired = false
             connectionState = .message("尚未配对")
             showPairing = true
             return
+        }
+        let source = Authentication.sign("paired-peer-id", key: key)
+        if peerLedger.records.keys.contains(where: { $0 != source }) {
+            let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
+            if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+            peerLedger = PeerDemandLedger()
+            persistPeerLedger()
         }
         paired = true
         showPairing = false
@@ -139,31 +182,49 @@ import UniformTypeIdentifiers
             Task { @MainActor [weak self] in
                 guard let self, self.clientGeneration == generation else { return }
                 self.connectionState = status
+                self.bleReachable = status.isReady
+                self.refreshSpace()
             }
         }, onAck: { [weak self] ack in
             Task { @MainActor [weak self] in
                 guard let self, self.clientGeneration == generation else { return }
                 self.accept(ack, key: key)
             }
+        }, onPeerAck: { [weak self] ack in
+            Task { @MainActor [weak self] in
+                guard let self, self.clientGeneration == generation else { return }
+                self.acceptPeerAck(ack, key: key)
+            }
+        }, onPeerState: { [weak self] update, done in
+            Task { @MainActor [weak self] in
+                guard let self, self.clientGeneration == generation else { done("stale"); return }
+                done(self.receivePeerState(update, key: key))
+            }
         })
-        client?.setDesired(enabled && inputState.needsQuiet)
+        publishLocalDemand()
+        wifiPeer = WiFiPeer(role: .mac, key: key, localUpdate: { [unowned self] in
+            PeerQuietUpdate(origin: "mac", revision: MacCredentials.nextSequence(),
+                            quiet: !self.quitting && self.enabled && self.inputState.needsQuiet && self.spaceAllowed,
+                            validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
+                            targetMilli: self.pendingTargetMilli, key: key)
+        }, receiveUpdate: { [unowned self] update in
+            (self.receivePeerState(update, key: key), nil)
+        }, receiveAck: { [unowned self] ack in
+            self.acceptPeerAck(ack, key: key)
+        }, verifiedChanged: { [unowned self] verified in
+            self.wifiVerified = verified
+            self.refreshSpace()
+        }, onIssue: { [unowned self] issue in
+            self.wifiIssue = issue
+        })
+        wifiPeer?.start()
     }
 
     private func accept(_ ack: ControlAck, key: Data) {
+        promotePendingPairing(key)
+        guard ack.sequence >= (lastAckSequence ?? 0) else { return }
         lastAckSequence = ack.sequence
-        if pendingKey == key {
-            do {
-                // Keep the old key until the iPad proves it accepted the new one.
-                try MacCredentials.promotePairing(key)
-                currentKey = key
-                pendingKey = nil
-                pendingExpiresAt = nil
-                pairingStatus = "配对完成，iPad 已接受新密钥"
-            } catch {
-                errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)"
-                pairingStatus = errorMessage
-            }
-        }
+        if pendingTargetMilli == ack.targetMilli { pendingTargetMilli = nil }
         if !targetEditing, (0...500).contains(ack.targetMilli) {
             target = Double(ack.targetMilli) / 1000
             targetKnown = true
@@ -177,10 +238,112 @@ import UniformTypeIdentifiers
         }
     }
 
+    private func promotePendingPairing(_ key: Data) {
+        if pendingKey == key {
+            do {
+                // Keep the old key until the iPad proves it accepted the new one.
+                try MacCredentials.promotePairing(key)
+                currentKey = key
+                pendingKey = nil
+                pendingExpiresAt = nil
+                pairingStatus = "配对完成，iPad 已接受新密钥"
+            } catch {
+                errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)"
+                pairingStatus = errorMessage
+            }
+        }
+    }
+
+    private func acceptPeerAck(_ ack: PeerStateAck, key: Data) {
+        promotePendingPairing(key)
+        guard ack.revision >= (lastAckSequence ?? 0) else { return }
+        lastAckSequence = ack.revision
+        if pendingTargetMilli == ack.targetMilli { pendingTargetMilli = nil }
+        client?.confirmTargetMilli(ack.targetMilli)
+        if !targetEditing, let milli = ack.targetMilli, (0...500).contains(milli) {
+            target = Double(milli) / 1000
+            targetKnown = true
+        }
+        switch ack.result {
+        case "applied": lastAction = "iPad 媒体音量已降低"
+        case "restored": lastAction = "iPad 媒体音量正在恢复"
+        case "preservedManualOrRoute": lastAction = "保留了你手动调整的音量或新输出设备"
+        case "alreadyRestored": lastAction = "iPad 音量保持原状"
+        default: lastAction = "iPad 回执：\(ack.result)"
+        }
+    }
+
+    private func persistPeerLedger() {
+        preferences.set(try? JSONEncoder().encode(peerLedger), forKey: "peerDemandLedger")
+    }
+
+    private func publishLocalDemand() {
+        client?.setDesired(enabled && inputState.needsQuiet && spaceAllowed)
+        wifiPeer?.sendCurrentState()
+    }
+
+    private func refreshSpace() {
+        let allowed = spaceGate.allows(spaceMode, ble: bleReachable, wifi: wifiVerified,
+                                       at: Int64(Date().timeIntervalSince1970))
+        guard allowed != spaceAllowed else { return }
+        spaceAllowed = allowed
+        if !allowed {
+            let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
+            persistPeerLedger()
+            if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+        }
+        publishLocalDemand()
+    }
+
+    private func receivePeerState(_ update: PeerQuietUpdate, key: Data) -> String {
+        let now = Int64(Date().timeIntervalSince1970)
+        guard enabled else { return "paused" }
+        guard spaceAllowed else { return "outsideSpace" }
+        let source = Authentication.sign("paired-peer-id", key: key)
+        let change = peerLedger.accept(update, from: source, expectedOrigin: "ipad", key: key, at: now)
+        persistPeerLedger()
+        if change.ended {
+            localOutput?.finish(manualAtEnd: change.manualAtEnd)
+            lastAction = change.manualAtEnd ? "保留了你手动调整的 Mac 音量" : "Mac 音量正在恢复"
+            return change.manualAtEnd ? "preservedManual" : "restoring"
+        }
+        if change.started {
+            let result = localOutput?.begin(target: Float(macTarget)) ?? "outputUnsupported"
+            lastAction = "Mac 音量：\(result)"
+            return result
+        }
+        return change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored"
+    }
+
+    private func expirePeerRequests() {
+        let change = peerLedger.expire(at: Int64(Date().timeIntervalSince1970))
+        guard change.ended else { return }
+        persistPeerLedger()
+        localOutput?.finish(manualAtEnd: change.manualAtEnd)
+        lastAction = change.manualAtEnd ? "保留了你手动调整的 Mac 音量" : "iPad 请求超时，Mac 音量正在恢复"
+    }
+
     func setEnabled(_ value: Bool) {
         enabled = value
         preferences.set(value, forKey: "coordinationEnabled")
-        client?.setDesired(value && inputState.needsQuiet)
+        publishLocalDemand()
+        if !value {
+            let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
+            persistPeerLedger()
+            if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+        }
+    }
+
+    func setSpaceMode(_ mode: SpaceMode) {
+        spaceMode = mode
+        preferences.set(mode.rawValue, forKey: "spaceMode")
+        spaceGate.reset()
+        refreshSpace()
+        publishLocalDemand()
+    }
+
+    func macTargetEditChanged(_ editing: Bool) {
+        if !editing { preferences.set(macTarget, forKey: "localOutputTarget") }
     }
 
     func refreshSources() {
@@ -338,7 +501,7 @@ import UniformTypeIdentifiers
 
     private func restorePreviousPairing() {
         if let currentKey { useKey(currentKey) }
-        else { paired = false; connectionState = .message("尚未配对") }
+        else { useKey(nil) }
     }
 
     private func expirePendingPairing() {
@@ -404,7 +567,11 @@ import UniformTypeIdentifiers
 
     func targetEditChanged(_ editing: Bool) {
         targetEditing = editing
-        if !editing { client?.setTargetMilli(Int((target * 1000).rounded())) }
+        if !editing {
+            pendingTargetMilli = Int((target * 1000).rounded())
+            client?.setTargetMilli(pendingTargetMilli!)
+            wifiPeer?.sendCurrentState()
+        }
     }
 
     func setLoginEnabled(_ value: Bool) {
@@ -417,13 +584,19 @@ import UniformTypeIdentifiers
     }
 
     func quit() {
+        quitting = true
         pairingGeneration += 1
         pairClient?.stop()
         client?.setDesired(false)
+        wifiPeer?.sendCurrentState()
+        let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
+        persistPeerLedger()
+        if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
         clientGeneration += 1
         connectionState = .message("正在恢复音量并退出")
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.client?.stop()
+            self?.wifiPeer?.stop()
             NSApp.terminate(nil)
         }
     }

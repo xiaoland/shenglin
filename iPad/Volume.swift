@@ -12,6 +12,9 @@ import Darwin
     private let setter: Set
     private let category: NSString = "Audio/Video"
     private var snapshot: QuietSnapshot?
+    private var restoreTimer: Timer?
+    private var restoreStepCount = 0
+    private var restoreStart: Float = 0
 
     init?() {
         _ = dlopen("/System/Library/PrivateFrameworks/MediaExperience.framework/MediaExperience", RTLD_LAZY | RTLD_LOCAL)
@@ -51,9 +54,71 @@ import Darwin
         UserDefaults.standard.synchronize()
     }
 
+    func manualOrRouteChanged() -> Bool {
+        guard let saved = snapshot else { return false }
+        guard let now = current() else { return false }
+        return route() != saved.route || abs(now - saved.applied) > 0.005
+    }
+
+    func release(manual: Bool) -> (String, Int) {
+        guard let saved = snapshot else { return ("alreadyRestored", Int(((current() ?? 0) * 1000).rounded())) }
+        guard !manual, let now = current(), route() == saved.route,
+              abs(now - saved.applied) <= 0.005 else {
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            snapshot = nil
+            save()
+            return ("preservedManualOrRoute", Int(((current() ?? 0) * 1000).rounded()))
+        }
+        guard abs(saved.original - now) > 0.005 else {
+            snapshot = nil
+            save()
+            return ("alreadyRestored", Int((now * 1000).rounded()))
+        }
+        restoreStart = now
+        restoreStepCount = 0
+        restoreTimer?.invalidate()
+        restoreTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.restoreStep() }
+        }
+        return ("restoring", Int((now * 1000).rounded()))
+    }
+
+    private func restoreStep() {
+        guard let saved = snapshot, let now = current(), route() == saved.route,
+              abs(now - saved.applied) <= 0.005 else {
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            snapshot = nil
+            save()
+            return
+        }
+        restoreStepCount += 1
+        let next = restoreStart + (saved.original - restoreStart) * Float(restoreStepCount) / 8
+        guard write(next), let actual = current() else {
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            return
+        }
+        snapshot = QuietSnapshot(original: saved.original, applied: actual, route: saved.route)
+        save()
+        if restoreStepCount == 8 {
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            snapshot = nil
+            save()
+        }
+    }
+
     func apply(quiet: Bool, target: Float) -> (String, Int) {
         guard let now = current() else { return ("readFailed", -1) }
         if quiet {
+            if restoreTimer != nil {
+                restoreTimer?.invalidate()
+                restoreTimer = nil
+                snapshot = nil
+                save()
+            }
             if snapshot != nil { return ("alreadyQuiet", Int((now * 1000).rounded())) }
             guard let wanted = VolumePolicy.target(current: now, configured: target) else {
                 return ("alreadyBelowTarget", Int((now * 1000).rounded()))

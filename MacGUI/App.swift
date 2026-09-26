@@ -36,7 +36,7 @@ private struct ControlPanel: View {
             HStack(alignment: .top) {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Nearby Audio").font(.title2.bold())
-                    Text("Mac 录音时协调 iPad 媒体音量")
+                    Text("配对设备之间协调媒体音量")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
@@ -97,6 +97,12 @@ private struct ControlPanel: View {
 
             Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
                 .font(.headline)
+            Picker("空间条件", selection: Binding(get: { model.spaceMode }, set: model.setSpaceMode)) {
+                Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
+                Text("蓝牙且 Wi-Fi").tag(SpaceMode.nearbyAndWiFi)
+            }
+            .pickerStyle(.segmented)
+            Text(model.spaceStatus).font(.caption).foregroundStyle(.secondary)
             Text("参与协同的录音进程：\(model.inputCount) 个。默认所有录音应用参与，排除项不参与。")
                 .font(.caption).foregroundStyle(.secondary)
             if let inputError = model.inputError {
@@ -176,6 +182,20 @@ private struct ControlPanel: View {
                     .disabled(!model.targetKnown || !model.paired)
                     .accessibilityLabel("录音时 iPad 媒体音量目标")
                 Text("录音期间更改目标将在下次录音开始时生效。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("远端录音时此 Mac 媒体音量").font(.headline)
+                    Spacer()
+                    Text("\(Int((model.macTarget * 100).rounded()))%")
+                        .monospacedDigit()
+                }
+                Slider(value: $model.macTarget, in: 0...0.5, step: 0.05,
+                       onEditingChanged: model.macTargetEditChanged)
+                    .accessibilityLabel("远端录音时此 Mac 媒体音量目标")
+                Text("iPad 对其他 App 录音的自动检测尚未验证。")
                     .font(.caption).foregroundStyle(.secondary)
             }
 

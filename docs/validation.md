@@ -27,3 +27,11 @@
 2026-09-26 夜间新增排除列表和虚拟麦克风代码，未替换正在运行的 Mac App，也未安装 HAL 驱动。排除列表的旧 `selection.json` 迁移、默认全参与及应用身份匹配已有 Swift 测试；Mac GUI 无签名构建通过。虚拟麦克风 `scripts/build-driver.sh` 构建出 macOS 14 起可加载的输入设备包，进程内测试验证两个客户端读取同一批样本时只静音指定 PID、取消静音恢复、断供归零、恢复供源和无输出流。测试不经过系统 HAL，不证明实际逐客户端回调、物理输入权限、Core Audio 自定义属性跨进程传输或音频连续性。
 
 下一轮真机验收先在新 App 首次启动前把 `bundle:com.openai.codex` 写入 `exclusions.json`，避免当前正在录音的聊天 App 因新策略默认全参与而立刻降低 iPad 音量。之后签名安装驱动并确认系统只出现一个输入设备，再分别让 ChatGPT 和 Koe 选择该设备同时录音：单独切换一方静音、核对另一方样本不变，核对静音方不触发 iPad 降音量；ChatGPT 虽被排除仍能收到麦克风样本，Koe 保持协同。还需测物理输入断开及切换、菜单退出、驱动供源暂停、并发开始/结束和 iPad 音量恢复。此前的六位码配对已真机通过，无需为这轮再次配对。
+
+2026-09-27 的多设备实现检查使用隔离的 iPad (A16) iOS 26.3 模拟器，不接触真实 iPad，也未安装 HAL 驱动或更改系统音频服务。新协议的 Swift 测试覆盖多来源、重复/旧状态、认证、续期、过期、整轮手动接管及持久化重读；本轮 `swift test` 8 项全过。Mac Release 无签名构建和 iPad 模拟器 arm64 无签名构建通过，iPad App 在模拟器安装、启动成功。这些结果不证明两台设备之间的 BLE 实际互通、系统音量变化、三端全连接或后台/锁屏交付。
+
+Mac 端只做了只读 Core Audio 探针：当前默认输出提供可读且可设置的主音量属性，读数为 0.5625；没有调用设置器。iPad 录音探针把独立观察 App 配成 `.playback + .voicePrompt + mixWithOthers`，基线 `promptStyle` 为 `.normal`，`isOtherAudioPlaying=false`。拟作为对照组的录音 App 因模拟器输入格式为 0 Hz，在安装录音 tap 时崩溃；`simctl io enumerate` 显示其宿主默认音频设备没有输入。因此没有得到“另一个 App 正在录音”的有效对照，不从基线推断检测能力。Apple 将 [`promptStyle == .none`](https://developer.apple.com/documentation/avfaudio/avaudiosession/promptstyle-swift.enum/none) 描述为其他音频会话正在使用麦克风的语音提示建议，但 [`promptStyle`](https://developer.apple.com/documentation/avfaudio/avaudiosession/promptstyle-swift.property) 本身是提示样式；[`isOtherAudioPlaying`](https://developer.apple.com/documentation/avfaudio/avaudiosession/isotheraudioplaying) 判断的是其他 App 播放音频。它们尚不能证明任意录音 App 的开始/结束、后台持续性或来源身份。iPad 新代码因此只发布 `quiet=false`，不把该提示直接当作自动调低 Mac 音量的触发器。
+
+当前实现值为每 5 秒续期、接收后最多 20 秒租约、约 0.8 秒八步恢复；这些尚未在真机校准。iPad 使用一秒采样观察手动音量变化，短于采样间隔的往返操作可能漏检。iPad App 被系统挂起或回收时，租约计时器是否及时运行尚无证据；不可把超时恢复承诺为确定的后台行为。
+
+随后增设了 Network.framework 的 Bonjour/TCP 传输（Mac 监听、iPad 浏览），只在本地 Wi-Fi 接口上连接，连接双方须通过配对密钥的随机挑战认证，再承载已有签名状态与回执；同一来源的 BLE/Wi-Fi 消息共用版本和账本。UI 可选择 BLE 或 Wi-Fi、BLE 且 Wi-Fi；已满足的空间证据短暂消失时沿用最多 20 秒。iPad 的 BLE 依据绑定已认证的 central 并设置证据失效期，Wi-Fi 候选从开始连接起设置超时。`swift test` 10 项、Mac Release 与 iPad 模拟器 arm64 无签名构建通过。为避免触发尚不可用的用户权限选择，本轮没有启动新增局域网发现代码或进行两机实网互通检查；构建成功不证明 Bonjour 广播、权限取得、TCP 认证或后台收发成功。Wi-Fi 证据是已配对端经本地 Wi-Fi 路径认证互通，不证明同一 SSID、接入点或物理同室，且可能受局域网隔离影响。三来源账本测试只证明聚合规则；实际三端全连接仍未实现。
