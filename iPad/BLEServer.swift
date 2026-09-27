@@ -308,10 +308,12 @@ import UIKit
             let characteristics = service.characteristics ?? []
             if service.uuid == Self.serviceID,
                let ack = characteristics.first(where: { $0.uuid == Self.ackID }) as? CBMutableCharacteristic,
-               characteristics.contains(where: { $0.uuid == Self.commandID }) {
+               let peerState = characteristics.first(where: { $0.uuid == Self.peerStateID }) as? CBMutableCharacteristic,
+               characteristics.contains(where: { $0.uuid == Self.commandID }),
+               characteristics.contains(where: { $0.uuid == Self.peerAckWriteID }) {
                 controlRegistered = true
                 ackCharacteristic = ack
-                peerStateCharacteristic = characteristics.first(where: { $0.uuid == Self.peerStateID }) as? CBMutableCharacteristic
+                peerStateCharacteristic = peerState
             } else if service.uuid == Self.pairServiceID,
                       let response = characteristics.first(where: { $0.uuid == Self.pairResponseID }) as? CBMutableCharacteristic,
                       characteristics.contains(where: { $0.uuid == Self.pairWriteID }),
