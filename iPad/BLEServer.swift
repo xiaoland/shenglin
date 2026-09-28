@@ -80,7 +80,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
 
     private func advertise() {
         manager?.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceID],
-                                   CBAdvertisementDataLocalNameKey: "Nearby Audio · \(deviceName)"])
+                                   CBAdvertisementDataLocalNameKey: "声邻 · \(deviceName)"])
     }
 
     override init() {
@@ -98,7 +98,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             status = volume == nil ? "当前系统的媒体音量接口不兼容" : "等待蓝牙"
             note("BLUETOOTH_AUTHORIZATION \(CBPeripheralManager.authorization.rawValue)")
             manager = CBPeripheralManager(delegate: self, queue: .main,
-                                          options: [CBPeripheralManagerOptionRestoreIdentifierKey: "NearbyAudioPeripheral"])
+                                          options: [CBPeripheralManagerOptionRestoreIdentifierKey: "ShenglinPeripheral"])
             startWiFi()
             note("BLUETOOTH_MANAGER_CREATED")
             peerTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in

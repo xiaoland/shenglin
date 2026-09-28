@@ -2,8 +2,8 @@ import AudioToolbox
 import CoreAudio
 import Darwin
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 struct ForensicStatus: Codable {
@@ -19,7 +19,7 @@ final class AudioForensics {
     static let shared = AudioForensics()
     private static let traceSelector: AudioObjectPropertySelector = 0x4e414d41 // NAMA
     private static let metricsSelector: AudioObjectPropertySelector = 0x4e414d54 // NAMT
-    private let queue = DispatchQueue(label: "NearbyAudio.AudioForensics", qos: .utility)
+    private let queue = DispatchQueue(label: "Shenglin.AudioForensics", qos: .utility)
     private let sourceSlots = DispatchSemaphore(value: 64)
     private let pollSlot = DispatchSemaphore(value: 1)
     private let dropLock = NSLock()
@@ -41,7 +41,7 @@ final class AudioForensics {
 
     private init() {
         let fallback = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/Application Support/NearbyAudio/Diagnostics", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Shenglin/Diagnostics", isDirectory: true)
         let configured = MacPreferences.defaults.string(forKey: "diagnosticsDirectory")
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
         if configured == nil { try? FileManager.default.createDirectory(at: fallback, withIntermediateDirectories: true) }
@@ -206,7 +206,7 @@ final class AudioForensics {
                 try process.run()
                 process.waitUntilExit()
                 if process.terminationStatus != 0 {
-                    throw NSError(domain: "NearbyAudio", code: Int(process.terminationStatus),
+                    throw NSError(domain: "Shenglin", code: Int(process.terminationStatus),
                         userInfo: [NSLocalizedDescriptionKey: "诊断压缩失败"])
                 }
                 completion(nil)
@@ -417,7 +417,7 @@ final class AudioForensics {
 
     private func requireStorage() throws {
         guard let expected = storageVolumeID, Self.volumeID(at: directory) == expected else {
-            throw NSError(domain: "NearbyAudio", code: 6,
+            throw NSError(domain: "Shenglin", code: 6,
                 userInfo: [NSLocalizedDescriptionKey: "诊断目录所在磁盘不可用或已更换；请重新选择取证目录"])
         }
     }

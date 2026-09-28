@@ -1,7 +1,7 @@
 import Darwin
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 struct ControlRequest: Codable {
@@ -56,7 +56,7 @@ enum ControlIPC {
         var address = sockaddr_un()
         let bytes = Array(path.utf8CString)
         guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else {
-            throw NSError(domain: "NearbyAudioIPC", code: 1,
+            throw NSError(domain: "ShenglinIPC", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "本机控制路径过长"])
         }
         address.sun_len = UInt8(MemoryLayout<sockaddr_un>.size)
@@ -116,7 +116,7 @@ enum ControlIPC {
     }
 
     private static func error(_ message: String) -> NSError {
-        NSError(domain: "NearbyAudioIPC", code: 1,
+        NSError(domain: "ShenglinIPC", code: 1,
                 userInfo: [NSLocalizedDescriptionKey: message])
     }
 

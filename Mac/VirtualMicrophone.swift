@@ -2,8 +2,8 @@ import AudioToolbox
 import AVFoundation
 import CoreAudio
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 struct CaptureDiagnostics: Codable {
@@ -23,7 +23,7 @@ final class VirtualMicrophone {
     private static let deviceMute: AudioObjectPropertySelector = 0x4e414d44 // NAMD
     private static let deviceList: AudioObjectPropertySelector = 0x4e414453 // NADS
     private var engine = AVAudioEngine()
-    private let queue = DispatchQueue(label: "NearbyAudio.VirtualMicrophone")
+    private let queue = DispatchQueue(label: "Shenglin.VirtualMicrophone")
     // One push may still be in Core Audio when the next tap arrives.
     private let pending = DispatchSemaphore(value: 3)
     private let statusLock = NSLock()
@@ -84,7 +84,7 @@ final class VirtualMicrophone {
         objectID(kAudioHardwarePropertyTranslateUIDToDevice, uid: uid)
     }
     static var pluginID: AudioObjectID? {
-        guard let plugin = objectID(kAudioHardwarePropertyTranslateBundleIDToPlugIn, uid: "local.nearbyaudio.driver") else { return nil }
+        guard let plugin = objectID(kAudioHardwarePropertyTranslateBundleIDToPlugIn, uid: "local.shenglin.driver") else { return nil }
         var address = AudioObjectPropertyAddress(mSelector: deviceList, mScope: kAudioObjectPropertyScopeGlobal, mElement: 0)
         return AudioObjectHasProperty(plugin, &address) ? plugin : nil
     }
@@ -95,8 +95,8 @@ final class VirtualMicrophone {
             suspend()
             configured = nil
             if devices.isEmpty { return [] }
-            throw NSError(domain: "NearbyAudio", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "请安装支持专用麦克风的 Nearby 驱动"])
+            throw NSError(domain: "Shenglin", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "请安装支持专用麦克风的 声邻驱动"])
         }
         if configured != devices || configuredPlugin != plugin || devices.contains(where: { Self.deviceID(uid: $0.uid) == nil }) {
             let data = try PropertyListSerialization.data(fromPropertyList: devices.map {
@@ -119,7 +119,7 @@ final class VirtualMicrophone {
         var mutedDevices = Set<AudioObjectID>()
         for device in devices {
             guard let id = Self.deviceID(uid: device.uid) else {
-                throw NSError(domain: "NearbyAudio", code: 2,
+                throw NSError(domain: "Shenglin", code: 2,
                               userInfo: [NSLocalizedDescriptionKey: "正在发布 \(device.deviceName)，请稍候"])
             }
             var value: UInt32 = muted.contains(device.selector) ? 1 : 0
@@ -163,7 +163,7 @@ final class VirtualMicrophone {
     private func physicalInputDevice() throws -> AudioObjectID {
         if let sourceUID {
             guard let selected = Self.deviceID(uid: sourceUID), !isNearbyDevice(selected) else {
-                throw NSError(domain: "NearbyAudio", code: 5,
+                throw NSError(domain: "Shenglin", code: 5,
                     userInfo: [NSLocalizedDescriptionKey: "上游物理麦克风不可用：\(sourceUID)"])
             }
             return selected
@@ -177,8 +177,8 @@ final class VirtualMicrophone {
                                          0, nil, &size, &defaultDevice) == noErr,
               defaultDevice != kAudioObjectUnknown,
               !isNearbyDevice(defaultDevice) else {
-            throw NSError(domain: "NearbyAudio", code: 1,
-                          userInfo: [NSLocalizedDescriptionKey: "请把系统默认输入设为物理麦克风，仅在目标应用中选择其专用 Nearby 输入"])
+            throw NSError(domain: "Shenglin", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "请把系统默认输入设为物理麦克风，仅在目标应用中选择其专用 声邻输入"])
         }
         return defaultDevice
     }
@@ -189,7 +189,7 @@ final class VirtualMicrophone {
         var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
         let status = withUnsafeMutablePointer(to: &uid) { AudioObjectGetPropertyData(device, &address, 0, nil, &size, $0) }
         guard status == noErr, let uid else { return true }
-        return (uid.takeRetainedValue() as String).hasPrefix("local.nearbyaudio.virtual-microphone")
+        return (uid.takeRetainedValue() as String).hasPrefix("local.shenglin.virtual-microphone")
     }
 
     private func start(device: AudioObjectID) throws {
@@ -200,11 +200,11 @@ final class VirtualMicrophone {
                 permissionRequested = true
                 AVCaptureDevice.requestAccess(for: .audio) { _ in }
             }
-            throw NSError(domain: "NearbyAudio", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "请在系统弹窗中允许 Nearby Audio 使用麦克风"])
+            throw NSError(domain: "Shenglin", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "请在系统弹窗中允许 声邻 使用麦克风"])
         default:
-            throw NSError(domain: "NearbyAudio", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "Nearby Audio 没有麦克风权限，请在系统设置的“隐私与安全性 → 麦克风”中允许访问"])
+            throw NSError(domain: "Shenglin", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "声邻 没有麦克风权限，请在系统设置的“隐私与安全性 → 麦克风”中允许访问"])
         }
         engine = AVAudioEngine()
         let input = engine.inputNode
@@ -218,14 +218,14 @@ final class VirtualMicrophone {
               let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
                                          sampleRate: Double(outputSampleRate), channels: source.channelCount,
                                          interleaved: false) else {
-            throw NSError(domain: "NearbyAudio", code: 2,
+            throw NSError(domain: "Shenglin", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "物理麦克风格式不可用"])
         }
         let direct = source.sampleRate == Double(outputSampleRate) &&
             source.commonFormat == .pcmFormatFloat32 && !source.isInterleaved
         let converter = direct ? nil : AVAudioConverter(from: source, to: target)
         guard direct || converter != nil else {
-            throw NSError(domain: "NearbyAudio", code: 2,
+            throw NSError(domain: "Shenglin", code: 2,
                           userInfo: [NSLocalizedDescriptionKey: "物理麦克风格式无法转换"])
         }
         input.installTap(onBus: 0, bufferSize: 1024, format: source) { [weak self, converter] buffer, when in

@@ -9,7 +9,7 @@ struct MicrophoneAgentStatus: Codable {
     let diagnostics: CaptureDiagnostics
     let forensics: [String: ForensicStatus]
 
-    static let plistName = "local.nearbyaudio.microphone.plist"
+    static let plistName = "local.shenglin.microphone.plist"
     static let service = SMAppService.agent(plistName: plistName)
     static let url = MicrophoneStore.url.deletingLastPathComponent()
         .appendingPathComponent("microphone-agent.json")
@@ -30,7 +30,7 @@ enum MicrophoneAgent {
                               O_CREAT | O_RDWR, 0o600)
         guard descriptor >= 0, flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { exit(1) }
         let activity = InputActivity { observation in
-            if let error = observation.error { NSLog("Nearby microphone agent: %@", error) }
+            if let error = observation.error { NSLog("Shenglin microphone agent: %@", error) }
         }
         var forensics = [String: ForensicStatus]()
         var lastForensicCheck = Date.distantPast

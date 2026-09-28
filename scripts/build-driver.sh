@@ -28,10 +28,10 @@ prefix="$repo/local/libASPL-prefix"
     -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=14.0 \
     -DCMAKE_OSX_SYSROOT="$sdk" -DASPL_PREFIX="$prefix"
 "$cmake" --build local/DriverBuild -j 4
-local/DriverBuild/NearbyAudioDriverTests
-driver="$repo/local/DriverBuild/NearbyAudioDriver.driver"
-if [ -n "${NEARBY_AUDIO_SIGN_IDENTITY:-}" ]; then
-    codesign --force --options runtime --sign "$NEARBY_AUDIO_SIGN_IDENTITY" "$driver"
+local/DriverBuild/ShenglinDriverTests
+driver="$repo/local/DriverBuild/ShenglinDriver.driver"
+if [ -n "${SHENGLIN_SIGN_IDENTITY:-}" ]; then
+    codesign --force --options runtime --sign "$SHENGLIN_SIGN_IDENTITY" "$driver"
     codesign --verify --strict "$driver"
 fi
 echo "已生成 ${driver}（未安装）"

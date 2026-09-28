@@ -174,7 +174,7 @@ private enum PairingCrypto {
 
     static func derive(secret: Data, session: Data, initiatorName: String, responderName: String,
                        initiatorMessage: Data, responderMessage: Data) -> PairingKeys {
-        var transcript = Data("NearbyAudio-SPAKE2-v3".utf8)
+        var transcript = Data("Shenglin-SPAKE2-v3".utf8)
         for field in [session, Data(initiatorName.utf8), Data(responderName.utf8), initiatorMessage, responderMessage] {
             append(field, to: &transcript)
         }
@@ -182,7 +182,7 @@ private enum PairingCrypto {
         let material = SymmetricKey(data: secret)
         func key(_ purpose: String) -> SymmetricKey {
             HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: hash,
-                                   info: Data("NearbyAudio-SPAKE2-v3/\(purpose)".utf8), outputByteCount: 32)
+                                   info: Data("Shenglin-SPAKE2-v3/\(purpose)".utf8), outputByteCount: 32)
         }
         return PairingKeys(control: key("control").withUnsafeBytes { Data($0) },
                            proof: key("proof"), transcriptHash: hash)

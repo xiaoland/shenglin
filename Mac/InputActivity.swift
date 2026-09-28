@@ -1,7 +1,7 @@
 import CoreAudio
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 func audioProperty(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector) -> UInt32? {

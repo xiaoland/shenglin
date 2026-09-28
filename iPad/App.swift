@@ -6,7 +6,7 @@ struct SystemVolumeView: UIViewRepresentable {
     func updateUIView(_ view: MPVolumeView, context: Context) {}
 }
 
-@main struct NearbyAudioPadApp: App {
+@main struct ShenglinPadApp: App {
     @StateObject private var server = BLEServer()
     @AppStorage("targetVolume") private var targetVolume = 0.0
     @State private var deviceNameInput = ""

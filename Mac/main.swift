@@ -2,7 +2,7 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let action = arguments.first else {
-    print("用法：nearby-audio control status|pair|enabled|exclude|mute|target ... | sources | exclude|mute ...")
+    print("用法：shenglin control status|pair|enabled|exclude|mute|target ... | sources | exclude|mute ...")
     exit(2)
 }
 
@@ -36,7 +36,7 @@ if action == "control" {
     } else if parts.count == 3, parts[0] == "target" {
         request = ControlRequest(command: "target.set", value: "\(parts[1]):\(parts[2])")
     } else {
-        print("用法：nearby-audio control status | driver install | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute|microphone add|remove <标识> | target <设备 ID> <0...0.5>")
+        print("用法：shenglin control status | driver install | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute|microphone add|remove <标识> | target <设备 ID> <0...0.5>")
         exit(2)
     }
     do {
@@ -70,7 +70,7 @@ if action == "exclude" {
             try ExclusionStore.change(selector, add: arguments[1] == "add")
             print("已更新排除应用；运行中的程序将在 250 毫秒内重新检查。")
         default:
-            print("用法：nearby-audio exclude list|add|remove [标识]")
+            print("用法：shenglin exclude list|add|remove [标识]")
             exit(2)
         }
     } catch { print("无法更新排除应用：\(error)"); exit(1) }
@@ -91,7 +91,7 @@ if action == "mute" {
             try MuteStore.change(selector, add: arguments[1] == "add")
             print("已更新静音设置；运行中的程序将在 250 毫秒内重新检查。")
         default:
-            print("用法：nearby-audio mute list|add|remove [标识]")
+            print("用法：shenglin mute list|add|remove [标识]")
             exit(2)
         }
     } catch { print("无法更新静音应用：\(error)"); exit(1) }

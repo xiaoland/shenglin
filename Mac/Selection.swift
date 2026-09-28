@@ -4,13 +4,13 @@ import CoreAudio
 import CoreGraphics
 import Darwin
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 enum ExclusionStore {
     static let url = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/NearbyAudio/exclusions.json")
+        .appendingPathComponent("Library/Application Support/Shenglin/exclusions.json")
     private static let legacyURL = url.deletingLastPathComponent().appendingPathComponent("selection.json")
 
     static func load() throws -> Set<String> {
@@ -72,7 +72,7 @@ struct PhysicalInputSource: Identifiable {
             var textSize = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
             guard AudioObjectGetPropertyData(device, &uidAddress, 0, nil, &textSize, &uid) == noErr,
                   let uid = uid?.takeRetainedValue() as String?,
-                  !uid.hasPrefix("local.nearbyaudio.virtual-microphone") else { return nil }
+                  !uid.hasPrefix("local.shenglin.virtual-microphone") else { return nil }
             var streamsAddress = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
                 mScope: kAudioObjectPropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
             var streamSize: UInt32 = 0
@@ -163,8 +163,8 @@ final class MicrophoneHotKeys {
         self.onPress = onPress
         if usePassiveTap {
             guard CGPreflightListenEventAccess() else {
-                throw NSError(domain: "NearbyAudio", code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "请在系统设置的“隐私与安全性 → 输入监控”中允许 Nearby Audio"])
+                throw NSError(domain: "Shenglin", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "请在系统设置的“隐私与安全性 → 输入监控”中允许 声邻"])
             }
             guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap,
                options: .listenOnly,
@@ -176,7 +176,7 @@ final class MicrophoneHotKeys {
                    }
                    return Unmanaged.passUnretained(event)
                }, userInfo: Unmanaged.passUnretained(self).toOpaque()) else {
-                throw NSError(domain: "NearbyAudio", code: 2,
+                throw NSError(domain: "Shenglin", code: 2,
                     userInfo: [NSLocalizedDescriptionKey: "输入监控监听器无法启动；请核对授权并重试"])
             }
             self.tap = tap
@@ -207,7 +207,7 @@ final class MicrophoneHotKeys {
             precondition(passiveKeys[selector] == nil)
             guard !passiveKeys.values.contains(where: { $0.keyCode == hotKey.keyCode &&
                 $0.modifiers == hotKey.modifiers }) else {
-                throw NSError(domain: "NearbyAudio", code: 1,
+                throw NSError(domain: "Shenglin", code: 1,
                     userInfo: [NSLocalizedDescriptionKey: "该组合已分配给另一台专用麦克风"])
             }
             passiveKeys[selector] = hotKey
@@ -308,7 +308,7 @@ struct SourceCandidate: Identifiable {
 
 func availableSources() throws -> [SourceCandidate] {
     guard let active = activeInputPIDs() else {
-        throw NSError(domain: "NearbyAudio", code: 1,
+        throw NSError(domain: "Shenglin", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "Core Audio 输入状态查询失败"])
     }
     return try availableSources(active: active)
@@ -362,5 +362,5 @@ func printSources() throws {
     for source in try availableSources() {
         print("\(source.isActive ? "●" : " ") \(source.isExcluded ? "×" : " ") \(source.name)\t\(source.selector)")
     }
-    print("● 正在采集输入；× 已排除。使用 nearby-audio exclude add <bundle:标识或path:绝对路径>。")
+    print("● 正在采集输入；× 已排除。使用 shenglin exclude add <bundle:标识或path:绝对路径>。")
 }

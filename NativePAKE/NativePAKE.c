@@ -8,8 +8,8 @@ na_spake *na_spake_start(int role, const uint8_t *code, size_t code_len, uint8_t
     if ((role != 0 && role != 1) || !code || code_len != 6 || !message) return NULL;
     na_spake *state = calloc(1, sizeof(*state));
     if (!state) return NULL;
-    static const uint8_t mac[] = "NearbyAudio Mac v2";
-    static const uint8_t pad[] = "NearbyAudio iPad v2";
+    static const uint8_t mac[] = "Shenglin Mac v2";
+    static const uint8_t pad[] = "Shenglin iPad v2";
     state->ctx = SPAKE2_CTX_new(role == 0 ? spake2_role_alice : spake2_role_bob,
         role == 0 ? mac : pad, role == 0 ? sizeof(mac) - 1 : sizeof(pad) - 1,
         role == 0 ? pad : mac, role == 0 ? sizeof(pad) - 1 : sizeof(mac) - 1);

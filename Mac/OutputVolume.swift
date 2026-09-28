@@ -1,7 +1,7 @@
 import CoreAudio
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 private struct MacOutput {
@@ -51,7 +51,7 @@ private struct MacOutput {
 }
 
 @MainActor final class MacQuietVolume {
-    private let stateKey = "NearbyAudioMacQuietSnapshot"
+    private let stateKey = "ShenglinMacQuietSnapshot"
     private let onManual: () -> Void
     private var snapshot: QuietSnapshot?
     private var roundActive = false

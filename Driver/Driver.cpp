@@ -28,7 +28,7 @@ constexpr AudioObjectPropertySelector DeviceList = 'NADS';
 constexpr AudioObjectPropertySelector Diagnostics = 'NAMT';
 constexpr AudioObjectPropertySelector ClientDiagnostics = 'NAMC';
 constexpr AudioObjectPropertySelector AudioTrace = 'NAMA';
-constexpr const char* DevicePrefix = "local.nearbyaudio.virtual-microphone.";
+constexpr const char* DevicePrefix = "local.shenglin.virtual-microphone.";
 constexpr UInt32 TraceSlots = 128;
 
 struct TraceBatchHeader {
@@ -318,8 +318,8 @@ std::shared_ptr<aspl::Device> CreateDevice(std::shared_ptr<aspl::Context> contex
                                            const std::string& bundle, const std::string& name,
                                            UInt32 sampleRate = SampleRate, UInt32 channels = Channels) {
     aspl::DeviceParameters parameters;
-    parameters.Name = "Nearby · " + name;
-    parameters.Manufacturer = "Nearby Audio";
+    parameters.Name = "声邻 · " + name;
+    parameters.Manufacturer = "声邻";
     parameters.DeviceUID = std::string(DevicePrefix) + bundle;
     parameters.ModelUID = parameters.DeviceUID;
     parameters.SampleRate = sampleRate;
@@ -498,7 +498,7 @@ std::shared_ptr<aspl::Driver> CreateDriver() {
 
 } // namespace
 
-extern "C" void* NearbyAudioDriverCreate(CFAllocatorRef, CFUUIDRef typeUUID) {
+extern "C" void* ShenglinDriverCreate(CFAllocatorRef, CFUUIDRef typeUUID) {
     if (!CFEqual(typeUUID, kAudioServerPlugInTypeUUID)) return nullptr;
     static auto driver = CreateDriver();
     return driver->GetReference();

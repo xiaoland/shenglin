@@ -1,5 +1,5 @@
 import Foundation
-import NearbyAudioCore
+import ShenglinCore
 import XCTest
 
 final class PairingTests: XCTestCase {

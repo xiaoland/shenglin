@@ -1,10 +1,10 @@
 import Foundation
 import Network
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
-private let macPairService = "_nearbyaudio-pair._tcp"
+private let macPairService = "_shenglin-pair._tcp"
 
 @MainActor private final class PairSocket {
     let connection: NWConnection

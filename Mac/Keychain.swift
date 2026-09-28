@@ -1,15 +1,15 @@
 import Foundation
 import Security
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 enum MacPreferences {
-    static let defaults = UserDefaults(suiteName: "local.nearbyaudio.preferences")!
+    static let defaults = UserDefaults(suiteName: "local.shenglin.preferences")!
 }
 
 enum MacCredentials {
-    private static let service = "local.nearbyaudio.mac"
+    private static let service = "local.shenglin.mac"
     private static let peersAccount = "pairedPeersV3"
     private static let pendingAccount = "pendingPeerV3"
     private static let pendingMacAccount = "pendingMacPeersV3"

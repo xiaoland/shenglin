@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
-@MainActor final class NearbyAudioAppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class ShenglinAppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var mainWindow: NSWindow?
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -19,7 +19,7 @@ import UniformTypeIdentifiers
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
-            window.title = "Nearby Audio"
+            window.title = "声邻"
             window.contentView = NSHostingView(rootView: MainPanel(model: model))
             window.center()
             mainWindow = window
@@ -33,8 +33,8 @@ import UniformTypeIdentifiers
     }
 }
 
-@main @MainActor struct NearbyAudioMacApp: App {
-    @NSApplicationDelegateAdaptor(NearbyAudioAppDelegate.self) private var delegate
+@main @MainActor struct ShenglinMacApp: App {
+    @NSApplicationDelegateAdaptor(ShenglinAppDelegate.self) private var delegate
 
     init() {
         if CommandLine.arguments.contains("--microphone-agent") { MicrophoneAgent.run() }
@@ -81,7 +81,7 @@ private struct MenuBarStatus: View {
     @ObservedObject var model: AppModel
     var body: some View {
         Image(systemName: model.iconName)
-            .accessibilityLabel("Nearby Audio：\(model.connection)")
+            .accessibilityLabel("声邻：\(model.connection)")
     }
 }
 
@@ -92,7 +92,7 @@ private struct QuickPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Nearby Audio").font(.headline)
+                Text("声邻").font(.headline)
                 Spacer()
                 Button("打开主窗口…") {
                     showMainWindow()
@@ -412,7 +412,7 @@ private struct ControlPanel: View {
                                 Toggle("让前台应用也响应同一快捷键", isOn: Binding(
                                     get: { model.sharedShortcutEnabled }, set: model.setSharedShortcutEnabled))
                                     .font(.caption)
-                                    .help("开启后，系统会向 Nearby 交付所有按键按下事件；Nearby 仅匹配已配置组合，不记录其他按键。")
+                                    .help("开启后，系统会向声邻交付所有按键按下事件；声邻仅匹配已配置组合，不记录其他按键。")
                                 if model.sharedShortcutEnabled && !model.sharedShortcutActive {
                                     Text(model.sharedShortcutStatus)
                                         .font(.caption2).foregroundStyle(.secondary)

@@ -1,16 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-    <key>CFBundleExecutable</key><string>NearbyAudioPad</string>
-    <key>CFBundleIdentifier</key><string>local.nearbyaudio.pad</string>
-    <key>CFBundleName</key><string>Nearby Audio</string>
+    <key>CFBundleExecutable</key><string>ShenglinPad</string>
+    <key>CFBundleIdentifier</key><string>local.shenglin.pad</string>
+    <key>CFBundleName</key><string>声邻</string>
+    <key>CFBundleDisplayName</key><string>声邻</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>接收同一用户的 Mac 录音状态，以调整媒体音量。</string>
     <key>NSLocalNetworkUsageDescription</key><string>在同一局域网内发现已配对的 Mac，并协调两端媒体音量。</string>
-    <key>NSBonjourServices</key><array><string>_nearbyaudio._tcp</string></array>
+    <key>NSBonjourServices</key><array><string>_shenglin._tcp</string></array>
     <key>UIBackgroundModes</key><array><string>bluetooth-peripheral</string></array>
     <key>UIDeviceFamily</key><array><integer>2</integer></array>
     <key>UILaunchScreen</key><dict/>

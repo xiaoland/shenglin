@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect Nearby Audio's local trace batches and optionally extract a WAV."""
+"""Inspect 声邻's local trace batches and optionally extract a WAV."""
 
 import argparse
 import array

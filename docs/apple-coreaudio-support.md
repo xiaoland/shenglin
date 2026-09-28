@@ -18,11 +18,11 @@
 
 实测系统为 Apple Silicon、macOS 15.4.1（24E263），构建工具为 Xcode 26.2。SDK 版本不代表测试系统版本；尚未在其他 macOS 版本重测。
 
-驱动使用 libASPL 3.1.2，固定提交 `47f688ed6bb637ab8b7f4b36864734b2b1f69b6b`。发布一个 48 kHz、双声道 Float32 输入设备，UID 为 `local.nearbyaudio.virtual-microphone`，不发布输出流。
+驱动使用 libASPL 3.1.2，固定提交 `47f688ed6bb637ab8b7f4b36864734b2b1f69b6b`。发布一个 48 kHz、双声道 Float32 输入设备，UID 为 `local.shenglin.virtual-microphone`，不发布输出流。
 
 控制进程每 20 ms 经自定义 `NAMP` 属性送入 960 帧常量 0.25，`NAMM` 属性承载目标 PID 和静音值。`Driver/Driver.cpp` 的 `Microphone::OnProcessClientInput` 按 PID 清零；libASPL 将该方法接到 `kAudioServerPlugInIOOperationProcessInput`。
 
-`experiments/VirtualMicrophoneProbe.cpp` 使用 AUHAL 读取设备。`scripts/test-driver-isolation.py` 构建两个不同 bundle ID 的应用，检查两者选择相同 AudioDeviceID，并统计有效样本、非零样本和渲染错误。测试仅使用合成输入，不采集物理麦克风，也不需要 Nearby GUI、iPad、配对密钥或网络控制服务。
+`experiments/VirtualMicrophoneProbe.cpp` 使用 AUHAL 读取设备。`scripts/test-driver-isolation.py` 构建两个不同 bundle ID 的应用，检查两者选择相同 AudioDeviceID，并统计有效样本、非零样本和渲染错误。测试仅使用合成输入，不采集物理麦克风，也不需要 声邻GUI、iPad、配对密钥或网络控制服务。
 
 ## 独立复现步骤
 
@@ -35,12 +35,12 @@
    sh scripts/build-driver.sh
    ```
 
-2. 确认 `/Library/Audio/Plug-Ins/HAL/NearbyAudioDriver.driver` 尚不存在，避免覆盖已安装版本。安装本次构建：
+2. 确认 `/Library/Audio/Plug-Ins/HAL/ShenglinDriver.driver` 尚不存在，避免覆盖已安装版本。安装本次构建：
 
    ```sh
-   sudo ditto local/DriverBuild/NearbyAudioDriver.driver /Library/Audio/Plug-Ins/HAL/NearbyAudioDriver.driver
-   sudo chown -R root:wheel /Library/Audio/Plug-Ins/HAL/NearbyAudioDriver.driver
-   sudo chmod -R go-w /Library/Audio/Plug-Ins/HAL/NearbyAudioDriver.driver
+   sudo ditto local/DriverBuild/ShenglinDriver.driver /Library/Audio/Plug-Ins/HAL/ShenglinDriver.driver
+   sudo chown -R root:wheel /Library/Audio/Plug-Ins/HAL/ShenglinDriver.driver
+   sudo chmod -R go-w /Library/Audio/Plug-Ins/HAL/ShenglinDriver.driver
    sudo killall coreaudiod
    ```
 
@@ -48,7 +48,7 @@
 4. 完成后卸载本次安装的驱动：
 
    ```sh
-   sudo rm -rf /Library/Audio/Plug-Ins/HAL/NearbyAudioDriver.driver
+   sudo rm -rf /Library/Audio/Plug-Ins/HAL/ShenglinDriver.driver
    sudo killall coreaudiod
    ```
 

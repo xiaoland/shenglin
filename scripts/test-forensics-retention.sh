@@ -9,7 +9,7 @@ import CoreAudio
 import Foundation
 
 enum MacPreferences {
-    static let defaults = UserDefaults(suiteName: "NearbyAudio.ForensicsRetentionTest.\(UUID())")!
+    static let defaults = UserDefaults(suiteName: "Shenglin.ForensicsRetentionTest.\(UUID())")!
 }
 struct DedicatedMicrophone: Equatable {
     let selector: String

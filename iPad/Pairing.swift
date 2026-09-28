@@ -2,8 +2,8 @@ import Foundation
 import Security
 
 enum PairingStore {
-    private static let peersAccount = "NearbyAudioPairedPeersV3"
-    private static let pendingAccount = "NearbyAudioPendingPeerV3"
+    private static let peersAccount = "ShenglinPairedPeersV3"
+    private static let pendingAccount = "ShenglinPendingPeerV3"
     private struct Pending: Codable { let key: Data; let expiresAt: Date; let name: String? }
 
     private static func query(_ account: String) -> [String: Any] {

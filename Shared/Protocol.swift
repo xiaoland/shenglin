@@ -112,8 +112,8 @@ public struct DedicatedMicrophone: Codable, Equatable {
     public let sampleRate: Int?
     public let channels: Int?
     public var selector: String { "bundle:\(bundle)" }
-    public var uid: String { "local.nearbyaudio.virtual-microphone.\(bundle)" }
-    public var deviceName: String { "Nearby · \(name)" }
+    public var uid: String { "local.shenglin.virtual-microphone.\(bundle)" }
+    public var deviceName: String { "声邻 · \(name)" }
     public var outputSampleRate: Int { sampleRate ?? 48000 }
     public var outputChannels: Int { channels ?? 2 }
 
@@ -138,7 +138,7 @@ public enum DedicatedMicrophoneStore {
                   ($0.sampleRate == nil && $0.channels == nil ||
                    $0.sampleRate != nil && $0.channels != nil &&
                    (8000...192000).contains($0.sampleRate!) && (1...2).contains($0.channels!)) }) else {
-            throw NSError(domain: "NearbyAudio", code: 3,
+            throw NSError(domain: "Shenglin", code: 3,
                           userInfo: [NSLocalizedDescriptionKey: "专用麦克风配置无效（最多 32 个，应用标识不得重复）"])
         }
     }

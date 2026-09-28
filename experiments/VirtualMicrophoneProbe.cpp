@@ -1,4 +1,4 @@
-// 只读取或供给 Nearby 虚拟设备的合成样本，不访问物理麦克风。
+// 只读取或供给 声邻虚拟设备的合成样本，不访问物理麦克风。
 #include <AudioUnit/AudioUnit.h>
 #include <CoreAudio/CoreAudio.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -54,7 +54,7 @@ AudioObjectID Device(const char* name, bool plugin = false) {
                                     &uid, &size, &device), "查找虚拟麦克风");
     CFRelease(uid);
     if (device == kAudioObjectUnknown) {
-        std::fputs("Nearby HAL 驱动未安装。\n", stderr);
+        std::fputs("声邻 HAL 驱动未安装。\n", stderr);
         std::exit(1);
     }
     return device;
@@ -192,11 +192,11 @@ int main(int argc, char** argv) {
         std::ifstream file(argv[2], std::ios::binary);
         if (!file) return 2;
         std::vector<char> data((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-        SetData(Device("local.nearbyaudio.driver", true), 'NADS', data.data(), data.size());
+        SetData(Device("local.shenglin.driver", true), 'NADS', data.data(), data.size());
         return 0;
     }
     if (std::strcmp(argv[1], "configuration") == 0 && argc == 2) {
-        auto plugin = Device("local.nearbyaudio.driver", true);
+        auto plugin = Device("local.shenglin.driver", true);
         AudioObjectPropertyAddress address{'NADS', kAudioObjectPropertyScopeGlobal, 0};
         CFDataRef data = nullptr;
         UInt32 size = sizeof(data);

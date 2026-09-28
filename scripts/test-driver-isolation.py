@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用两个不同 bundle ID 的 App 和专用设备检验已安装驱动；先退出 Nearby GUI。"""
+"""用两个不同 bundle ID 的 App 和专用设备检验已安装驱动；先退出 声邻 GUI。"""
 import json
 import os
 from pathlib import Path
@@ -49,7 +49,7 @@ def main():
     binary = BUILD / "Probe"
     run("xcrun", "clang++", "-std=c++17", "-O2", ROOT / "experiments/VirtualMicrophoneProbe.cpp",
         "-framework", "CoreAudio", "-framework", "CoreFoundation", "-framework", "AudioUnit", "-o", binary)
-    identity = os.environ.get("NEARBY_AUDIO_SIGN_IDENTITY", "-")
+    identity = os.environ.get("SHENGLIN_SIGN_IDENTITY", "-")
     executables = []
     for name in ("A", "B"):
         app = BUILD / f"Reader{name}.app"
@@ -58,10 +58,10 @@ def main():
         shutil.copy2(binary, executable)
         with (app / "Contents/Info.plist").open("wb") as file:
             plistlib.dump({"CFBundleExecutable": executable.name,
-                          "CFBundleIdentifier": f"local.nearbyaudio.haltest.reader{name}",
-                          "CFBundleName": f"Nearby HAL Test {name}", "CFBundlePackageType": "APPL",
+                          "CFBundleIdentifier": f"local.shenglin.haltest.reader{name}",
+                          "CFBundleName": f"声邻 HAL Test {name}", "CFBundlePackageType": "APPL",
                           "CFBundleVersion": "1", "LSUIElement": True,
-                          "NSMicrophoneUsageDescription": "读取 Nearby 虚拟设备的合成样本，检验逐应用静音。"}, file)
+                          "NSMicrophoneUsageDescription": "读取 声邻虚拟设备的合成样本，检验逐应用静音。"}, file)
         run("codesign", "--force", "--options", "runtime", "--sign", identity, app)
         run("codesign", "--verify", "--strict", app)
         executables.append(executable)
@@ -69,10 +69,10 @@ def main():
     readers, feeds, stages, failures = [], [], {}, []
     original = subprocess.check_output([str(binary), "configuration"])
     original_devices = plistlib.loads(original) if original else []
-    configs = [{"bundle": f"local.nearbyaudio.haltest.reader{name}", "name": f"HAL Test {name}"} for name in ("A", "B")]
+    configs = [{"bundle": f"local.shenglin.haltest.reader{name}", "name": f"HAL Test {name}"} for name in ("A", "B")]
     if any(x["bundle"] in {c["bundle"] for c in configs} for x in original_devices):
         raise RuntimeError("测试设备已存在；请先移除旧测试配置")
-    uids = ["local.nearbyaudio.virtual-microphone." + x["bundle"] for x in configs]
+    uids = ["local.shenglin.virtual-microphone." + x["bundle"] for x in configs]
     original_file = BUILD / "original.plist"
     original_file.write_bytes(plistlib.dumps(original_devices))
     config_file = BUILD / "devices.plist"

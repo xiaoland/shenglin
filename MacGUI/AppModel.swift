@@ -104,7 +104,7 @@ struct PeerDisplay: Identifiable {
     @Published private(set) var enabled: Bool
 
     private let preferences = MacPreferences.defaults
-    private let connectionLog = Logger(subsystem: "local.nearbyaudio.mac", category: "connections")
+    private let connectionLog = Logger(subsystem: "local.shenglin.mac", category: "connections")
     private let runLock: RunLock? = CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") }) ? nil : RunLock()
     private var padSessions = [String: PadPeerSession]()
     private var macPairServer: MacPairServer?
@@ -155,7 +155,7 @@ struct PeerDisplay: Identifiable {
         guard ((try? MicrophoneStore.load()) ?? []).isEmpty == false else { return nil }
         if let status = MicrophoneAgentStatus.current() { return status.error }
         return MicrophoneAgentStatus.service.status == .enabled
-            ? "后台麦克风服务未运行" : "请在系统设置中允许 Nearby Audio 后台麦克风服务"
+            ? "后台麦克风服务未运行" : "请在系统设置中允许声邻 后台麦克风服务"
     }
     var spaceStatus: String {
         let allowed = padPeerDisplays.filter(\.spaceAllowed).count + macPeerAllowed.count
@@ -674,9 +674,9 @@ struct PeerDisplay: Identifiable {
         if !sharedShortcutEnabled { return "当前使用系统热键；同组合的前台应用内快捷键可能收不到按键。" }
         if microphoneShortcuts.isEmpty { return "共享模式已选定；录入快捷键后才开始监听。" }
         if sharedShortcutActive {
-            return "共享模式运行中：macOS 会交付所有按键按下事件；Nearby 只处理已配置组合，不记录其他按键。"
+            return "共享模式运行中：macOS 会交付所有按键按下事件；声邻只处理已配置组合，不记录其他按键。"
         }
-        return "共享模式等待授权：请在系统设置 → 隐私与安全性 → 输入监控中允许 Nearby Audio；此期间 Nearby 快捷键不可用。授权后点“重新检查授权”。"
+        return "共享模式等待授权：请在系统设置 → 隐私与安全性 → 输入监控中允许声邻；此期间 声邻快捷键不可用。授权后点“重新检查授权”。"
     }
 
     func setSharedShortcutEnabled(_ value: Bool) {
@@ -778,7 +778,7 @@ struct PeerDisplay: Identifiable {
     private func setMuted(_ selector: String, add: Bool) -> Bool {
         do {
             guard try MicrophoneStore.load().contains(where: { $0.selector == selector }) else {
-                throw NSError(domain: "NearbyAudio", code: 1,
+                throw NSError(domain: "Shenglin", code: 1,
                     userInfo: [NSLocalizedDescriptionKey: "请先为该应用添加专用麦克风"])
             }
             try MuteStore.change(selector, add: add)
@@ -863,7 +863,7 @@ struct PeerDisplay: Identifiable {
             return
         }
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "NearbyAudio-Diagnostics.zip"
+        panel.nameFieldStringValue = "Shenglin-Diagnostics.zip"
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url else { return }
         diagnosticMessage = "正在导出本地诊断包…"
@@ -899,7 +899,7 @@ struct PeerDisplay: Identifiable {
                                selectedSource: PhysicalInputSource? = nil) -> Bool {
         do {
             guard selector.hasPrefix("bundle:"), VirtualMicrophone.pluginID != nil else {
-                throw NSError(domain: "NearbyAudio", code: 1,
+                throw NSError(domain: "Shenglin", code: 1,
                     userInfo: [NSLocalizedDescriptionKey: "需要新版驱动和有效的应用 bundle ID"])
             }
             var devices = try MicrophoneStore.load()
@@ -909,7 +909,7 @@ struct PeerDisplay: Identifiable {
                     if let old = devices.firstIndex(where: { $0.selector == selector }) {
                         if let id = VirtualMicrophone.deviceID(uid: devices[old].uid),
                            (activeInputPIDs(on: id)?.isEmpty != true) {
-                            throw NSError(domain: "NearbyAudio", code: 2,
+                            throw NSError(domain: "Shenglin", code: 2,
                                 userInfo: [NSLocalizedDescriptionKey: "请先停止使用该专用麦克风，再切换上游"])
                         }
                         devices[old] = DedicatedMicrophone(bundle: String(selector.dropFirst(7)), name: name,
@@ -919,14 +919,14 @@ struct PeerDisplay: Identifiable {
                             sourceUID: source.id, sampleRate: source.sampleRate, channels: source.channels))
                     }
                 } else if !devices.contains(where: { $0.selector == selector }) {
-                    throw NSError(domain: "NearbyAudio", code: 2,
+                    throw NSError(domain: "Shenglin", code: 2,
                         userInfo: [NSLocalizedDescriptionKey: "请先连接并选择物理上游麦克风"])
                 }
             } else {
                 if let existing = devices.first(where: { $0.selector == selector }),
                    let id = VirtualMicrophone.deviceID(uid: existing.uid) {
                     guard let clients = activeInputPIDs(on: id), clients.isEmpty else {
-                        throw NSError(domain: "NearbyAudio", code: 2,
+                        throw NSError(domain: "Shenglin", code: 2,
                             userInfo: [NSLocalizedDescriptionKey: "请先停止使用该专用麦克风，再移除设备"])
                     }
                 }
@@ -962,8 +962,8 @@ struct PeerDisplay: Identifiable {
             return
         }
         guard let helper = Bundle.main.url(forResource: "install-mac-driver", withExtension: "sh"),
-              Bundle.main.url(forResource: "NearbyAudioDriver", withExtension: "driver") != nil else {
-            driverInstallStatus = "应用未包含已签名驱动，请重新构建 Nearby Audio。"
+              Bundle.main.url(forResource: "ShenglinDriver", withExtension: "driver") != nil else {
+            driverInstallStatus = "应用未包含已签名驱动，请重新构建 声邻。"
             return
         }
         let path = helper.path.replacingOccurrences(of: "\\", with: "\\\\")

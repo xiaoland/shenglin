@@ -6,7 +6,7 @@ import Darwin
 @MainActor final class VolumeCoordinator {
     private typealias Get = @convention(c) (AnyObject, Selector, UnsafeMutablePointer<Float>, NSString) -> Bool
     private typealias Set = @convention(c) (AnyObject, Selector, Float, NSString) -> Bool
-    private let stateKey = "NearbyAudioQuietSnapshot"
+    private let stateKey = "ShenglinQuietSnapshot"
     private let controller: AnyObject
     private let getter: Get
     private let setter: Set

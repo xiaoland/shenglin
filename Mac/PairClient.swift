@@ -1,7 +1,7 @@
 import CoreBluetooth
 import Foundation
-#if canImport(NearbyAudioCore)
-import NearbyAudioCore
+#if canImport(ShenglinCore)
+import ShenglinCore
 #endif
 
 struct NearbyPad: Identifiable {

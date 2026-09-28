@@ -24,7 +24,7 @@ public enum WiFiProof {
         var name: PeerNameClaim? = nil
     }
 
-    private static let service = "_nearbyaudio._tcp"
+    private static let service = "_shenglin._tcp"
     private let localOrigin: String
     private let remoteOrigin: String
     private let listens: Bool
@@ -65,7 +65,7 @@ public enum WiFiProof {
         self.listens = listens
         self.key = key
         let serviceID = Data(base64Encoded: Authentication.sign("wifi-service", key: key))!.prefix(8)
-        self.serviceName = "Nearby-" + serviceID.map { String(format: "%02x", $0) }.joined()
+        self.serviceName = "Shenglin-" + serviceID.map { String(format: "%02x", $0) }.joined()
         self.localUpdate = localUpdate
         self.localName = localName
         self.receiveName = receiveName
