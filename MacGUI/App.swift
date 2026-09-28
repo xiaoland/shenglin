@@ -111,53 +111,44 @@ private struct ControlPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if page != .overview {
-                HStack(spacing: 14) {
-                    Button { page = .overview } label: {
-                        Label("概览", systemImage: "chevron.left")
-                    }
-                    .buttonStyle(.link)
-                    .accessibilityLabel("返回概览")
-                    Text(page.rawValue).font(.headline)
-                    Spacer()
-                }
-            }
-
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if page == .overview {
-                        HStack(spacing: 8) {
-                            Circle().fill(model.isConnected ? .green : .orange).frame(width: 8, height: 8)
-                            Text(model.ipadStatus)
-                            Spacer()
-                            Button("管理设备…") { page = .devices }.buttonStyle(.link)
-                        }
-                        if model.macPeerCount > 0 {
-                            Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
-                        }
-                        Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
-                            .font(.headline)
-                        Text("参与协同：\(model.inputCount) 个录音进程")
-                            .font(.caption).foregroundStyle(.secondary)
-                        Divider()
-                        HStack {
-                            Text("专用麦克风").font(.headline)
-                            Spacer()
-                            Button("管理应用…") { page = .apps }.buttonStyle(.link)
-                        }
-                        ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
-                            HStack {
-                                Toggle("静音 \(source.name)", isOn: Binding(
-                                    get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
-                                if source.microphoneInUse {
-                                    Image(systemName: "mic.fill").accessibilityLabel("正在使用")
+                        GroupBox {
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack(spacing: 8) {
+                                    Circle().fill(model.isConnected ? .green : .orange).frame(width: 8, height: 8)
+                                    Text(model.ipadStatus)
+                                    Spacer()
+                                    Button("管理设备…") { page = .devices }.buttonStyle(.link)
                                 }
+                                if model.macPeerCount > 0 {
+                                    Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Divider()
+                                Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
+                                Text("参与协同：\(model.inputCount) 个录音进程")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                         }
-                        if !model.sources.contains(where: { $0.microphoneName != nil }) {
-                            Text("尚未添加专用麦克风").font(.caption).foregroundStyle(.secondary)
+                        GroupBox("专用麦克风") {
+                            VStack(alignment: .leading, spacing: 10) {
+                                ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
+                                    HStack {
+                                        Toggle("静音 \(source.name)", isOn: Binding(
+                                            get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
+                                        if source.microphoneInUse {
+                                            Image(systemName: "mic.fill").accessibilityLabel("正在使用")
+                                        }
+                                    }
+                                }
+                                if !model.sources.contains(where: { $0.microphoneName != nil }) {
+                                    Text("尚未添加专用麦克风").font(.caption).foregroundStyle(.secondary)
+                                }
+                                Button("管理应用…") { page = .apps }.buttonStyle(.link)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        Divider()
                         HStack {
                             Button("音量与空间条件…") { page = .settings }.buttonStyle(.link)
                             Spacer()
@@ -476,6 +467,17 @@ private struct ControlPanel: View {
         }
         .onChange(of: page) { _, newPage in
             if newPage != .apps { model.cancelShortcutRecording() }
+        }
+        .navigationTitle(page == .overview ? "Nearby Audio" : page.rawValue)
+        .toolbar {
+            if page != .overview {
+                ToolbarItem(placement: .navigation) {
+                    Button { page = .overview } label: {
+                        Label("返回概览", systemImage: "chevron.left")
+                    }
+                    .help("返回概览")
+                }
+            }
         }
         .padding(16)
     }
