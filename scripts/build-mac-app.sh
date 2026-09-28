@@ -22,6 +22,8 @@ if [ ! -d "$driver" ] || ! codesign --verify --strict "$driver"; then
 fi
 ditto "$driver" "$staging/Nearby Audio.app/Contents/Resources/NearbyAudioDriver.driver"
 cp scripts/install-mac-driver.sh "$staging/Nearby Audio.app/Contents/Resources/install-mac-driver.sh"
+mkdir -p "$staging/Nearby Audio.app/Contents/Library/LaunchAgents"
+cp MacGUI/local.nearbyaudio.microphone.plist "$staging/Nearby Audio.app/Contents/Library/LaunchAgents/"
 codesign --force --deep --options runtime --entitlements MacGUI/NearbyAudio.entitlements --sign "${NEARBY_AUDIO_SIGN_IDENTITY:-Apple Development}" "$staging/Nearby Audio.app"
 codesign --verify --strict --deep "$staging/Nearby Audio.app"
 # Hardened Runtime 缺少此公开声明时，系统会拒绝输入且可能不显示授权项。
@@ -30,10 +32,18 @@ if [ "$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.device.audio-input
     echo '签名缺少 Audio Input 权限，保留旧版应用' >&2
     exit 1
 fi
-if [ -f 'dist/Nearby Audio.app/Contents/MacOS/Nearby Audio' ] &&
-   lsof -nP 'dist/Nearby Audio.app/Contents/MacOS/Nearby Audio' 2>/dev/null |
+if [ -x 'dist/Nearby Audio.app/Contents/MacOS/Nearby Audio' ]; then
+    for pid in $(lsof -t 'dist/Nearby Audio.app/Contents/MacOS/Nearby Audio' 2>/dev/null | sort -u); do
+        case "$(ps -p "$pid" -o args=)" in
+            *--microphone-agent*) ;;
+            *) echo 'Nearby Audio GUI 正在运行；请正常退出后再替换签名应用' >&2; exit 1 ;;
+        esac
+    done
+    'dist/Nearby Audio.app/Contents/MacOS/Nearby Audio' --microphone-agent-stop
+fi
+if lsof -nP 'dist/Nearby Audio.app/Contents/MacOS/Nearby Audio' 2>/dev/null |
    awk '$4 == "txt" { found = 1 } END { exit !found }'; then
-    echo 'Nearby Audio 正在运行；请正常退出后再替换签名应用' >&2
+    echo 'Nearby Audio 后台麦克风服务正在运行；请先停止服务再替换应用' >&2
     exit 1
 fi
 rm -rf 'dist/Nearby Audio.app'

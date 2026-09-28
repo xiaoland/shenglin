@@ -105,7 +105,7 @@ struct PeerDisplay: Identifiable {
 
     private let preferences = MacPreferences.defaults
     private let connectionLog = Logger(subsystem: "local.nearbyaudio.mac", category: "connections")
-    private let runLock = RunLock()
+    private let runLock: RunLock? = CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") }) ? nil : RunLock()
     private var padSessions = [String: PadPeerSession]()
     private var macPairServer: MacPairServer?
     private var macPairClient: MacPairClient?
@@ -150,7 +150,13 @@ struct PeerDisplay: Identifiable {
     }
     var isConnected: Bool { padPeerDisplays.contains(where: \.connected) || directMacCount > 0 }
     var inputCount: Int { inputState.count }
-    var inputError: String? { inputState.error }
+    var inputError: String? {
+        if let error = inputState.error { return error }
+        guard ((try? MicrophoneStore.load()) ?? []).isEmpty == false else { return nil }
+        if let status = MicrophoneAgentStatus.current() { return status.error }
+        return MicrophoneAgentStatus.service.status == .enabled
+            ? "后台麦克风服务未运行" : "请在系统设置中允许 Nearby Audio 后台麦克风服务"
+    }
     var spaceStatus: String {
         let allowed = padPeerDisplays.filter(\.spaceAllowed).count + macPeerAllowed.count
         return "\(allowed) / \(padPeerDisplays.count + macPeerCount) 台设备满足空间条件"
@@ -172,6 +178,7 @@ struct PeerDisplay: Identifiable {
         sharedShortcutEnabled = preferences.bool(forKey: "shareMicrophoneHotKeys")
         spaceMode = SpaceMode(rawValue: preferences.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
         macTarget = preferences.object(forKey: "localOutputTarget") as? Double ?? 0
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") }) { return }
         loginEnabled = SMAppService.mainApp.status == .enabled
         guard runLock != nil else {
             Task { @MainActor in NSApp.terminate(nil) }
@@ -198,7 +205,8 @@ struct PeerDisplay: Identifiable {
             self.lastAction = "保留了你手动调整的 Mac 音量"
         }
         localOutput?.recoverPreviousRound()
-        input = InputActivity { [weak self] observation in
+        input = InputActivity(captureEnabled: false,
+                              ignoredPID: { MicrophoneAgentStatus.current()?.pid }) { [weak self] observation in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.inputState = observation
@@ -206,6 +214,11 @@ struct PeerDisplay: Identifiable {
             }
         }
         input?.poll()
+        do {
+            if MicrophoneAgentStatus.service.status != .enabled {
+                try MicrophoneAgentStatus.service.register()
+            }
+        } catch { errorMessage = "后台麦克风服务无法启动：\(error.localizedDescription)" }
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.input?.poll()
@@ -802,13 +815,17 @@ struct PeerDisplay: Identifiable {
     }
 
     func forensicDescription(for selector: String) -> String {
-        let status = AudioForensics.shared.status(for: selector)
+        let status = MicrophoneAgentStatus.current()?.forensics[selector]
+            ?? AudioForensics.shared.status(for: selector)
         let minutes = status.coverageSeconds / 60
         let seconds = status.coverageSeconds % 60
         return "取证回看 \(minutes)分\(seconds)秒 · 上游丢块 \(status.droppedSourceBlocks) · 驱动丢块 \(status.droppedDriverBlocks) · 写盘错误 \(status.writeErrors)"
     }
 
-    func forensicWarning(for selector: String) -> String? { AudioForensics.shared.status(for: selector).warning }
+    func forensicWarning(for selector: String) -> String? {
+        (MicrophoneAgentStatus.current()?.forensics[selector]
+            ?? AudioForensics.shared.status(for: selector)).warning
+    }
     var forensicLocation: String { AudioForensics.shared.location.path }
     var forensicLimitGB: Int { AudioForensics.shared.limitGB }
 
@@ -1209,7 +1226,7 @@ struct PeerDisplay: Identifiable {
                                       spaceAllowed: macPeerAllowed.contains(id), target: nil)
         }
         return ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
-                      captureDiagnostics: input?.captureDiagnostics,
+                      captureDiagnostics: MicrophoneAgentStatus.current()?.diagnostics,
                       peers: peerStatuses.sorted { $0.name == $1.name ? $0.id < $1.id :
                           $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
                       driverInstalling: driverInstalling, driverInstallStatus: driverInstallStatus,
@@ -1232,6 +1249,9 @@ struct PeerDisplay: Identifiable {
         switch request.command {
         case "status": refreshSources()
         case "driver.install": installDriver()
+        case "microphone.agent.stop":
+            do { try MicrophoneAgentStatus.service.unregister() }
+            catch { problem = "无法停止后台麦克风服务：\(error.localizedDescription)" }
         case "pair.start":
             beginPairing()
             if !pairingActive { problem = errorMessage }

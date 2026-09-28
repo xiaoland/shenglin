@@ -88,6 +88,9 @@ final class InputActivity {
     private var lastError: String?
     private var captures = [Group: VirtualMicrophone]()
     private let changed: (InputObservation) -> Void
+    private let captureEnabled: Bool
+    private let ignoredPID: () -> pid_t?
+    private(set) var lastObservation = InputObservation.active(0)
 
     var captureDiagnostics: CaptureDiagnostics {
         let values = captures.values.map { $0.diagnostics() }
@@ -101,7 +104,10 @@ final class InputActivity {
             pushedFrames: values.reduce(0) { $0 + $1.pushedFrames })
     }
 
-    init(changed: @escaping (InputObservation) -> Void) {
+    init(captureEnabled: Bool = true, ignoredPID: @escaping () -> pid_t? = { nil },
+         changed: @escaping (InputObservation) -> Void) {
+        self.captureEnabled = captureEnabled
+        self.ignoredPID = ignoredPID
         self.changed = changed
     }
 
@@ -112,7 +118,8 @@ final class InputActivity {
         lastError = message
         previous = nil
         // Unknown input state must not keep a stale request to lower iPad volume.
-        changed(.unavailable(message))
+        lastObservation = .unavailable(message)
+        changed(lastObservation)
     }
 
     func poll() {
@@ -121,6 +128,7 @@ final class InputActivity {
             return
         }
         inputs.removeValue(forKey: getpid())
+        if let ignored = ignoredPID() { inputs.removeValue(forKey: ignored) }
         let current = Set(inputs.keys)
         let excluded: Set<String>
         let muted: Set<String>
@@ -135,6 +143,18 @@ final class InputActivity {
         }
         let identities = Dictionary(uniqueKeysWithValues: current.map { ($0, sourceIdentities(pid: $0)) })
         var considered = InputExclusionPolicy.activePIDs(identities, excluded: excluded)
+        if !captureEnabled {
+            let mutedIDs = Set(microphones.filter { muted.contains($0.selector) }
+                .compactMap { VirtualMicrophone.deviceID(uid: $0.uid) })
+            considered.subtract(DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedIDs))
+            if considered != previous || lastError != nil {
+                previous = considered
+                lastError = nil
+                lastObservation = .active(considered.count)
+                changed(lastObservation)
+            }
+            return
+        }
         let groups = Dictionary(grouping: microphones, by: Group.init)
         for key in Array(captures.keys) where groups[key] == nil { captures.removeValue(forKey: key)?.suspend() }
         var problems = [String]()
@@ -164,7 +184,8 @@ final class InputActivity {
         guard considered != previous || lastError != problem else { return }
         previous = considered
         lastError = problem
-        if let problem { changed(.partial(considered.count, problem)) }
-        else { changed(.active(considered.count)) }
+        if let problem { lastObservation = .partial(considered.count, problem) }
+        else { lastObservation = .active(considered.count) }
+        changed(lastObservation)
     }
 }

@@ -11,6 +11,7 @@ if action == "control" {
     let request: ControlRequest
     if parts == ["status"] { request = ControlRequest(command: "status") }
     else if parts == ["driver", "install"] { request = ControlRequest(command: "driver.install") }
+    else if parts == ["microphone", "agent", "stop"] { request = ControlRequest(command: "microphone.agent.stop") }
     else if parts == ["pair", "start"] { request = ControlRequest(command: "pair.start") }
     else if parts == ["pair", "cancel"] { request = ControlRequest(command: "pair.cancel") }
     else if parts == ["pair", "code"] {

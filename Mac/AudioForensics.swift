@@ -6,7 +6,7 @@ import Foundation
 import NearbyAudioCore
 #endif
 
-struct ForensicStatus {
+struct ForensicStatus: Codable {
     let coverageSeconds: Int
     let droppedSourceBlocks: Int64
     let droppedDriverBlocks: UInt64

@@ -36,6 +36,14 @@ import UniformTypeIdentifiers
 @main @MainActor struct NearbyAudioMacApp: App {
     @NSApplicationDelegateAdaptor(NearbyAudioAppDelegate.self) private var delegate
 
+    init() {
+        if CommandLine.arguments.contains("--microphone-agent") { MicrophoneAgent.run() }
+        if CommandLine.arguments.contains("--microphone-agent-stop") {
+            do { try MicrophoneAgentStatus.service.unregister(); exit(0) }
+            catch { fputs("无法停止后台麦克风服务：\(error)\n", stderr); exit(1) }
+        }
+    }
+
     var body: some Scene {
         MenuBarExtra {
             QuickPanel(model: delegate.model, showMainWindow: delegate.showMainWindow)
