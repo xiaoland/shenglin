@@ -43,7 +43,7 @@ if [ -x 'dist/声邻.app/Contents/MacOS/声邻' ]; then
 fi
 if lsof -nP 'dist/声邻.app/Contents/MacOS/声邻' 2>/dev/null |
    awk '$4 == "txt" { found = 1 } END { exit !found }'; then
-    echo '声邻 后台麦克风服务正在运行；请先停止服务再替换应用' >&2
+    echo '声邻后台麦克风服务正在运行；请先停止服务再替换应用' >&2
     exit 1
 fi
 rm -rf 'dist/声邻.app'

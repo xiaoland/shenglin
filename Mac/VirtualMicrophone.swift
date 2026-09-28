@@ -201,10 +201,10 @@ final class VirtualMicrophone {
                 AVCaptureDevice.requestAccess(for: .audio) { _ in }
             }
             throw NSError(domain: "Shenglin", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "请在系统弹窗中允许 声邻 使用麦克风"])
+                          userInfo: [NSLocalizedDescriptionKey: "请在系统弹窗中允许声邻使用麦克风"])
         default:
             throw NSError(domain: "Shenglin", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "声邻 没有麦克风权限，请在系统设置的“隐私与安全性 → 麦克风”中允许访问"])
+                          userInfo: [NSLocalizedDescriptionKey: "声邻没有麦克风权限，请在系统设置的“隐私与安全性 → 麦克风”中允许访问"])
         }
         engine = AVAudioEngine()
         let input = engine.inputNode

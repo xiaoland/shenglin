@@ -155,7 +155,7 @@ struct PeerDisplay: Identifiable {
         guard ((try? MicrophoneStore.load()) ?? []).isEmpty == false else { return nil }
         if let status = MicrophoneAgentStatus.current() { return status.error }
         return MicrophoneAgentStatus.service.status == .enabled
-            ? "后台麦克风服务未运行" : "请在系统设置中允许声邻 后台麦克风服务"
+            ? "后台麦克风服务未运行" : "请在系统设置中允许声邻后台麦克风服务"
     }
     var spaceStatus: String {
         let allowed = padPeerDisplays.filter(\.spaceAllowed).count + macPeerAllowed.count

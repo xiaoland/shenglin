@@ -12,7 +12,7 @@ codesign --verify --strict --deep "$app"
 running=$(pgrep -fl '声邻.app/Contents/MacOS/声邻' || true)
 unexpected=$(printf '%s\n' "$running" | grep -vF "$app/Contents/MacOS/声邻" || true)
 if [ -n "$unexpected" ]; then
-    echo "另一份 声邻 正在运行：$unexpected" >&2
+    echo "另一份声邻正在运行：$unexpected" >&2
     echo '请先正常退出它，再从主仓库启动签名版。' >&2
     exit 1
 fi

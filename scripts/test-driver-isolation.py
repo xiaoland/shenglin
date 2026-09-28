@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""用两个不同 bundle ID 的 App 和专用设备检验已安装驱动；先退出 声邻 GUI。"""
+"""用两个不同 bundle ID 的 App 和专用设备检验已安装驱动；先退出声邻 GUI。"""
 import json
 import os
 from pathlib import Path
