@@ -79,6 +79,14 @@ enum MacCredentials {
         try save(JSONEncoder().encode(peers), account: "pairedPads")
     }
 
+    static func updatePadName(_ key: Data, name: String) throws {
+        var peers = try padPeers()
+        guard let index = peers.firstIndex(where: { $0.key == key }) else { return }
+        peers[index] = PadPeer(key: key, name: PeerName.display(name, fallback: "iPad"),
+                               peripheralID: peers[index].peripheralID)
+        try save(JSONEncoder().encode(peers), account: "pairedPads")
+    }
+
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword,
          kSecAttrService as String: service,

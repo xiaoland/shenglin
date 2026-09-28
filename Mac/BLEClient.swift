@@ -25,6 +25,8 @@ enum BLEConnectionState {
 
 final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private let serviceID = CBUUID(string: BLEIdentifiers.service)
+    private let pairServiceID = CBUUID(string: BLEIdentifiers.pairingService)
+    private let pairInfoID = CBUUID(string: BLEIdentifiers.pairingInfo)
     private let commandID = CBUUID(string: BLEIdentifiers.command)
     private let ackID = CBUUID(string: BLEIdentifiers.ack)
     private let peerStateID = CBUUID(string: BLEIdentifiers.peerState)
@@ -36,12 +38,15 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private let onPeerAck: (PeerStateAck) -> Void
     private let onPeerState: (PeerQuietUpdate, @escaping (String) -> Void) -> Void
     private let onAuthenticated: (UUID) -> Void
+    private let onPeerName: (String) -> Void
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var commandCharacteristic: CBCharacteristic?
     private var ackCharacteristic: CBCharacteristic?
     private var peerStateCharacteristic: CBCharacteristic?
     private var peerAckWriteCharacteristic: CBCharacteristic?
+    private var pairInfoCharacteristic: CBCharacteristic?
+    private var reportedName: String?
     private var pending: ControlCommand?
     private var pendingPeer: PeerQuietUpdate?
     private var peerTimer: Timer?
@@ -57,7 +62,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
          onAck: @escaping (ControlAck) -> Void = { _ in },
          onPeerAck: @escaping (PeerStateAck) -> Void = { _ in },
          onPeerState: @escaping (PeerQuietUpdate, @escaping (String) -> Void) -> Void = { _, done in done("unsupported") },
-         onAuthenticated: @escaping (UUID) -> Void = { _ in }) {
+         onAuthenticated: @escaping (UUID) -> Void = { _ in },
+         onPeerName: @escaping (String) -> Void = { _ in }) {
         self.key = key
         self.targetPeripheralID = targetPeripheralID
         self.onStatus = onStatus
@@ -65,6 +71,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         self.onPeerAck = onPeerAck
         self.onPeerState = onPeerState
         self.onAuthenticated = onAuthenticated
+        self.onPeerName = onPeerName
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
     }
@@ -129,7 +136,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         report("CONNECTED; discovering service")
         onStatus(.message("已连接，正在验证服务"))
         found.delegate = self
-        found.discoverServices([serviceID])
+        found.discoverServices([serviceID, pairServiceID])
     }
 
     func centralManager(_ manager: CBCentralManager, didFailToConnect found: CBPeripheral, error: Error?) {
@@ -152,6 +159,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         peerTimer = nil
         peerStateCharacteristic = nil
         peerAckWriteCharacteristic = nil
+        pairInfoCharacteristic = nil
+        reportedName = nil
         if targetPeripheralID == nil && !authenticated { scanAfterRejecting(found) }
         else { manager.connect(found) }
     }
@@ -173,10 +182,18 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         for service in found.services ?? [] where service.uuid == serviceID {
             found.discoverCharacteristics([commandID, ackID, peerStateID, peerAckWriteID], for: service)
         }
+        for service in found.services ?? [] where service.uuid == pairServiceID {
+            found.discoverCharacteristics([pairInfoID], for: service)
+        }
     }
 
     func peripheral(_ found: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard !stopped else { return }
+        if service.uuid == pairServiceID {
+            pairInfoCharacteristic = service.characteristics?.first(where: { $0.uuid == pairInfoID })
+            if let pairInfoCharacteristic { found.readValue(for: pairInfoCharacteristic) }
+            return
+        }
         if let error { report("CHARACTERISTIC ERROR \(error)"); onStatus(.message("服务不完整，正在重连")); central.cancelPeripheralConnection(found); return }
         commandCharacteristic = service.characteristics?.first(where: { $0.uuid == commandID })
         ackCharacteristic = service.characteristics?.first(where: { $0.uuid == ackID })
@@ -209,6 +226,9 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
                 if self.desiredQuiet { self.sendCurrentState() }
                 if let found = self.peripheral, let peerState = self.peerStateCharacteristic {
                     found.readValue(for: peerState)
+                }
+                if let found = self.peripheral, let info = self.pairInfoCharacteristic {
+                    found.readValue(for: info)
                 }
             }
         }
@@ -285,6 +305,17 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     }
 
     func peripheral(_ found: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if characteristic.uuid == pairInfoID {
+            if error == nil, let data = characteristic.value,
+               let info = try? JSONDecoder().decode(PairingFrame.self, from: data),
+               info.version == 2, info.kind == .info,
+               let name = info.name?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !name.isEmpty, name.count <= 32 {
+                reportedName = name
+                if authenticated { onPeerName(name) }
+            }
+            return
+        }
         if characteristic.uuid == peerStateID {
             guard !stopped, error == nil, let data = characteristic.value,
                   let update = try? JSONDecoder().decode(PeerQuietUpdate.self, from: data),
@@ -310,6 +341,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
             onStatus(.ready)
             authenticated = true
             onAuthenticated(found.identifier)
+            if let reportedName { onPeerName(reportedName) }
             onPeerAck(ack)
             if pendingPeer.targetMilli == ack.targetMilli { desiredTargetMilli = nil }
             self.pendingPeer = nil
@@ -322,6 +354,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         onStatus(.ready)
         authenticated = true
         onAuthenticated(found.identifier)
+        if let reportedName { onPeerName(reportedName) }
         onAck(ack)
         if pending.targetMilli == ack.targetMilli { desiredTargetMilli = nil }
         self.pending = nil

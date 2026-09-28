@@ -304,6 +304,17 @@ struct PadPeerDisplay: Identifiable, Equatable {
                         session.peripheralID = peripheralID
                     } catch { self.errorMessage = "无法保存设备标识：\(error.localizedDescription)" }
                 }
+            }, onPeerName: { [weak self, weak session] name in
+                Task { @MainActor [weak self, weak session] in
+                    guard let self, let session, self.padSessions[id] === session,
+                          session.name != name else { return }
+                    do {
+                        if self.pendingKey == session.key { self.pendingPadName = name }
+                        else { try MacCredentials.updatePadName(session.key, name: name) }
+                        session.name = name
+                        self.refreshPadDisplays()
+                    } catch { self.errorMessage = "无法保存设备名称：\(error.localizedDescription)" }
+                }
             })
         session.wifiPeer = WiFiPeer(localOrigin: "mac", remoteOrigin: "ipad", listens: true,
             key: peer.key, localUpdate: { [unowned self, unowned session] in

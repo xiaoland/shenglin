@@ -9,10 +9,22 @@ struct SystemVolumeView: UIViewRepresentable {
 @main struct NearbyAudioPadApp: App {
     @StateObject private var server = BLEServer()
     @AppStorage("targetVolume") private var targetVolume = 0.0
+    @State private var deviceNameInput = ""
 
     var body: some Scene {
         WindowGroup {
             Form {
+                Section("本机") {
+                    TextField("设备名称", text: $deviceNameInput)
+                        .textInputAutocapitalization(.never)
+                        .onSubmit(saveName)
+                        .disabled(server.pairingMode)
+                    Button("保存名称", action: saveName)
+                        .disabled(deviceNameInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  || deviceNameInput.trimmingCharacters(in: .whitespacesAndNewlines).count > 32
+                                  || server.pairingMode
+                                  || deviceNameInput.trimmingCharacters(in: .whitespacesAndNewlines) == server.deviceName)
+                }
                 Section("状态") {
                     Text(server.status)
                     Text(server.lastAction)
@@ -54,6 +66,12 @@ struct SystemVolumeView: UIViewRepresentable {
                 Text("通过蓝牙或已认证的 Wi-Fi 局域网接收 Mac 录音状态；不采集 iPad 麦克风，也尚未检测其他 iPad App 的录音。")
                     .font(.footnote)
             }
+            .onAppear { deviceNameInput = server.deviceName }
         }
+    }
+
+    private func saveName() {
+        server.setDeviceName(deviceNameInput)
+        deviceNameInput = server.deviceName
     }
 }

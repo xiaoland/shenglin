@@ -26,6 +26,9 @@ struct PairedMacDisplay: Identifiable, Equatable {
     @Published private(set) var pairedMacDisplays = [PairedMacDisplay]()
     @Published private(set) var pairingMode = false
     @Published private(set) var pairingStatus = "配对模式未开启"
+    @Published private(set) var deviceName = String(PeerName.display(
+        UserDefaults.standard.string(forKey: "deviceName"),
+        fallback: PeerName.display(UIDevice.current.name, fallback: "iPad")).prefix(32))
     @Published private(set) var shortCode: String?
     @Published private(set) var peerName = ""
     @Published private(set) var lastAction = "尚无命令"
@@ -77,10 +80,6 @@ struct PairedMacDisplay: Identifiable, Equatable {
         FileHandle.standardOutput.write(Data((text + "\n").utf8))
     }
 
-    private var deviceName: String {
-        String(PeerName.display(UIDevice.current.name, fallback: "iPad").prefix(32))
-    }
-
     private func advertise() {
         manager?.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceID],
                                    CBAdvertisementDataLocalNameKey: "Nearby Audio · \(deviceName)"])
@@ -88,6 +87,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
 
     override init() {
         super.init()
+        UserDefaults.standard.set(deviceName, forKey: "deviceName")
         do {
             let peers = try PairingStore.all()
             pairedMacs = peers
@@ -111,6 +111,17 @@ struct PairedMacDisplay: Identifiable, Equatable {
             }
         } catch {
             status = "无法读取配对密钥：\(error.localizedDescription)"
+        }
+    }
+
+    func setDeviceName(_ raw: String) {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, name.count <= 32, !pairingMode else { return }
+        deviceName = name
+        UserDefaults.standard.set(name, forKey: "deviceName")
+        if manager?.isAdvertising == true {
+            manager?.stopAdvertising()
+            advertise()
         }
     }
 
