@@ -11,7 +11,17 @@ enum MacPreferences {
 enum MacCredentials {
     private static let service = "local.nearbyaudio.mac"
     private static let pendingAccount = "pendingPairingKey"
-    private struct Pending: Codable { let key: Data; let expiresAt: Date }
+    private struct Pending: Codable {
+        let key: Data
+        let expiresAt: Date
+        let name: String?
+        let peripheralID: UUID?
+    }
+    struct PadPeer: Codable {
+        let key: Data
+        let name: String
+        let peripheralID: UUID?
+    }
     struct MacPeer: Codable {
         let key: Data
         let name: String
@@ -39,6 +49,34 @@ enum MacCredentials {
                                  isInitiator: isInitiator))
             try save(JSONEncoder().encode(peers), account: "pairedMacs")
         }
+    }
+
+    static func padPeers() throws -> [PadPeer] {
+        if let data = try read("pairedPads") {
+            let peers = try JSONDecoder().decode([PadPeer].self, from: data)
+            guard peers.allSatisfy({ $0.key.count == 32 }) else { throw PairingError.invalidMessage }
+            let normalized = peers.map { PadPeer(key: $0.key, name: PeerName.display($0.name, fallback: "iPad"),
+                                                 peripheralID: $0.peripheralID) }
+            if zip(peers, normalized).contains(where: { $0.0.name != $0.1.name }) {
+                try save(JSONEncoder().encode(normalized), account: "pairedPads")
+            }
+            return normalized
+        }
+        guard let key = try read("pairingKey") else { return [] }
+        guard key.count == 32 else { throw PairingError.invalidMessage }
+        let preferences = MacPreferences.defaults
+        let name = preferences.string(forKey: "pairedPadIdentity") == Authentication.sign("paired-peer-id", key: key)
+            ? preferences.string(forKey: "pairedPadName") : nil
+        let peers = [PadPeer(key: key, name: PeerName.display(name, fallback: "iPad"), peripheralID: nil)]
+        try save(JSONEncoder().encode(peers), account: "pairedPads")
+        return peers
+    }
+
+    static func updatePadPeripheralID(_ key: Data, peripheralID: UUID) throws {
+        var peers = try padPeers()
+        guard let index = peers.firstIndex(where: { $0.key == key }) else { return }
+        peers[index] = PadPeer(key: key, name: peers[index].name, peripheralID: peripheralID)
+        try save(JSONEncoder().encode(peers), account: "pairedPads")
     }
 
     private static func query(_ account: String) -> [String: Any] {
@@ -80,7 +118,7 @@ enum MacCredentials {
         }
     }
 
-    static func pendingPairing() throws -> (key: Data, expiresAt: Date)? {
+    static func pendingPairing() throws -> (key: Data, expiresAt: Date, name: String?, peripheralID: UUID?)? {
         guard let data = try read(pendingAccount) else { return nil }
         let pending = try JSONDecoder().decode(Pending.self, from: data)
         guard pending.key.count == 32 else { throw PairingError.invalidMessage }
@@ -88,18 +126,25 @@ enum MacCredentials {
             try delete(pendingAccount)
             return nil
         }
-        return (pending.key, pending.expiresAt)
+        return (pending.key, pending.expiresAt, pending.name, pending.peripheralID)
     }
 
-    static func stagePairing(_ key: Data) throws -> Date {
+    static func stagePairing(_ key: Data, name: String, peripheralID: UUID) throws -> Date {
         guard key.count == 32 else { throw PairingError.invalidMessage }
         let deadline = Date().addingTimeInterval(300)
-        try save(JSONEncoder().encode(Pending(key: key, expiresAt: deadline)), account: pendingAccount)
+        try save(JSONEncoder().encode(Pending(key: key, expiresAt: deadline,
+                                             name: PeerName.display(name, fallback: "iPad"),
+                                             peripheralID: peripheralID)), account: pendingAccount)
         return deadline
     }
 
-    static func promotePairing(_ key: Data) throws {
+    static func promotePairing(_ key: Data, name: String, peripheralID: UUID?) throws {
         guard let pending = try pendingPairing(), pending.key == key else { throw PairingError.expired }
+        var peers = try padPeers()
+        let peer = PadPeer(key: key, name: PeerName.display(name, fallback: "iPad"), peripheralID: peripheralID)
+        if let index = peers.firstIndex(where: { $0.key == key }) { peers[index] = peer }
+        else { peers.append(peer) }
+        try save(JSONEncoder().encode(peers), account: "pairedPads")
         try save(key, account: "pairingKey")
         try? delete(pendingAccount)
     }

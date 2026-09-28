@@ -4,7 +4,32 @@ import UniformTypeIdentifiers
 
 @MainActor final class NearbyAudioAppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
-    func applicationDidFinishLaunching(_ notification: Notification) { model.start() }
+    private var mainWindow: NSWindow?
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        model.start()
+        if NSApp.isActive { showMainWindow() }
+    }
+    func applicationDidBecomeActive(_ notification: Notification) {
+        if mainWindow == nil { showMainWindow() }
+    }
+    func showMainWindow() {
+        model.refreshSources()
+        if mainWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 280, y: 160, width: 560, height: 340),
+                                  styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                                  backing: .buffered, defer: false)
+            window.title = "Nearby Audio"
+            window.contentView = NSHostingView(rootView: MainPanel(model: model))
+            window.center()
+            mainWindow = window
+        }
+        mainWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        showMainWindow()
+        return true
+    }
 }
 
 @main @MainActor struct NearbyAudioMacApp: App {
@@ -12,20 +37,13 @@ import UniformTypeIdentifiers
 
     var body: some Scene {
         MenuBarExtra {
-            QuickPanel(model: delegate.model)
+            QuickPanel(model: delegate.model, showMainWindow: delegate.showMainWindow)
                 .frame(width: 340)
                 .onAppear { delegate.model.refreshSources() }
         } label: {
             MenuBarStatus(model: delegate.model)
         }
         .menuBarExtraStyle(.window)
-
-        Window("Nearby Audio", id: "main") {
-            MainPanel(model: delegate.model)
-                .frame(minWidth: 500, minHeight: 300)
-                .onAppear { delegate.model.refreshSources() }
-        }
-        .defaultSize(width: 560, height: 340)
 
         Settings {
             TabView {
@@ -59,8 +77,8 @@ private struct MenuBarStatus: View {
 }
 
 private struct QuickPanel: View {
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject var model: AppModel
+    let showMainWindow: () -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -68,20 +86,15 @@ private struct QuickPanel: View {
                 Text("Nearby Audio").font(.headline)
                 Spacer()
                 Button("打开主窗口…") {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
+                    showMainWindow()
                 }
             }
-            Text(model.ipadStatus).font(.subheadline)
+            Text(model.connection).font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
-            if model.macPeerCount > 0 {
-                Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Divider()
             Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
-            Text("参与协同的录音进程：\(model.inputCount) 个 · \(model.spaceAllowed ? "空间条件已满足" : "等待空间条件")")
+            Text("参与协同的录音进程：\(model.inputCount) 个 · \(model.spaceStatus)")
                 .font(.caption).foregroundStyle(.secondary)
             if let error = model.inputError {
                 Text(error).font(.caption).foregroundStyle(.red)
@@ -135,10 +148,7 @@ private struct MainPanel: View {
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 8) {
                         Circle().fill(model.isConnected ? .green : .orange).frame(width: 8, height: 8)
-                        Text(model.ipadStatus)
-                    }
-                    if model.macPeerCount > 0 {
-                        Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
+                        Text(model.connection)
                     }
                     Divider()
                     Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
@@ -198,24 +208,30 @@ private struct ControlPanel: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
                     if page == .devices {
-                        HStack(spacing: 8) {
-                            Circle().fill(model.isConnected ? .green : .orange)
-                                .frame(width: 8, height: 8)
-                            Text(model.ipadStatus).font(.subheadline)
+                        HStack {
+                            Text("已配对设备").font(.headline)
                             Spacer()
-                            Button(model.paired ? "更换 iPad 配对" : "与 iPad 配对") { model.beginPairing() }
-                                .buttonStyle(.link)
+                            Menu("添加设备…") {
+                                Button("iPad…") { model.beginPairing() }
+                                Button("查找 Mac…") { model.browseMacPairing() }
+                                Button("显示 Mac 配对码") { model.offerMacPairing() }
+                            }
+                        }
+                        ForEach(model.padPeerDisplays) { peer in
+                            Text(peer.status).font(.subheadline)
+                        }
+                        ForEach(model.macPeerDisplays) { peer in
+                            Text(peer.status).font(.subheadline)
+                        }
+                        if model.padPeerDisplays.isEmpty && model.macPeerDisplays.isEmpty {
+                            Text("尚未配对设备").foregroundStyle(.secondary)
                         }
 
                         if model.showPairing {
                             VStack(alignment: .leading, spacing: 7) {
-                                Text(model.paired ? "更换 iPad 配对" : "与 iPad 配对").font(.headline)
+                                Text("添加 iPad").font(.headline)
                                 Text("在 iPad App 点按“开始 2 分钟配对”，然后选择下方的 iPad。")
                                     .font(.caption).foregroundStyle(.secondary)
-                                if model.paired {
-                                    Text("此 Mac 会切换到新 iPad；原 iPad 上的其他 Mac 配对不受影响。")
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
                                 Text(model.pairingStatus).font(.caption)
                                 if model.pairingAwaitingCode {
                                     Text(model.pairingPadName).font(.subheadline)
@@ -246,13 +262,7 @@ private struct ControlPanel: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(model.macPeerCount == 0 ? "其他 Mac：未配对" : "其他 Mac")
-                                .font(.headline)
-                                .fixedSize(horizontal: false, vertical: true)
-                            ForEach(model.macPeerDisplays) { peer in
-                                Text("\(peer.name) · \(peer.authenticated ? "Wi-Fi 已认证" : "未连接") · \(peer.spaceAllowed ? (peer.authenticated ? "允许协同" : "短断连宽限") : "等待空间条件")")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
+                            Text("Mac 配对").font(.headline)
                             HStack {
                                 Button("显示配对码") { model.offerMacPairing() }
                                 Button("查找另一台 Mac") { model.browseMacPairing() }
@@ -455,18 +465,22 @@ private struct ControlPanel: View {
                     }
 
                     if page == .coordination {
-                        VStack(alignment: .leading, spacing: 6) {
-                            HStack {
-                                Text("\(model.pairedPadName) 响应 \(model.localMacName) 安静请求时的音量上限").font(.headline)
-                                Spacer()
-                                Text(model.targetKnown ? "\(Int((model.target * 100).rounded()))%" : "连接后读取")
-                                    .monospacedDigit()
+                        ForEach(model.padPeerDisplays) { peer in
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("\(peer.name) 响应安静请求时的音量上限").font(.headline)
+                                    Spacer()
+                                    Text(peer.targetKnown ? "\(Int((peer.target * 100).rounded()))%" : "连接后读取")
+                                        .monospacedDigit()
+                                }
+                                Slider(value: Binding(
+                                    get: { model.padPeerDisplays.first(where: { $0.id == peer.id })?.target ?? peer.target },
+                                    set: { model.setPadTarget(peer.id, value: $0) }),
+                                    in: 0...0.5, step: 0.05,
+                                    onEditingChanged: { model.padTargetEditChanged(peer.id, $0) })
+                                    .disabled(!peer.targetKnown)
+                                    .accessibilityLabel("\(peer.name) 响应安静请求时的媒体音量上限")
                             }
-                            Slider(value: $model.target, in: 0...0.5, step: 0.05,
-                                   onEditingChanged: model.targetEditChanged)
-                                .disabled(!model.targetKnown || !model.paired)
-                                .accessibilityLabel("\(model.pairedPadName) 响应 \(model.localMacName) 安静请求时的媒体音量上限")
-                                .help("录音期间更改目标将在下次录音开始时生效。")
                         }
 
                         VStack(alignment: .leading, spacing: 6) {

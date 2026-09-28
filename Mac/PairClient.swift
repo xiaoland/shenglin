@@ -18,7 +18,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private let onDevices: ([NearbyPad]) -> Void
     private let onStatus: (String) -> Void
     private let onNeedCode: (String) -> Void
-    private let onComplete: (Data, String) -> Void
+    private let onComplete: (Data, String, UUID) -> Void
     private let onFailure: (String) -> Void
     private var central: CBCentralManager!
     private var found = [UUID: CBPeripheral]()
@@ -38,7 +38,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var timer: Timer?
 
     init(onDevices: @escaping ([NearbyPad]) -> Void, onStatus: @escaping (String) -> Void,
-         onNeedCode: @escaping (String) -> Void, onComplete: @escaping (Data, String) -> Void,
+         onNeedCode: @escaping (String) -> Void, onComplete: @escaping (Data, String, UUID) -> Void,
          onFailure: @escaping (String) -> Void) {
         self.onDevices = onDevices
         self.onStatus = onStatus
@@ -184,10 +184,12 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                 onStatus("正在核验验证码并等待 iPad 确认")
             case .finish:
                 let key = try handshake.receiveFinish(frame)
-                guard let name = handshake.peerName else { throw PairingError.invalidMessage }
+                guard let name = handshake.peerName, let peripheralID = selected?.identifier else {
+                    throw PairingError.invalidMessage
+                }
                 handled.insert(.finish)
                 stop()
-                onComplete(key, name)
+                onComplete(key, name, peripheralID)
             default: break
             }
         } catch { fail("配对校验失败：\(error.localizedDescription)") }

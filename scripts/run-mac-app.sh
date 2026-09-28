@@ -16,4 +16,4 @@ if [ -n "$unexpected" ]; then
     echo '请先正常退出它，再从主仓库启动签名版。' >&2
     exit 1
 fi
-open "$app"
+open -g "$app"

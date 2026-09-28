@@ -30,10 +30,12 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private let peerStateID = CBUUID(string: BLEIdentifiers.peerState)
     private let peerAckWriteID = CBUUID(string: BLEIdentifiers.peerAckWrite)
     private let key: Data
+    private let targetPeripheralID: UUID?
     private let onStatus: (BLEConnectionState) -> Void
     private let onAck: (ControlAck) -> Void
     private let onPeerAck: (PeerStateAck) -> Void
     private let onPeerState: (PeerQuietUpdate, @escaping (String) -> Void) -> Void
+    private let onAuthenticated: (UUID) -> Void
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var commandCharacteristic: CBCharacteristic?
@@ -45,18 +47,24 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private var peerTimer: Timer?
     private var retryCount = 0
     private var stopped = false
+    private var authenticated = false
+    private var skippedPeripherals = [UUID: Date]()
     private(set) var desiredQuiet = false
     private var desiredTargetMilli: Int?
 
-    init(key: Data, onStatus: @escaping (BLEConnectionState) -> Void = { _ in },
+    init(key: Data, targetPeripheralID: UUID? = nil,
+         onStatus: @escaping (BLEConnectionState) -> Void = { _ in },
          onAck: @escaping (ControlAck) -> Void = { _ in },
          onPeerAck: @escaping (PeerStateAck) -> Void = { _ in },
-         onPeerState: @escaping (PeerQuietUpdate, @escaping (String) -> Void) -> Void = { _, done in done("unsupported") }) {
+         onPeerState: @escaping (PeerQuietUpdate, @escaping (String) -> Void) -> Void = { _, done in done("unsupported") },
+         onAuthenticated: @escaping (UUID) -> Void = { _ in }) {
         self.key = key
+        self.targetPeripheralID = targetPeripheralID
         self.onStatus = onStatus
         self.onAck = onAck
         self.onPeerAck = onPeerAck
         self.onPeerState = onPeerState
+        self.onAuthenticated = onAuthenticated
         super.init()
         central = CBCentralManager(delegate: self, queue: .main)
     }
@@ -106,7 +114,9 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
 
     func centralManager(_ manager: CBCentralManager, didDiscover found: CBPeripheral,
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        guard !stopped, peripheral == nil else { return }
+        guard !stopped, peripheral == nil,
+              (skippedPeripherals[found.identifier] ?? .distantPast) < Date(),
+              targetPeripheralID == nil || found.identifier == targetPeripheralID else { return }
         peripheral = found
         manager.stopScan()
         report("DISCOVERED; connecting")
@@ -126,7 +136,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         guard !stopped else { return }
         report("CONNECT FAILED \(String(describing: error))")
         onStatus(.message("连接失败，正在重试"))
-        if !stopped { manager.connect(found) }
+        if targetPeripheralID == nil && !authenticated { scanAfterRejecting(found) }
+        else { manager.connect(found) }
     }
 
     func centralManager(_ manager: CBCentralManager, didDisconnectPeripheral found: CBPeripheral, error: Error?) {
@@ -141,7 +152,19 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         peerTimer = nil
         peerStateCharacteristic = nil
         peerAckWriteCharacteristic = nil
-        manager.connect(found)
+        if targetPeripheralID == nil && !authenticated { scanAfterRejecting(found) }
+        else { manager.connect(found) }
+    }
+
+    private func scanAfterRejecting(_ found: CBPeripheral) {
+        skippedPeripherals[found.identifier] = Date().addingTimeInterval(30)
+        peripheral = nil
+        central.scanForPeripherals(withServices: [serviceID])
+        DispatchQueue.main.asyncAfter(deadline: .now() + 31) { [weak self] in
+            guard let self, !self.stopped, self.peripheral == nil else { return }
+            self.central.stopScan()
+            self.central.scanForPeripherals(withServices: [self.serviceID])
+        }
     }
 
     func peripheral(_ found: CBPeripheral, didDiscoverServices error: Error?) {
@@ -285,6 +308,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
            ack.quiet == pendingPeer.quiet {
             report("PEER ACK rev=\(ack.revision) result=\(ack.result)")
             onStatus(.ready)
+            authenticated = true
+            onAuthenticated(found.identifier)
             onPeerAck(ack)
             if pendingPeer.targetMilli == ack.targetMilli { desiredTargetMilli = nil }
             self.pendingPeer = nil
@@ -295,6 +320,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
               let pending, ack.sequence == pending.sequence, ack.quiet == pending.quiet else { return }
         report("APPLICATION ACK seq=\(ack.sequence) result=\(ack.result) volume=\(ack.volumeMilli)‰")
         onStatus(.ready)
+        authenticated = true
+        onAuthenticated(found.identifier)
         onAck(ack)
         if pending.targetMilli == ack.targetMilli { desiredTargetMilli = nil }
         self.pending = nil
