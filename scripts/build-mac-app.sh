@@ -39,7 +39,10 @@ if [ -x 'dist/声邻.app/Contents/MacOS/声邻' ]; then
             *) echo '声邻 GUI 正在运行；请正常退出后再替换签名应用' >&2; exit 1 ;;
         esac
     done
-    'dist/声邻.app/Contents/MacOS/声邻' --microphone-agent-stop
+    if lsof -nP 'dist/声邻.app/Contents/MacOS/声邻' 2>/dev/null |
+       awk '$4 == "txt" { found = 1 } END { exit !found }'; then
+        'dist/声邻.app/Contents/MacOS/声邻' --microphone-agent-stop
+    fi
 fi
 if lsof -nP 'dist/声邻.app/Contents/MacOS/声邻' 2>/dev/null |
    awk '$4 == "txt" { found = 1 } END { exit !found }'; then
