@@ -1,7 +1,16 @@
 import AppKit
+import CoreGraphics
 import Foundation
+import os
 import ServiceManagement
 import UniformTypeIdentifiers
+
+struct MacPeerDisplay: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let authenticated: Bool
+    let spaceAllowed: Bool
+}
 
 @MainActor final class AppModel: ObservableObject {
     @Published private(set) var connectionState = BLEConnectionState.message("正在启动")
@@ -9,8 +18,15 @@ import UniformTypeIdentifiers
     @Published private(set) var lastAckSequence: UInt64?
     @Published private(set) var sources = [SourceCandidate]()
     @Published private(set) var virtualMicrophoneAvailable = false
+    @Published private(set) var microphoneShortcuts = [String: MicrophoneHotKey]()
+    @Published private(set) var sharedShortcutEnabled: Bool
+    @Published private(set) var sharedShortcutActive = false
+    @Published private(set) var recordingShortcutFor: String?
+    @Published private(set) var shortcutMessage = ""
+    @Published private(set) var diagnosticMessage = ""
     @Published private(set) var inputState = InputObservation.active(0)
     @Published private(set) var paired = false
+    @Published private(set) var pairedPadName = "iPad"
     @Published private(set) var targetKnown = false
     @Published private(set) var loginEnabled = false
     @Published private(set) var nearbyPads = [NearbyPad]()
@@ -32,19 +48,24 @@ import UniformTypeIdentifiers
     @Published private(set) var macPairAwaitingCode = false
     @Published private(set) var macPairBrowsing = false
     @Published private(set) var macPeerCount = 0
+    @Published private(set) var macPeerDisplays = [MacPeerDisplay]()
     @Published private(set) var directMacCount = 0
+    @Published private(set) var driverInstalling = false
+    @Published private(set) var driverInstallStatus = ""
     @Published var macPairCodeInput = ""
     @Published var showPairing = false
     @Published var errorMessage = ""
     @Published private(set) var enabled: Bool
 
     private let preferences = MacPreferences.defaults
+    private let connectionLog = Logger(subsystem: "local.nearbyaudio.mac", category: "connections")
     private let runLock = RunLock()
     private var client: BLEClient?
     private var wifiPeer: WiFiPeer?
     private var macPairServer: MacPairServer?
     private var macPairClient: MacPairClient?
     private var macWifiPeers = [String: WiFiPeer]()
+    private var savedMacPeers = [MacCredentials.MacPeer]()
     private var macPeerVerified = Set<String>()
     private var macPeerGates = [String: SpaceGate]()
     private var macPeerAllowed = Set<String>()
@@ -58,6 +79,9 @@ import UniformTypeIdentifiers
     private var pendingKey: Data?
     private var pendingExpiresAt: Date?
     private var input: InputActivity?
+    private var hotKeys: MicrophoneHotKeys?
+    private let muteFeedback = NSSound(named: NSSound.Name("Ping"))
+    private var shortcutMonitor: Any?
     private var localOutput: MacQuietVolume?
     private var peerLedger = (MacPreferences.defaults.data(forKey: "peerDemandLedger")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
@@ -68,10 +92,15 @@ import UniformTypeIdentifiers
     private var pairingGeneration = 0
     private var credentialLoadGeneration = 0
 
-    var connection: String {
-        if directMacCount > 0 && !connectionState.isReady && !wifiVerified { return "Mac 直连已认证" }
-        return wifiVerified && !connectionState.isReady ? "iPad Wi-Fi 已认证连接" : connectionState.text
+    var ipadStatus: String {
+        let link = bleReachable ? "蓝牙已认证" : wifiVerified ? "Wi-Fi 已认证" : connectionState.text
+        let space = rawSpaceAllowed ? "允许协同" : spaceAllowed ? "短断连宽限" : "等待空间条件"
+        return "\(paired ? pairedPadName : "iPad")：\(paired ? "已配对" : "未配对") · \(link) · \(space)"
     }
+    var macStatus: String {
+        "Mac 直连：已配对 \(macPeerCount) 台 · 已认证连接 \(directMacCount) 台 · 允许协同 \(macPeerAllowed.count) 台（含宽限）"
+    }
+    var connection: String { "\(ipadStatus)；\(macStatus)" }
     var isConnected: Bool { connectionState.isReady || wifiVerified || directMacCount > 0 }
     var inputCount: Int { inputState.count }
     var inputError: String? { inputState.error }
@@ -88,24 +117,34 @@ import UniformTypeIdentifiers
         return inputCount > 0 ? "waveform.circle.fill" : "waveform"
     }
 
+    private func recordConnection(_ event: String) {
+        connectionLog.notice("ui=split-1 event=\(event, privacy: .public) pid=\(getpid()) app=\(Bundle.main.bundleURL.path, privacy: .public) ipadPaired=\(self.paired) ipadBLE=\(self.bleReachable) ipadWiFi=\(self.wifiVerified) ipadAllowed=\(self.spaceAllowed) macPaired=\(self.macPeerCount) macVerified=\(self.directMacCount) macAllowed=\(self.macPeerAllowed.count)")
+    }
+
     init() {
         enabled = preferences.object(forKey: "coordinationEnabled") as? Bool ?? true
+        sharedShortcutEnabled = preferences.bool(forKey: "shareMicrophoneHotKeys")
         spaceMode = SpaceMode(rawValue: preferences.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
         macTarget = preferences.object(forKey: "localOutputTarget") as? Double ?? 0
         loginEnabled = SMAppService.mainApp.status == .enabled
-        if runLock == nil { connectionState = .message("另一个 Nearby Audio 控制程序正在运行") }
+        guard runLock != nil else {
+            Task { @MainActor in NSApp.terminate(nil) }
+            return
+        }
         Task { @MainActor [weak self] in self?.start() }
     }
 
     func start() {
         guard !started, runLock != nil else { return }
         started = true
+        recordConnection("startup")
         do {
             controlServer = try ControlServer { [weak self] request in
                 self?.handleControl(request) ?? ControlResponse(ok: false, message: "应用正在退出", status: nil)
             }
         } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
+        restoreMicrophoneShortcuts()
         localOutput = MacQuietVolume { [weak self] in
             guard let self else { return }
             self.peerLedger.takeOver(at: Int64(Date().timeIntervalSince1970))
@@ -161,6 +200,7 @@ import UniformTypeIdentifiers
         } else if let key { useKey(key) }
         else { useKey(nil); showPairing = false }
         if let errorMessage { self.errorMessage = errorMessage }
+        recordConnection("credentials-loaded")
     }
 
     private func startupFailed(_ message: String, generation: Int) {
@@ -168,6 +208,7 @@ import UniformTypeIdentifiers
         startMacPeers()
         connectionState = .message("无法读取配对信息")
         errorMessage = message
+        recordConnection("ipad-keychain-read-failed")
     }
 
     private func useKey(_ key: Data?) {
@@ -191,20 +232,26 @@ import UniformTypeIdentifiers
         spaceAllowed = false
         guard let key, key.count == 32 else {
             paired = false
+            pairedPadName = "iPad"
             connectionState = .message("尚未配对")
             showPairing = true
             return
         }
         paired = true
+        let savedName = preferences.string(forKey: "pairedPadName") ?? ""
+        pairedPadName = preferences.string(forKey: "pairedPadIdentity") == sourceID(for: key) && !savedName.isEmpty
+            ? savedName : "iPad"
         showPairing = false
         errorMessage = ""
         connectionState = .message("正在连接 iPad")
         client = BLEClient(key: key, onStatus: { [weak self] status in
             Task { @MainActor [weak self] in
                 guard let self, self.clientGeneration == generation else { return }
+                let changed = self.connectionState.text != status.text
                 self.connectionState = status
                 self.bleReachable = status.isReady
                 self.refreshSpace()
+                if changed { self.recordConnection("ipad-ble-status") }
             }
         }, onAck: { [weak self] ack in
             Task { @MainActor [weak self] in
@@ -236,6 +283,7 @@ import UniformTypeIdentifiers
         }, verifiedChanged: { [unowned self] verified in
             self.wifiVerified = verified
             self.refreshSpace()
+            self.recordConnection(verified ? "ipad-wifi-verified" : "ipad-wifi-disconnected")
         }, onIssue: { [unowned self] issue in
             self.wifiIssue = issue
         })
@@ -268,6 +316,11 @@ import UniformTypeIdentifiers
                 currentKey = key
                 pendingKey = nil
                 pendingExpiresAt = nil
+                if !pairingPadName.isEmpty {
+                    preferences.set(sourceID(for: key), forKey: "pairedPadIdentity")
+                    preferences.set(pairingPadName, forKey: "pairedPadName")
+                    pairedPadName = pairingPadName
+                }
                 pairingStatus = "配对完成，iPad 已接受新密钥"
             } catch {
                 errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)"
@@ -304,9 +357,15 @@ import UniformTypeIdentifiers
     private func startMacPeers() {
         let peers: [MacCredentials.MacPeer]
         do { peers = try MacCredentials.macPeers() }
-        catch { errorMessage = "无法读取 Mac 配对：\(error.localizedDescription)"; return }
+        catch {
+            errorMessage = "无法读取 Mac 配对：\(error.localizedDescription)"
+            recordConnection("mac-keychain-read-failed")
+            return
+        }
+        savedMacPeers = peers
         macPeerCount = peers.count
-        for peer in peers {
+        recordConnection("mac-credentials-loaded")
+        for (index, peer) in peers.enumerated() {
             let source = sourceID(for: peer.key)
             guard macWifiPeers[source] == nil else { continue }
             let localOrigin = peer.isInitiator ? "mac-initiator" : "mac-responder"
@@ -326,6 +385,7 @@ import UniformTypeIdentifiers
                 else { self.macPeerVerified.remove(source) }
                 self.directMacCount = self.macPeerVerified.count
                 self.refreshMacPeerSpaces()
+                self.recordConnection(verified ? "mac-peer-\(index)-verified" : "mac-peer-\(index)-disconnected")
                 if verified { self.macWifiPeers[source]?.sendCurrentState() }
             }, onIssue: { [unowned self] issue in
                 if let issue { self.macPairStatus = "Mac 链路：\(issue)" }
@@ -348,8 +408,15 @@ import UniformTypeIdentifiers
             macPeerGates[source] = gate
         }
         let removed = macPeerAllowed.subtracting(next)
-        guard next != macPeerAllowed else { return }
+        let changed = next != macPeerAllowed
         macPeerAllowed = next
+        let displays = savedMacPeers.map { peer in
+            let id = sourceID(for: peer.key)
+            return MacPeerDisplay(id: id, name: peer.name,
+                authenticated: macPeerVerified.contains(id), spaceAllowed: next.contains(id))
+        }
+        if displays != macPeerDisplays { macPeerDisplays = displays }
+        guard changed else { return }
         for source in removed {
             let change = peerLedger.stopResponding(to: source, at: now)
             if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
@@ -412,6 +479,9 @@ import UniformTypeIdentifiers
     func setEnabled(_ value: Bool) {
         enabled = value
         preferences.set(value, forKey: "coordinationEnabled")
+        for device in (try? MicrophoneStore.load()) ?? [] {
+            AudioForensics.shared.event(device.selector, "coordination-changed", ["enabled": value])
+        }
         publishLocalDemand()
         if !value {
             let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
@@ -435,7 +505,7 @@ import UniformTypeIdentifiers
     }
 
     func refreshSources() {
-        virtualMicrophoneAvailable = VirtualMicrophone() != nil
+        virtualMicrophoneAvailable = VirtualMicrophone.pluginID != nil
         do { sources = try availableSources() }
         catch { errorMessage = "无法列出应用：\(error.localizedDescription)" }
     }
@@ -460,9 +530,130 @@ import UniformTypeIdentifiers
         _ = setMuted(source.selector, add: !source.isMuted)
     }
 
+    private func toggleMute(_ selector: String) {
+        do {
+            if setMuted(selector, add: !(try MuteStore.load()).contains(selector)), !sharedShortcutEnabled {
+                muteFeedback?.stop()
+                muteFeedback?.currentTime = 0
+                muteFeedback?.play()
+            }
+        }
+        catch { errorMessage = "无法读取麦克风静音设置：\(error.localizedDescription)" }
+    }
+
+    var sharedShortcutStatus: String {
+        if !sharedShortcutEnabled { return "当前使用系统热键；同组合的前台应用内快捷键可能收不到按键。" }
+        if microphoneShortcuts.isEmpty { return "共享模式已选定；录入快捷键后才开始监听。" }
+        if sharedShortcutActive {
+            return "共享模式运行中：macOS 会交付所有按键按下事件；Nearby 只处理已配置组合，不记录其他按键。"
+        }
+        return "共享模式等待授权：请在系统设置 → 隐私与安全性 → 输入监控中允许 Nearby Audio；此期间 Nearby 快捷键不可用。授权后点“重新检查授权”。"
+    }
+
+    func setSharedShortcutEnabled(_ value: Bool) {
+        guard value != sharedShortcutEnabled else { return }
+        cancelShortcutRecording()
+        hotKeys = nil
+        sharedShortcutActive = false
+        sharedShortcutEnabled = value
+        preferences.set(value, forKey: "shareMicrophoneHotKeys")
+        if value { _ = CGRequestListenEventAccess() }
+        activateMicrophoneShortcuts()
+    }
+
+    func retrySharedShortcutAuthorization() { activateMicrophoneShortcuts() }
+
+    private func restoreMicrophoneShortcuts() {
+        do {
+            let devices = Set(try MicrophoneStore.load().map(\.selector))
+            var saved = try HotKeyStore.load()
+            saved = saved.filter { devices.contains($0.key) }
+            try HotKeyStore.save(saved)
+            microphoneShortcuts = saved
+            activateMicrophoneShortcuts()
+        } catch { shortcutMessage = "无法恢复麦克风快捷键：\(error.localizedDescription)" }
+    }
+
+    private func activateMicrophoneShortcuts() {
+        hotKeys = nil // Deinitialization unregisters Carbon before a passive tap can start.
+        sharedShortcutActive = false
+        shortcutMessage = ""
+        if microphoneShortcuts.isEmpty { return }
+        do {
+            let manager = try MicrophoneHotKeys(usePassiveTap: sharedShortcutEnabled) { [weak self] selector in
+                Task { @MainActor [weak self] in self?.toggleMute(selector) }
+            }
+            for (selector, shortcut) in microphoneShortcuts {
+                do { try manager.register(shortcut, for: selector) }
+                catch { shortcutMessage = "\(selector) 的快捷键无法启用：\(error.localizedDescription)" }
+            }
+            hotKeys = manager
+            sharedShortcutActive = manager.usesPassiveTap
+        } catch { shortcutMessage = "快捷键未启用：\(error.localizedDescription)" }
+    }
+
+    func recordShortcut(for source: SourceCandidate) {
+        cancelShortcutRecording()
+        recordingShortcutFor = source.selector
+        shortcutMessage = "请按至少两个修饰键（⌃、⌥、⌘）和一个字母或数字；Esc 取消。"
+        NSApp.activate(ignoringOtherApps: true)
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self, self.recordingShortcutFor == source.selector else { return event }
+            if event.keyCode == 53 { self.cancelShortcutRecording(); return nil }
+            guard !event.isARepeat else { return nil }
+            guard let shortcut = MicrophoneHotKey(event: event) else {
+                self.shortcutMessage = "组合不可用：请用至少两个修饰键加字母或数字，避开系统保留键。"
+                return nil
+            }
+            self.setShortcut(shortcut, for: source.selector)
+            return nil
+        }
+    }
+
+    func cancelShortcutRecording() {
+        if let shortcutMonitor { NSEvent.removeMonitor(shortcutMonitor) }
+        shortcutMonitor = nil
+        recordingShortcutFor = nil
+        shortcutMessage = ""
+    }
+
+    private func setShortcut(_ shortcut: MicrophoneHotKey, for selector: String) {
+        guard !microphoneShortcuts.contains(where: { $0.key != selector &&
+            $0.value.keyCode == shortcut.keyCode && $0.value.modifiers == shortcut.modifiers }) else {
+            shortcutMessage = "该组合已分配给另一台专用麦克风。"
+            return
+        }
+        do {
+            var updated = microphoneShortcuts
+            updated[selector] = shortcut
+            try HotKeyStore.save(updated)
+            microphoneShortcuts = updated
+            cancelShortcutRecording()
+            activateMicrophoneShortcuts()
+        } catch {
+            shortcutMessage = "无法设置快捷键：\(error.localizedDescription)"
+        }
+    }
+
+    func clearShortcut(for selector: String) {
+        var updated = microphoneShortcuts
+        updated.removeValue(forKey: selector)
+        do {
+            try HotKeyStore.save(updated)
+            microphoneShortcuts = updated
+            if recordingShortcutFor == selector { cancelShortcutRecording() }
+            activateMicrophoneShortcuts()
+        } catch { shortcutMessage = "无法清除快捷键：\(error.localizedDescription)" }
+    }
+
     private func setMuted(_ selector: String, add: Bool) -> Bool {
         do {
+            guard try MicrophoneStore.load().contains(where: { $0.selector == selector }) else {
+                throw NSError(domain: "NearbyAudio", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "请先为该应用添加专用麦克风"])
+            }
             try MuteStore.change(selector, add: add)
+            AudioForensics.shared.event(selector, "mute-changed", ["muted": add])
             refreshSources()
             input?.poll()
             return true
@@ -472,27 +663,213 @@ import UniformTypeIdentifiers
         }
     }
 
-    func chooseApp() { chooseApp(mute: false) }
-    func chooseMutedApp() { chooseApp(mute: true) }
+    func removeMicrophone(_ source: SourceCandidate) {
+        _ = setMicrophone(source.selector, name: source.name, add: false)
+    }
 
-    private func chooseApp(mute: Bool) {
+    func microphoneSourceDescription(for selector: String) -> String {
+        guard let device = try? MicrophoneStore.load().first(where: { $0.selector == selector }) else { return "" }
+        let name = device.sourceUID.flatMap { uid in
+            PhysicalInputSource.available().first(where: { $0.id == uid })?.name
+        } ?? (device.sourceUID == nil ? "系统默认输入（旧设备）" : "上游已断开")
+        return "上游：\(name) · \(device.outputSampleRate) Hz / \(device.outputChannels) 声道"
+    }
+
+    func changeMicrophoneSource(_ source: SourceCandidate) {
+        guard !source.microphoneInUse else {
+            errorMessage = "请先结束使用 \(source.microphoneName ?? source.name) 的录音，再切换上游。"
+            return
+        }
+        guard let selected = choosePhysicalSource() else { return }
+        _ = setMicrophone(source.selector, name: source.name, add: true, selectedSource: selected)
+    }
+
+    func forensicDescription(for selector: String) -> String {
+        let status = AudioForensics.shared.status(for: selector)
+        let minutes = status.coverageSeconds / 60
+        let seconds = status.coverageSeconds % 60
+        return "取证回看 \(minutes)分\(seconds)秒 · 上游丢块 \(status.droppedSourceBlocks) · 驱动丢块 \(status.droppedDriverBlocks) · 写盘错误 \(status.writeErrors)"
+    }
+
+    func forensicWarning(for selector: String) -> String? { AudioForensics.shared.status(for: selector).warning }
+    var forensicLocation: String { AudioForensics.shared.location.path }
+    var forensicLimitGB: Int { AudioForensics.shared.limitGB }
+
+    func markForensics(_ source: SourceCandidate) {
+        AudioForensics.shared.mark(source.selector)
+        diagnosticMessage = "已标记 \(source.name) 的现场；取证会持续自动记录。"
+    }
+
+    func chooseForensicLocation() {
+        guard !sources.contains(where: { $0.microphoneInUse }) else {
+            diagnosticMessage = "请先结束专用麦克风录音，再更换取证目录。"
+            return
+        }
         let panel = NSOpenPanel()
-        panel.message = mute ? "选择使用虚拟麦克风时要静音的 Mac 应用" : "选择不参与 iPad 音量协同的 Mac 应用"
-        panel.prompt = "选择应用"
-        panel.allowedContentTypes = [.applicationBundle]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.begin { [weak self] response in
-            guard response == .OK, let url = panel.url else { return }
+        panel.message = "选择原始音频取证存储目录；可使用外挂 SSD"
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        AudioForensics.shared.setLocation(url)
+        diagnosticMessage = "后续取证将写入 \(url.path)；旧目录内容保留。"
+    }
+
+    func setForensicLimitGB(_ value: Int) {
+        AudioForensics.shared.setLimitGB(value)
+        diagnosticMessage = "取证存储上限已设为 \(value) GB。"
+    }
+
+    func exportForensics() {
+        guard !sources.contains(where: { $0.microphoneInUse }) else {
+            diagnosticMessage = "请先结束专用麦克风录音，再导出一致的诊断包；取证数据会自动保存。"
+            return
+        }
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "NearbyAudio-Diagnostics.zip"
+        NSApp.activate(ignoringOtherApps: true)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        diagnosticMessage = "正在导出本地诊断包…"
+        AudioForensics.shared.export(to: url) { [weak self] error in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                guard let bundle = Bundle(url: url)?.bundleIdentifier else {
-                    self.errorMessage = "所选应用没有可用的 bundle ID"
-                    return
-                }
-                if mute { _ = self.setMuted("bundle:\(bundle)", add: true) }
-                else { _ = self.setExcluded("bundle:\(bundle)", add: true) }
+                self?.diagnosticMessage = error.map { "导出失败：\($0.localizedDescription)" } ?? "诊断包已保存到 \(url.path)"
             }
         }
+    }
+
+    private func choosePhysicalSource() -> PhysicalInputSource? {
+        let sources = PhysicalInputSource.available()
+        guard !sources.isEmpty else {
+            errorMessage = "没有可用的单声道或双声道物理麦克风。"
+            return nil
+        }
+        let alert = NSAlert()
+        alert.messageText = "选择物理上游麦克风"
+        alert.informativeText = "虚拟设备创建时采用所选输入的采样率与声道数；切换不同格式的上游会重建虚拟设备。"
+        let picker = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 28))
+        for source in sources {
+            picker.addItem(withTitle: "\(source.name) · \(source.sampleRate) Hz / \(source.channels) 声道\(source.isDefault ? " · 当前默认" : "")")
+        }
+        picker.selectItem(at: sources.firstIndex(where: \.isDefault) ?? 0)
+        alert.accessoryView = picker
+        alert.addButton(withTitle: "选择")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertFirstButtonReturn ? sources[picker.indexOfSelectedItem] : nil
+    }
+
+    private func setMicrophone(_ selector: String, name: String, add: Bool,
+                               selectedSource: PhysicalInputSource? = nil) -> Bool {
+        do {
+            guard selector.hasPrefix("bundle:"), VirtualMicrophone.pluginID != nil else {
+                throw NSError(domain: "NearbyAudio", code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "需要新版驱动和有效的应用 bundle ID"])
+            }
+            var devices = try MicrophoneStore.load()
+            if add {
+                if let source = selectedSource ?? (devices.contains(where: { $0.selector == selector }) ? nil :
+                    PhysicalInputSource.available().first(where: \.isDefault)) {
+                    if let old = devices.firstIndex(where: { $0.selector == selector }) {
+                        if let id = VirtualMicrophone.deviceID(uid: devices[old].uid),
+                           (activeInputPIDs(on: id)?.isEmpty != true) {
+                            throw NSError(domain: "NearbyAudio", code: 2,
+                                userInfo: [NSLocalizedDescriptionKey: "请先停止使用该专用麦克风，再切换上游"])
+                        }
+                        devices[old] = DedicatedMicrophone(bundle: String(selector.dropFirst(7)), name: name,
+                            sourceUID: source.id, sampleRate: source.sampleRate, channels: source.channels)
+                    } else {
+                        devices.append(DedicatedMicrophone(bundle: String(selector.dropFirst(7)), name: name,
+                            sourceUID: source.id, sampleRate: source.sampleRate, channels: source.channels))
+                    }
+                } else if !devices.contains(where: { $0.selector == selector }) {
+                    throw NSError(domain: "NearbyAudio", code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "请先连接并选择物理上游麦克风"])
+                }
+            } else {
+                if let existing = devices.first(where: { $0.selector == selector }),
+                   let id = VirtualMicrophone.deviceID(uid: existing.uid) {
+                    guard let clients = activeInputPIDs(on: id), clients.isEmpty else {
+                        throw NSError(domain: "NearbyAudio", code: 2,
+                            userInfo: [NSLocalizedDescriptionKey: "请先停止使用该专用麦克风，再移除设备"])
+                    }
+                }
+                devices.removeAll { $0.selector == selector }
+                try MuteStore.change(selector, add: false)
+            }
+            try MicrophoneStore.save(devices)
+            if !add { clearShortcut(for: selector) }
+            input?.poll()
+            refreshSources()
+            if errorMessage.hasPrefix("无法更新专用麦克风：") { errorMessage = "" }
+            return true
+        } catch {
+            errorMessage = "无法更新专用麦克风：\(error.localizedDescription)"
+            return false
+        }
+    }
+
+    func installDriver() {
+        guard !driverInstalling else { return }
+        do {
+            let devices = try MicrophoneStore.load()
+            for device in devices {
+                if let id = VirtualMicrophone.deviceID(uid: device.uid) {
+                    guard let users = activeInputPIDs(on: id), users.isEmpty else {
+                        driverInstallStatus = "请先停止使用专用麦克风，再安装驱动。"
+                        return
+                    }
+                }
+            }
+        } catch {
+            driverInstallStatus = "无法核对专用麦克风状态：\(error.localizedDescription)"
+            return
+        }
+        guard let helper = Bundle.main.url(forResource: "install-mac-driver", withExtension: "sh"),
+              Bundle.main.url(forResource: "NearbyAudioDriver", withExtension: "driver") != nil else {
+            driverInstallStatus = "应用未包含已签名驱动，请重新构建 Nearby Audio。"
+            return
+        }
+        let path = helper.path.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        let script = "do shell script (\"/bin/sh \" & quoted form of \"\(path)\") with administrator privileges"
+        driverInstalling = true
+        driverInstallStatus = "等待 macOS 管理员认证…"
+        NSApp.activate(ignoringOtherApps: true)
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { () -> String? in
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+                process.arguments = ["-e", script]
+                let errors = Pipe()
+                process.standardError = errors
+                do { try process.run() }
+                catch { return error.localizedDescription }
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else {
+                    return String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                }
+                return nil
+            }.value
+            guard let self else { return }
+            self.driverInstalling = false
+            self.driverInstallStatus = result == nil ? "驱动已安装，音频服务正在恢复。" : "驱动安装未完成：\(result!)"
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            self.refreshSources()
+        }
+    }
+
+    func addApp(_ url: URL, microphone: Bool) {
+        guard let bundle = Bundle(url: url)?.bundleIdentifier else {
+            errorMessage = "所选应用没有可用的 bundle ID"
+            return
+        }
+        if microphone {
+            guard let source = choosePhysicalSource() else { return }
+            _ = setMicrophone("bundle:\(bundle)", name: url.deletingPathExtension().lastPathComponent,
+                add: true, selectedSource: source)
+        }
+        else { _ = setExcluded("bundle:\(bundle)", add: true) }
     }
 
     func beginPairing() {
@@ -670,6 +1047,11 @@ import UniformTypeIdentifiers
 
     private func controlStatus() -> ControlStatus {
         ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
+                      captureDiagnostics: input?.captureDiagnostics,
+                      ipadBLEVerified: bleReachable, ipadWiFiVerified: wifiVerified,
+                      ipadSpaceAllowed: spaceAllowed, macPairedCount: macPeerCount,
+                      macVerifiedCount: directMacCount, macSpaceAllowedCount: macPeerAllowed.count,
+                      driverInstalling: driverInstalling, driverInstallStatus: driverInstallStatus,
                       inputError: inputError,
                       lastAction: lastAction, lastAckSequence: lastAckSequence,
                       target: targetKnown ? target : nil,
@@ -680,7 +1062,8 @@ import UniformTypeIdentifiers
                       nearbyPads: nearbyPads.map { .init(id: $0.id, name: $0.name) },
                       sources: sources.map { .init(selector: $0.selector, name: $0.name,
                                                    excluded: $0.isExcluded, muted: $0.isMuted,
-                                                   active: $0.isActive) },
+                                                   active: $0.isActive, microphone: $0.microphoneName,
+                                                   microphoneInUse: $0.microphoneInUse) },
                       error: errorMessage)
     }
 
@@ -688,6 +1071,7 @@ import UniformTypeIdentifiers
         var problem: String?
         switch request.command {
         case "status": refreshSources()
+        case "driver.install": installDriver()
         case "pair.start":
             beginPairing()
             if !pairingActive { problem = errorMessage }
@@ -709,6 +1093,11 @@ import UniformTypeIdentifiers
             if let value = request.value, let selector = ExclusionStore.normalized(value) {
                 if !setMuted(selector, add: request.command == "mute.add") { problem = errorMessage }
             } else { problem = "应用标识无效" }
+        case "microphone.add", "microphone.remove":
+            if let value = request.value, let selector = ExclusionStore.normalized(value), selector.hasPrefix("bundle:") {
+                let name = sources.first(where: { $0.selector == selector })?.name ?? String(selector.dropFirst(7))
+                if !setMicrophone(selector, name: name, add: request.command == "microphone.add") { problem = errorMessage }
+            } else { problem = "请输入应用 bundle ID" }
         case "target.set":
             if let value = request.value, let number = Double(value), (0...0.5).contains(number) {
                 target = number

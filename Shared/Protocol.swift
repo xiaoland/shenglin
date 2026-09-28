@@ -146,3 +146,65 @@ public enum InputMuteStore {
         try JSONEncoder().encode(Configuration(muted: muted.sorted())).write(to: url, options: .atomic)
     }
 }
+
+/// 用户显式分配的专用输入设备；应用重启或改名不会改变设备 UID。
+public struct DedicatedMicrophone: Codable, Equatable {
+    public let bundle: String
+    public let name: String
+    public let sourceUID: String?
+    public let sampleRate: Int?
+    public let channels: Int?
+    public var selector: String { "bundle:\(bundle)" }
+    public var uid: String { "local.nearbyaudio.virtual-microphone.\(bundle)" }
+    public var deviceName: String { "Nearby · \(name)" }
+    public var outputSampleRate: Int { sampleRate ?? 48000 }
+    public var outputChannels: Int { channels ?? 2 }
+
+    public init(bundle: String, name: String, sourceUID: String? = nil,
+                sampleRate: Int? = nil, channels: Int? = nil) {
+        self.bundle = bundle
+        self.name = name
+        self.sourceUID = sourceUID
+        self.sampleRate = sampleRate
+        self.channels = channels
+    }
+}
+
+public enum DedicatedMicrophoneStore {
+    public static func validate(_ devices: [DedicatedMicrophone]) throws {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-")
+        guard devices.count <= 32, Set(devices.map(\.bundle)).count == devices.count,
+              devices.allSatisfy({ !$0.bundle.isEmpty && $0.bundle.utf8.count <= 255 &&
+                  $0.bundle.unicodeScalars.allSatisfy(allowed.contains) &&
+                  !$0.name.isEmpty && $0.name.utf8.count <= 160 && !$0.name.contains("\0") &&
+                  ($0.sourceUID == nil || (!$0.sourceUID!.isEmpty && $0.sourceUID!.utf8.count <= 255)) &&
+                  ($0.sampleRate == nil && $0.channels == nil ||
+                   $0.sampleRate != nil && $0.channels != nil &&
+                   (8000...192000).contains($0.sampleRate!) && (1...2).contains($0.channels!)) }) else {
+            throw NSError(domain: "NearbyAudio", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: "专用麦克风配置无效（最多 32 个，应用标识不得重复）"])
+        }
+    }
+
+    public static func load(at url: URL) throws -> [DedicatedMicrophone] {
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let devices = try JSONDecoder().decode([DedicatedMicrophone].self, from: Data(contentsOf: url))
+        try validate(devices)
+        return devices
+    }
+
+    public static func save(_ devices: [DedicatedMicrophone], at url: URL) throws {
+        try validate(devices)
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try JSONEncoder().encode(devices.sorted { $0.bundle < $1.bundle }).write(to: url, options: .atomic)
+    }
+}
+
+public enum DedicatedInputPolicy {
+    /// 只有进程的全部活动输入都已静音时，才从协同来源中移除该进程。
+    public static func mutedPIDs(_ inputs: [Int32: Set<UInt32>], mutedDevices: Set<UInt32>) -> Set<Int32> {
+        Set(inputs.compactMap { pid, devices in
+            !devices.isEmpty && devices.isSubset(of: mutedDevices) ? pid : nil
+        })
+    }
+}

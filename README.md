@@ -1,16 +1,22 @@
 # Nearby Audio
 
-Nearby Audio 是 Mac 菜单栏应用。未排除的 Mac 应用开始录音时，它通过蓝牙或已认证的 Wi-Fi 链路请求已配对设备降低媒体音量；最后一个参与协同的来源结束后恢复。链路只传控制状态。启用可选的 Mac 虚拟麦克风后，Mac App 会在本机内存中转发物理麦克风样本，不录制、不上传，也不向 iPad 传输声音。
+Nearby Audio 是 Mac 菜单栏应用。未排除的 Mac 应用开始录音时，它通过蓝牙或已认证的 Wi-Fi 链路请求已配对设备降低媒体音量；最后一个参与协同的来源结束后恢复。链路只传控制状态。启用可选的 Mac 虚拟麦克风后，Mac App 在本机转发物理麦克风样本，并为诊断在本机滚动保存音频；不会自动上传或向 iPad 传输声音。
 
 ## 日常使用
 
-在装有 Xcode 的 Mac 上运行一次 `scripts/build-mac-app.sh`，得到可双击的签名应用 `dist/Nearby Audio.app`。也可以在 Spotlight 搜索“Nearby Audio”。首次打开时允许蓝牙访问；使用 Wi-Fi 协同时，如系统询问局域网访问，也需要允许。如果 macOS 要求新应用访问已有配对密钥，只需按系统提示授权一次。菜单栏波形图标是主入口，无须打开终端；它在未配对、暂停、选中应用录音时显示不同状态。当前没有开启登录后自动启动，可在弹窗中自行打开。
+在装有 Xcode 的 Mac 上运行一次 `scripts/build-mac-app.sh`，得到可双击的签名应用 `dist/Nearby Audio.app`。也可以在 Spotlight 搜索“Nearby Audio”。首次打开时允许蓝牙访问；使用 Wi-Fi 协同时，如系统询问局域网访问，也需要允许。如果 macOS 要求新应用访问已有配对密钥，只需按系统提示授权一次。菜单栏弹窗显示连接和录音状态，可暂停协同、静音专用设备或保留现场；点“打开主窗口…”进入概览；设备、应用、协同和诊断各有独立页面。概览保留连接状态、自动协同与专用麦克风静音；应用页展开后可管理排除列表、每台麦克风的上游与快捷键，诊断页集中管理现场记录与导出。登录后自动启动默认关闭，可在主窗口中设置。
 
-首次配对时，在 iPad App 点按“开始 2 分钟配对”；iPad 会显示一次性 6 位验证码。在 Mac 菜单弹窗选择这台 iPad，再输入验证码并点按“验证并配对”。验证码最多尝试 3 次，超时或取消后需在 iPad 重新开启。iPad 可先后配对多台 Mac，添加新 Mac 不撤销原有密钥；每台 Mac 当前只连接一台 iPad，菜单中的“切换 iPad”会在新密钥获 iPad 确认后切换本机连接。两台 Mac 需要直接协同时，在一台点按“显示配对码”，另一台点按“查找另一台 Mac”并输入验证码，建立两者自己的密钥与 Wi-Fi 链路。iPad 工程在 `iPad/NearbyAudioPad.xcodeproj`，需先运行 `scripts/build-pake.sh ios`，再用自己的开发团队签名安装。Mac 弹窗默认让所有活动录音应用参与协同；在“排除应用”中打开开关，或用“添加排除…”选择 `.app`，即可让该应用录音时不影响已配对端。排除项按 bundle ID 保存，应用重启后仍有效。旧版 `selection.json` 的已选应用不会被误当成排除项。
+首次配对时，在 iPad App 点按“开始 2 分钟配对”；iPad 会显示一次性 6 位验证码。在 Mac 主窗口选择这台 iPad，再输入验证码并点按“验证并配对”。验证码最多尝试 3 次，超时或取消后需在 iPad 重新开启。iPad 可先后配对多台 Mac，添加新 Mac 不撤销原有密钥；每台 Mac 当前只连接一台 iPad，主窗口中的“切换 iPad”会在新密钥获 iPad 确认后切换本机连接。两台 Mac 需要直接协同时，在一台点按“显示配对码”，另一台点按“查找另一台 Mac”并输入验证码，建立两者自己的密钥与 Wi-Fi 链路。iPad 工程在 `iPad/NearbyAudioPad.xcodeproj`，需先运行 `scripts/build-pake.sh ios`，再用自己的开发团队签名安装。Mac 默认让所有活动录音应用参与协同；在主窗口“排除应用”中打开开关，或用“添加排除…”选择 `.app`，即可让该应用录音时不影响已配对端。排除项按 bundle ID 保存，应用重启后仍有效。旧版 `selection.json` 的已选应用不会被误当成排除项。
 
-弹窗显示 iPad 连接状态、当前参与协同的录音进程数和上次音量操作。可随时暂停协同、调整录音时的目标媒体音量（0%～50%），或选择登录后自动启动。音量目标会与 iPad App 同步；录音中更改目标从下一次录音开始生效。“退出”会先发送恢复请求再关闭程序。iPad App 也保留“立即恢复音量”按钮。
+菜单栏弹窗显示 iPad/Mac 连接状态、当前参与协同的录音进程数和上次音量操作，可随时暂停协同或静音专用设备。主窗口提供录音时的目标媒体音量（0%～50%）和登录启动设置。音量目标会与 iPad App 同步；录音中更改目标从下一次录音开始生效。“退出”会先发送恢复请求再关闭程序。iPad App 也保留“立即恢复音量”按钮。
 
-虚拟麦克风需要单独构建、签名并安装 HAL 驱动；普通 `build-mac-app.sh` 不会安装它。安装后保持 macOS 默认输入为物理麦克风，只在需要独立静音的应用里选用 **Nearby Audio Microphone**。菜单的“虚拟麦克风静音”可分别切换正在运行的应用，或用“添加静音…”选择 `.app`；它只会让对应应用从这台虚拟设备读到静音，其他应用仍能读到麦克风。“排除应用”只控制该应用是否触发 iPad 降音量，两种设置互不代替。如果物理供源断开、样本过期或虚拟设备被误设为系统默认输入，虚拟设备输出静音。
+专用麦克风需要单独构建、签名并安装 HAL 驱动；普通 `build-mac-app.sh` 不会安装它。主窗口中的“安装驱动…”会安装应用内已签名的驱动，并按 macOS 要求请求管理员认证、重启音频服务。在主窗口“专用麦克风”点“添加应用…”，选择应用及其物理上游输入，仅为需要独立控制输入的应用创建设备，例如 **Nearby · Koe**。每台虚拟设备在创建时采用所选上游的采样率与声道数；更换上游时应先结束该设备的录音，若格式变化，设备会重建，目标应用可能需要重新选择输入。然后在该应用的音频设置中选择这个设备；系统默认输入可继续使用物理麦克风。首次使用时允许 Nearby Audio 访问麦克风；如果拒绝，菜单会显示原因，需在系统的麦克风隐私设置中重新允许。设备按需创建，应用重启和取消静音都不会删除它；停止使用后可点“移除”。其他应用继续使用原有输入，不会自动生成虚拟设备。
+
+Nearby 中的静音开关控制整台专用设备，并让仅使用已静音设备的进程停止触发音量协同。每台专用设备还可在主窗口录入一个全局快捷键，用至少两个 ⌃、⌥、⌘ 修饰键配合字母或数字，按 Esc 取消录入；快捷键切换该设备现有的静音状态，仅在关闭“让前台应用也响应同一快捷键”时成功切换后播放系统 `Ping` 提示音，重启后保留，移除设备时清除。组合若无法注册，主窗口会提示换一个；对已知的 macOS 窗口快捷键，主窗口会显示冲突警告。默认使用非独占 Carbon 热键：其他全局热键注册者可共享组合，但应用内快捷键可能收不到原始按键；Codex App 的 ⌃⌘M 已实测只有 Nearby 响应。主窗口可显式开启“让前台应用也响应同一快捷键”：Nearby 先注销 Carbon 热键，再申请 macOS“输入监控”授权并使用只读事件监听，不阻断前台按键；关闭后销毁监听并恢复 Carbon。此监听由系统交付所有按键按下事件，Nearby 仅对已配置组合切换静音、忽略自动重复且不记录其他按键。授权未完成时 Nearby 快捷键暂不可用，可在系统设置授权后点“重新检查授权”；用户已在签名版手动确认：启用共享模式后按已配置组合，Nearby Audio 与 Codex App 均响应；长期稳定性仍需观察。不要让两个需独立控制的应用共用同一台专用设备；其他应用若选了同一设备，也会一起静音。每台设备的静音与样本缓冲独立，排除项仍只控制音量协同。如果物理供源断开、样本过期、Nearby 退出，设备将归零；音频服务重启后的设备默认静音，等待 Nearby 恢复状态。最多配置 32 台专用设备，未添加应用时不发布输入设备。
+
+诊断功能自动把每台专用设备送入 HAL 前的 Float32 音频、HAL 实际返回给客户端的 Float32 音频、事件及每 5 秒的采集和驱动性能计数保存在本机，按时间和进程标识记录。音频与事件按分钟分段，默认总容量上限为 40 GB；仅当诊断目录超过设置的上限时，从最旧证据开始淘汰。设备菜单可手动标记现场时间；持续取证不依赖标记，标记也不免除容量淘汰。主窗口显示覆盖时长、丢块和写盘错误，可选择外置存储目录、设置容量上限并导出 ZIP。外置诊断盘断开或目录换盘时会停止写入并显示错误；重新接入后请重新选择取证目录。音频可能包含私人谈话，不会自动上传；分享诊断包前请自行检查内容。上游记录来自 AVAudioEngine 格式转换之后，并非 USB 原始数据。
+
+导出后可用 `python3 scripts/audio-forensics.py <设备目录>/rolling --stream hal-output` 查看各客户端 PID 的帧数与时间戳；指定 `--pid <PID> --wav /tmp/hal.wav` 可提取某客户端的音频。将 `--stream upstream` 用于同目录的上游记录；`rolling/*-events.jsonl` 包含事件和性能快照。两路 hostTime 使用同一 Mach 时钟，换算系数见 `manifest.json`；各自的 sampleTime 属于不同音频时钟，不能直接相减。WAV 按收到的块顺序拼接，不能从拼接后的 WAV 推断真实停顿长度。
 
 ## 行为与限制
 
@@ -37,10 +43,13 @@ xcodebuild -project iPad/NearbyAudioPad.xcodeproj -scheme NearbyAudioPad -config
 scripts/build-driver.sh  # 构建并离线测试虚拟麦克风驱动，默认不签名、不安装
 ```
 
-需要可运行的 Mac 应用时，确保本机已有 Apple Development 证书，再运行 `scripts/build-mac-app.sh`；脚本默认使用该签名身份，也可设置 `NEARBY_AUDIO_SIGN_IDENTITY` 指定证书。脚本先签名并验证暂存 App，成功后才替换 `dist/` 中的旧构建。iPad 工程只有 Debug 配置：先构建 iOS BoringSSL，然后在 Xcode 中选择自己的开发团队与 iPad 真机，签名并安装。无签名构建仅验证编译，不安装或替换设备上的应用。安装新构建后需另外验证蓝牙连接、配对状态及音量回执。
+需要可运行的 Mac 应用时，确保本机已有 Apple Development 证书，再从主仓库运行 `scripts/build-mac-app.sh`；脚本默认使用该签名身份，也可设置 `NEARBY_AUDIO_SIGN_IDENTITY` 指定证书。脚本先签名并验证暂存 App，成功后才替换 `dist/` 中的旧构建；启动时运行 `scripts/run-mac-app.sh`，它只打开主仓库的签名包，并检查是否已有其他路径的 Nearby GUI。不要从工作树的 Xcode 构建目录启动第二份 App。iPad 工程只有 Debug 配置：先构建 iOS BoringSSL，然后在 Xcode 中选择自己的开发团队与 iPad 真机，签名并安装。无签名构建仅验证编译，不安装或替换设备上的应用。安装新构建后需另外验证蓝牙连接、配对状态及音量回执。
 
-虚拟麦克风驱动位于 `Driver/`，基于固定版本的 [libASPL](https://github.com/gavv/libASPL/tree/v3.1.2)；`scripts/build-driver.sh` 将依赖放在忽略版本控制的 `local/`，生成 `local/DriverBuild/NearbyAudioDriver.driver`，许可证见 `third_party/libASPL-LICENSE.txt` 及相邻的 Apple 示例许可证。设置 `NEARBY_AUDIO_SIGN_IDENTITY` 可在构建后用指定身份签名并验证驱动；安装仍需管理员把驱动放入 `/Library/Audio/Plug-Ins/HAL`，随后重启音频服务或 Mac。构建脚本不执行安装。当前仅完成构建和进程内测试，系统实际加载、两个应用并发取样、麦克风权限及长期音频时钟漂移仍待真机验证，不应把构建通过当成可用性证明。
+虚拟麦克风驱动位于 `Driver/`，基于固定版本的 [libASPL](https://github.com/gavv/libASPL/tree/v3.1.2)；`scripts/build-driver.sh` 将依赖放在忽略版本控制的 `local/`，生成 `local/DriverBuild/NearbyAudioDriver.driver`，许可证见 `third_party/libASPL-LICENSE.txt` 及相邻的 Apple 示例许可证。设置 `NEARBY_AUDIO_SIGN_IDENTITY` 可在构建后用指定身份签名并验证驱动；安装仍需管理员把驱动放入 `/Library/Audio/Plug-Ins/HAL`，随后重启音频服务或 Mac。构建脚本不执行安装。专用设备列表由 HAL 存储，应用选择按 bundle ID 存在 `microphones.json`；旧版 `muted.json` 不会自动批量创建设备。两次 120 秒真实 USB 输入到虚拟设备的双客户端闭环已通过，长时通话、拔插和睡眠唤醒仍待验证，详见[验收记录](docs/validation.md)。
 
-SwiftPM 的 `.build/release/nearby-audio` 支持 `control status|pair start|pair choose <UUID>|pair code|pair cancel` 等本机诊断命令；运行中的 GUI 通过同一用户的 Unix socket 执行它们。`pair code` 从标准输入读取验证码，不从命令参数读取。CLI 还保留 `sources`、`exclude list|add|remove`、`mute list|add|remove`、旧版密钥导入 `pair` 和独立 `run`。GUI 与独立运行的 CLI 共用排除及静音配置和运行锁，不能同时控制蓝牙。`control status` 返回连接状态、应用设置、活动进程数、最后一次认证回执及错误；超时或连接失败先检查菜单栏 App 是否运行。分享诊断输出前应删去设备名、UUID 和应用列表。仓库不包含配对密钥、设备标识、开发证书或本机日志；不要用会输出 Keychain 密钥内容的命令排障。
+先退出 Nearby GUI，再用 `python3 scripts/test-driver-isolation.py` 检验已安装驱动。它临时添加两台专用设备和两个不同 bundle ID 的测试 App，验证各设备独立静音、恢复和断源归零，再恢复原设备列表。脚本只供给合成音频，不安装驱动或改变默认输入；不要与运行中的 Nearby 同时修改设备列表。签名身份读取 `NEARBY_AUDIO_SIGN_IDENTITY`，未设置时使用临时签名，统计在 `local/HALIsolationTests/results.json`。旧单设备隔离失败的复现快照保留在本地 Apple 支持附件中，不是当前产品路线。
+
+
+SwiftPM 的 `.build/release/nearby-audio` 支持 `control status|pair start|pair choose <UUID>|pair code|pair cancel` 等本机诊断命令；运行中的 GUI 通过同一用户的 Unix socket 执行它们。`pair code` 从标准输入读取验证码，不从命令参数读取。CLI 还保留 `sources`、`exclude list|add|remove`、`mute list|add|remove`、旧版密钥导入 `pair` 和独立 `run`。GUI 与独立运行的 CLI 共用排除及静音配置和运行锁，不能同时控制蓝牙。`control microphone add|remove <bundle ID>` 可添加或移除专用设备，`control mute add|remove <bundle ID>` 控制已分配设备。`control status` 返回连接状态、应用设置、活动进程数、最后一次认证回执及错误；超时或连接失败先检查菜单栏 App 是否运行。分享诊断输出前应删去设备名、UUID 和应用列表。仓库不包含配对密钥、设备标识、开发证书或本机日志；不要用会输出 Keychain 密钥内容的命令排障。
 
 代码入口：`MacGUI/AppModel.swift` 持有菜单栏状态、配对切换和本机控制命令；`Mac/MacPairing.swift` 管理 Mac 直连配对；`Mac/InputActivity.swift` 报告未排除、未由虚拟麦克风静音的活动输入，`Mac/VirtualMicrophone.swift` 按需采集物理输入并供给 `Driver/Driver.cpp`，`Mac/BLEClient.swift` 负责 BLE 双向状态及回执，`Mac/OutputVolume.swift` 控制本机默认输出音量。`iPad/BLEServer.swift` 校验状态、管理配对激活，`iPad/Volume.swift` 保存及恢复媒体音量。各端共用 `Shared/Protocol.swift` 的 BLE 标识及旧命令规则、`Shared/PeerState.swift` 的来源租约和空间规则、`Shared/WiFiPeer.swift` 的 Bonjour/TCP 认证通信，以及 `Shared/PairingProtocol.swift` 的 SPAKE2 握手。iPad 目前没有可靠的其他 App 录音检测，因此尚不能从 iPad 真实录音反向触发 Mac 音量变化；Wi-Fi 及三端全连接也未完成真机验证，详见[多设备任务包](tasks/multi-device-volume/packet.md)。修改 BLE 标识或签名字段会改变设备间协议，需同时验证两个 App 工程。

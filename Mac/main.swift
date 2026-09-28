@@ -10,6 +10,7 @@ if action == "control" {
     let parts = Array(arguments.dropFirst())
     let request: ControlRequest
     if parts == ["status"] { request = ControlRequest(command: "status") }
+    else if parts == ["driver", "install"] { request = ControlRequest(command: "driver.install") }
     else if parts == ["pair", "start"] { request = ControlRequest(command: "pair.start") }
     else if parts == ["pair", "cancel"] { request = ControlRequest(command: "pair.cancel") }
     else if parts == ["pair", "code"] {
@@ -29,10 +30,12 @@ if action == "control" {
         request = ControlRequest(command: "mute.add", value: parts[2])
     } else if parts.count == 3, parts[0...1] == ["mute", "remove"] {
         request = ControlRequest(command: "mute.remove", value: parts[2])
+    } else if parts.count == 3, parts[0] == "microphone", ["add", "remove"].contains(parts[1]) {
+        request = ControlRequest(command: "microphone." + parts[1], value: parts[2])
     } else if parts.count == 2, parts[0] == "target" {
         request = ControlRequest(command: "target.set", value: parts[1])
     } else {
-        print("用法：nearby-audio control status | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute add|remove <标识> | target <0...0.5>")
+        print("用法：nearby-audio control status | driver install | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute|microphone add|remove <标识> | target <0...0.5>")
         exit(2)
     }
     do {

@@ -13,53 +13,60 @@ func audioProperty(_ object: AudioObjectID, _ selector: AudioObjectPropertySelec
     return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &result) == noErr ? result : nil
 }
 
-func activeInputPIDs(on device: AudioObjectID? = nil) -> Set<pid_t>? {
+func activeInputDevices() -> [pid_t: Set<AudioObjectID>]? {
     var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                              mScope: kAudioObjectPropertyScopeGlobal,
                                              mElement: kAudioObjectPropertyElementMain)
     var size: UInt32 = 0
     guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size) == noErr else { return nil }
     var objects = [AudioObjectID](repeating: 0, count: Int(size) / MemoryLayout<AudioObjectID>.size)
-    guard !objects.isEmpty else { return [] }
+    guard !objects.isEmpty else { return [:] }
     let status = objects.withUnsafeMutableBufferPointer { buffer in
         AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, buffer.baseAddress!)
     }
     guard status == noErr else { return nil }
-    var running = Set<pid_t>()
+    var running = [pid_t: Set<AudioObjectID>]()
     for object in objects {
         guard let pid = audioProperty(object, kAudioProcessPropertyPID),
               let active = audioProperty(object, kAudioProcessPropertyIsRunningInput) else { return nil }
         guard active == 1 else { continue }
-        if let device {
+        do {
             var devicesAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
                                                             mScope: kAudioObjectPropertyScopeInput,
                                                             mElement: kAudioObjectPropertyElementMain)
             var devicesSize: UInt32 = 0
             guard AudioObjectGetPropertyDataSize(object, &devicesAddress, 0, nil, &devicesSize) == noErr else { return nil }
             var devices = [AudioObjectID](repeating: 0, count: Int(devicesSize) / MemoryLayout<AudioObjectID>.size)
-            guard !devices.isEmpty else { continue }
+            guard !devices.isEmpty else { return nil }
             let devicesStatus = devices.withUnsafeMutableBufferPointer { buffer in
                 AudioObjectGetPropertyData(object, &devicesAddress, 0, nil, &devicesSize, buffer.baseAddress!)
             }
             guard devicesStatus == noErr else { return nil }
-            guard devices.contains(device) else { continue }
+            running[pid_t(pid), default: []].formUnion(devices)
         }
-        running.insert(pid_t(pid))
     }
     return running
 }
 
+func activeInputPIDs(on device: AudioObjectID? = nil) -> Set<pid_t>? {
+    guard let inputs = activeInputDevices() else { return nil }
+    return Set(inputs.compactMap { pid, devices in device.map { devices.contains($0) } ?? true ? pid : nil })
+}
+
 enum InputObservation {
     case active(Int)
+    case partial(Int, String)
     case unavailable(String)
 
     var count: Int {
         if case .active(let count) = self { return count }
+        if case .partial(let count, _) = self { return count }
         return 0
     }
 
     var error: String? {
         if case .unavailable(let message) = self { return message }
+        if case .partial(_, let message) = self { return message }
         return nil
     }
 
@@ -67,17 +74,39 @@ enum InputObservation {
 }
 
 final class InputActivity {
+    private struct Group: Hashable {
+        let sourceUID: String?
+        let sampleRate: Int
+        let channels: Int
+        init(_ device: DedicatedMicrophone) {
+            sourceUID = device.sourceUID
+            sampleRate = device.outputSampleRate
+            channels = device.outputChannels
+        }
+    }
     private var previous: Set<pid_t>?
     private var lastError: String?
-    private let virtualMicrophone = VirtualMicrophone()
+    private var captures = [Group: VirtualMicrophone]()
     private let changed: (InputObservation) -> Void
+
+    var captureDiagnostics: CaptureDiagnostics {
+        let values = captures.values.map { $0.diagnostics() }
+        return CaptureDiagnostics(sourceSampleRate: values.count == 1 ? values[0].sourceSampleRate : nil,
+            sourceChannels: values.count == 1 ? values[0].sourceChannels : nil,
+            directFormat: values.count == 1 && values[0].directFormat,
+            tappedFrames: values.reduce(0) { $0 + $1.tappedFrames },
+            busyDroppedFrames: values.reduce(0) { $0 + $1.busyDroppedFrames },
+            conversionDroppedFrames: values.reduce(0) { $0 + $1.conversionDroppedFrames },
+            pushFailedFrames: values.reduce(0) { $0 + $1.pushFailedFrames },
+            pushedFrames: values.reduce(0) { $0 + $1.pushedFrames })
+    }
 
     init(changed: @escaping (InputObservation) -> Void) {
         self.changed = changed
     }
 
     private func unavailable(_ message: String) {
-        virtualMicrophone?.suspend()
+        for capture in captures.values { capture.suspend() }
         guard lastError != message else { return }
         print(message)
         lastError = message
@@ -87,40 +116,55 @@ final class InputActivity {
     }
 
     func poll() {
-        guard var current = activeInputPIDs() else {
+        guard var inputs = activeInputDevices() else {
             unavailable("Core Audio 输入状态查询失败")
             return
         }
-        current.remove(getpid())
+        inputs.removeValue(forKey: getpid())
+        let current = Set(inputs.keys)
         let excluded: Set<String>
         let muted: Set<String>
+        let microphones: [DedicatedMicrophone]
         do {
             excluded = try ExclusionStore.load()
             muted = try MuteStore.load()
+            microphones = try MicrophoneStore.load()
         } catch {
             unavailable("无法读取应用设置：\(error)")
             return
         }
         let identities = Dictionary(uniqueKeysWithValues: current.map { ($0, sourceIdentities(pid: $0)) })
         var considered = InputExclusionPolicy.activePIDs(identities, excluded: excluded)
-        if let virtualMicrophone {
-            guard let virtualClients = activeInputPIDs(on: virtualMicrophone.deviceID) else {
-                unavailable("Core Audio 虚拟麦克风输入状态查询失败")
-                return
-            }
-            let clients = virtualClients.subtracting([getpid()])
-            let mutedClients = clients.filter { !(identities[$0] ?? []).isDisjoint(with: muted) }
+        let groups = Dictionary(grouping: microphones, by: Group.init)
+        for key in Array(captures.keys) where groups[key] == nil { captures.removeValue(forKey: key)?.suspend() }
+        var problems = [String]()
+        for (key, devices) in groups {
+            let capture = captures[key] ?? VirtualMicrophone(sourceUID: key.sourceUID,
+                sampleRate: key.sampleRate, channels: key.channels)
+            captures[key] = capture
             do {
-                try virtualMicrophone.update(activeClients: clients, mutedClients: mutedClients)
+                considered.subtract(try capture.update(inputs: inputs, devices: microphones,
+                    group: devices, muted: muted))
             } catch {
-                unavailable("虚拟麦克风不可用：\(error.localizedDescription)")
-                return
+                capture.suspend()
+                problems.append("\(devices.map(\.name).joined(separator: "、"))：\(error.localizedDescription)")
+                let failedIDs = Set(devices.compactMap { VirtualMicrophone.deviceID(uid: $0.uid) })
+                considered.subtract(DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: failedIDs))
             }
-            considered.subtract(mutedClients)
+            AudioForensics.shared.performance(devices, capture: capture.diagnostics())
         }
-        guard considered != previous else { return }
+        let problem = problems.isEmpty ? nil : "专用麦克风不可用：\(problems.joined(separator: "；"))"
+        AudioForensics.shared.poll(microphones)
+        if problem != lastError {
+            for device in microphones {
+                AudioForensics.shared.event(device.selector, problem == nil ? "capture-recovered" : "capture-error",
+                    problem.map { ["error": $0] } ?? [:])
+            }
+        }
+        guard considered != previous || lastError != problem else { return }
         previous = considered
-        lastError = nil
-        changed(.active(considered.count))
+        lastError = problem
+        if let problem { changed(.partial(considered.count, problem)) }
+        else { changed(.active(considered.count)) }
     }
 }

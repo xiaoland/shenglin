@@ -8,11 +8,20 @@ struct ControlRequest: Codable {
 
 struct ControlStatus: Codable {
     struct Device: Codable { let id: UUID; let name: String }
-    struct Source: Codable { let selector: String; let name: String; let excluded: Bool; let muted: Bool; let active: Bool }
+    struct Source: Codable { let selector: String; let name: String; let excluded: Bool; let muted: Bool; let active: Bool; let microphone: String?; let microphoneInUse: Bool }
     let connection: String
     let paired: Bool
     let enabled: Bool
     let inputCount: Int
+    let captureDiagnostics: CaptureDiagnostics?
+    let ipadBLEVerified: Bool
+    let ipadWiFiVerified: Bool
+    let ipadSpaceAllowed: Bool
+    let macPairedCount: Int
+    let macVerifiedCount: Int
+    let macSpaceAllowedCount: Int
+    let driverInstalling: Bool
+    let driverInstallStatus: String
     let inputError: String?
     let lastAction: String
     let lastAckSequence: UInt64?

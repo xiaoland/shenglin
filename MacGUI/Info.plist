@@ -13,7 +13,7 @@
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
-    <key>NSBluetoothAlwaysUsageDescription</key><string>连接你的 iPad，在 Mac 应用录音时协调媒体音量。</string>
+    <key>NSBluetoothAlwaysUsageDescription</key><string>通过蓝牙与已配对的 iPad 协调媒体音量。</string>
     <key>NSLocalNetworkUsageDescription</key><string>通过本地 Wi-Fi 与已配对的 iPad 或 Mac 协调媒体音量。</string>
     <key>NSBonjourServices</key><array><string>_nearbyaudio._tcp</string><string>_nearbyaudio-pair._tcp</string></array>
     <key>NSMicrophoneUsageDescription</key><string>将物理麦克风输入实时转发到 Nearby Audio 虚拟麦克风；声音只在本机内存中处理。</string>

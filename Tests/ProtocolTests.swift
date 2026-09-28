@@ -167,6 +167,36 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(try InputExclusionStore.load(at: exclusions, legacyURL: legacy), [])
     }
 
+    func testDedicatedMicrophonesStayStableAndOnlySuppressFullyMutedInputs() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("microphones.json")
+        let a = DedicatedMicrophone(bundle: "test.a", name: "A")
+        let b = DedicatedMicrophone(bundle: "test.b", name: "B")
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [])
+        try DedicatedMicrophoneStore.save([b, a], at: url)
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [a, b])
+        XCTAssertEqual(a.uid, DedicatedMicrophone(bundle: "test.a", name: "Renamed").uid)
+        XCTAssertEqual(a.outputSampleRate, 48000)
+        XCTAssertEqual(a.outputChannels, 2)
+        let selected = DedicatedMicrophone(bundle: "test.a", name: "A", sourceUID: "usb.audio.1",
+            sampleRate: 44100, channels: 1)
+        try DedicatedMicrophoneStore.save([selected, b], at: url)
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [selected, b])
+        XCTAssertEqual(selected.uid, a.uid)
+        XCTAssertThrowsError(try DedicatedMicrophoneStore.save([
+            .init(bundle: "test.a", name: "A", sourceUID: "usb.audio.1", sampleRate: 44100, channels: 3)
+        ], at: url))
+        try DedicatedMicrophoneStore.save([a, b], at: url)
+        XCTAssertThrowsError(try DedicatedMicrophoneStore.save([a, a], at: url))
+        XCTAssertThrowsError(try DedicatedMicrophoneStore.save([.init(bundle: "bad/id", name: "Bad")], at: url))
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [a, b])
+        try DedicatedMicrophoneStore.save([b], at: url)
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [b])
+        XCTAssertEqual(DedicatedInputPolicy.mutedPIDs([1: [10], 2: [20], 3: [10, 20], 4: []], mutedDevices: [10]), [1])
+        XCTAssertEqual(DedicatedInputPolicy.mutedPIDs([1: [10], 2: [20], 3: [10, 20]], mutedDevices: [10, 20]), [1, 2, 3])
+    }
+
     func testMuteChoicesPersistIndependentlyOfExclusions() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
