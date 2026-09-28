@@ -100,9 +100,8 @@ private struct QuickPanel: View {
 }
 
 private struct ControlPanel: View {
-    private enum Page: String, CaseIterable, Identifiable {
+    private enum Page: String {
         case overview = "概览", devices = "设备", apps = "应用", settings = "协同", diagnostics = "诊断"
-        var id: Self { self }
     }
 
     @ObservedObject var model: AppModel
@@ -112,11 +111,17 @@ private struct ControlPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Picker("主窗口分区", selection: $page) {
-                ForEach(Page.allCases) { page in Text(page.rawValue).tag(page) }
+            if page != .overview {
+                HStack(spacing: 14) {
+                    Button { page = .overview } label: {
+                        Label("概览", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.link)
+                    .accessibilityLabel("返回概览")
+                    Text(page.rawValue).font(.headline)
+                    Spacer()
+                }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -245,8 +250,6 @@ private struct ControlPanel: View {
                     }
 
                     if page == .settings {
-                        Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
-                            .font(.headline)
                         Picker("空间条件", selection: Binding(get: { model.spaceMode }, set: model.setSpaceMode)) {
                             Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
                             Text("蓝牙且 Wi-Fi").tag(SpaceMode.nearbyAndWiFi)
@@ -454,7 +457,7 @@ private struct ControlPanel: View {
                     if page == .overview && model.lastAction != "尚无音量操作" {
                         Text(model.lastAction).font(.caption).foregroundStyle(.secondary)
                     }
-                    if model.sourceActivityUnknown {
+                    if model.sourceActivityUnknown && (page == .overview || page == .apps) {
                         Text("输入使用状态未知；暂不能更换或移除麦克风")
                             .font(.caption).foregroundStyle(.red)
                     }
