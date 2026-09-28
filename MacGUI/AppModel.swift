@@ -17,6 +17,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
     @Published private(set) var lastAction = "尚无音量操作"
     @Published private(set) var lastAckSequence: UInt64?
     @Published private(set) var sources = [SourceCandidate]()
+    @Published private(set) var sourceActivityUnknown = false
     @Published private(set) var virtualMicrophoneAvailable = false
     @Published private(set) var microphoneShortcuts = [String: MicrophoneHotKey]()
     @Published private(set) var sharedShortcutEnabled: Bool
@@ -506,7 +507,9 @@ struct MacPeerDisplay: Identifiable, Equatable {
 
     func refreshSources() {
         virtualMicrophoneAvailable = VirtualMicrophone.pluginID != nil
-        do { sources = try availableSources() }
+        let active = activeInputPIDs()
+        sourceActivityUnknown = active == nil
+        do { sources = try availableSources(active: active ?? []) }
         catch { errorMessage = "无法列出应用：\(error.localizedDescription)" }
     }
 
@@ -676,8 +679,9 @@ struct MacPeerDisplay: Identifiable, Equatable {
     }
 
     func changeMicrophoneSource(_ source: SourceCandidate) {
-        guard !source.microphoneInUse else {
-            errorMessage = "请先结束使用 \(source.microphoneName ?? source.name) 的录音，再切换上游。"
+        guard !sourceActivityUnknown && !source.microphoneInUse else {
+            errorMessage = sourceActivityUnknown ? "无法确认麦克风是否正在使用，暂不能切换上游。"
+                : "请先结束使用 \(source.microphoneName ?? source.name) 的录音，再切换上游。"
             return
         }
         guard let selected = choosePhysicalSource() else { return }
@@ -701,8 +705,9 @@ struct MacPeerDisplay: Identifiable, Equatable {
     }
 
     func chooseForensicLocation() {
-        guard !sources.contains(where: { $0.microphoneInUse }) else {
-            diagnosticMessage = "请先结束专用麦克风录音，再更换取证目录。"
+        guard !sourceActivityUnknown && !sources.contains(where: { $0.microphoneInUse }) else {
+            diagnosticMessage = sourceActivityUnknown ? "无法确认麦克风是否正在使用，暂不能更换取证目录。"
+                : "请先结束专用麦克风录音，再更换取证目录。"
             return
         }
         let panel = NSOpenPanel()
@@ -722,8 +727,9 @@ struct MacPeerDisplay: Identifiable, Equatable {
     }
 
     func exportForensics() {
-        guard !sources.contains(where: { $0.microphoneInUse }) else {
-            diagnosticMessage = "请先结束专用麦克风录音，再导出一致的诊断包；取证数据会自动保存。"
+        guard !sourceActivityUnknown && !sources.contains(where: { $0.microphoneInUse }) else {
+            diagnosticMessage = sourceActivityUnknown ? "无法确认麦克风是否正在使用，暂不能导出诊断包。"
+                : "请先结束专用麦克风录音，再导出一致的诊断包；取证数据会自动保存。"
             return
         }
         let panel = NSSavePanel()

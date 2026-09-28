@@ -25,7 +25,7 @@ import UniformTypeIdentifiers
             .frame(minWidth: 560, minHeight: 420)
             .onAppear { delegate.model.refreshSources() }
         }
-        .defaultSize(width: 700, height: 520)
+        .defaultSize(width: 640, height: 440)
     }
 }
 
@@ -110,21 +110,11 @@ private struct ControlPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Nearby Audio").font(.title2.bold())
-                    Text("配对设备之间协调媒体音量")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("退出") { model.quit() }
-                    .accessibilityLabel("退出 Nearby Audio 并结束音量协同")
-            }
-
-            Picker("页面", selection: $page) {
+            Picker("主窗口分区", selection: $page) {
                 ForEach(Page.allCases) { page in Text(page.rawValue).tag(page) }
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
@@ -135,28 +125,27 @@ private struct ControlPanel: View {
                             Spacer()
                             Button("管理设备…") { page = .devices }.buttonStyle(.link)
                         }
-                        Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
+                        if model.macPeerCount > 0 {
+                            Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
+                        }
                         Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
                             .font(.headline)
-                        Text("参与协同的录音进程：\(model.inputCount) 个 · \(model.spaceStatus)")
+                        Text("参与协同：\(model.inputCount) 个录音进程")
                             .font(.caption).foregroundStyle(.secondary)
-                        if let inputError = model.inputError {
-                            Text("输入状态未知：\(inputError)").font(.caption).foregroundStyle(.red)
-                        }
                         Divider()
                         HStack {
                             Text("专用麦克风").font(.headline)
                             Spacer()
                             Button("管理应用…") { page = .apps }.buttonStyle(.link)
                         }
-                    ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
-                        HStack {
-                            Toggle("静音 \(source.name)", isOn: Binding(
-                                get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
-                            if source.microphoneInUse {
-                                Image(systemName: "mic.fill").accessibilityLabel("正在使用")
+                        ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
+                            HStack {
+                                Toggle("静音 \(source.name)", isOn: Binding(
+                                    get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
+                                if source.microphoneInUse {
+                                    Image(systemName: "mic.fill").accessibilityLabel("正在使用")
+                                }
                             }
-                        }
                         }
                         if !model.sources.contains(where: { $0.microphoneName != nil }) {
                             Text("尚未添加专用麦克风").font(.caption).foregroundStyle(.secondary)
@@ -194,8 +183,6 @@ private struct ControlPanel: View {
                                     TextField("iPad 上的 6 位验证码", text: $model.pairingCodeInput)
                                         .textFieldStyle(.roundedBorder)
                                         .onSubmit { model.submitPairingCode(model.pairingCodeInput) }
-                                    Text("输入 iPad 显示的数字，一次完成验证。")
-                                        .font(.caption)
                                     HStack {
                                         Button("验证并配对") { model.submitPairingCode(model.pairingCodeInput) }
                                             .disabled(model.pairingCodeInput.count != 6)
@@ -220,7 +207,7 @@ private struct ControlPanel: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(model.macStatus)
+                            Text(model.macPeerCount == 0 ? "Mac：未配对" : model.macStatus)
                                 .font(.headline)
                                 .fixedSize(horizontal: false, vertical: true)
                             ForEach(model.macPeerDisplays) { peer in
@@ -258,10 +245,6 @@ private struct ControlPanel: View {
                     if page == .settings {
                         Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
                             .font(.headline)
-                        if !model.enabled {
-                            Text("自动协同已关闭；录音不会改变其他设备音量。")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
                         Picker("空间条件", selection: Binding(get: { model.spaceMode }, set: model.setSpaceMode)) {
                             Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
                             Text("蓝牙且 Wi-Fi").tag(SpaceMode.nearbyAndWiFi)
@@ -272,8 +255,6 @@ private struct ControlPanel: View {
                             Text("Mac 直连目前只有 Wi-Fi 认证；“蓝牙且 Wi-Fi”不会放行 Mac↔Mac。")
                                 .font(.caption).foregroundStyle(.orange)
                         }
-                        Text("参与协同的录音进程：\(model.inputCount) 个。默认所有录音应用参与，排除项不参与。")
-                            .font(.caption).foregroundStyle(.secondary)
                         if let inputError = model.inputError {
                             Text("输入状态未知，已停止降音量请求：\(inputError)")
                                 .font(.caption).foregroundStyle(.red)
@@ -293,9 +274,7 @@ private struct ControlPanel: View {
                                 }
                                     .buttonStyle(.link)
                             }
-                            Text("开关打开表示该应用录音时不向其他设备发送安静请求。")
-                                .font(.caption).foregroundStyle(.secondary)
-                            DisclosureGroup("显示应用列表（已排除 \(model.sources.filter(\.isExcluded).count) 个）") {
+                            DisclosureGroup("应用列表 · 已排除 \(model.sources.filter(\.isExcluded).count) 个") {
                                 LazyVStack(alignment: .leading, spacing: 4) {
                                     ForEach(model.sources) { source in
                                         Toggle(isOn: Binding(get: { source.isExcluded },
@@ -327,7 +306,9 @@ private struct ControlPanel: View {
                                     Button("添加应用…") {
                                         addingMicrophone = true
                                         showingAppPicker = true
-                                    }.buttonStyle(.link)
+                                    }
+                                    .buttonStyle(.link)
+                                    .help("为需要独立静音的应用创建设备；其他应用若选择同一设备，也会一起静音。")
                                 }
                             }
                             if !model.driverInstallStatus.isEmpty {
@@ -339,10 +320,6 @@ private struct ControlPanel: View {
                                         .buttonStyle(.link).disabled(model.driverInstalling)
                                 }
                             }
-                            Text(model.virtualMicrophoneAvailable
-                                 ? "仅为需要的应用添加设备，再到该应用中选择下方同名输入。不要让其他应用共用此设备。"
-                                 : "安装新版 Nearby 驱动后，可为少数应用添加专用麦克风。")
-                                .font(.caption).foregroundStyle(.secondary)
                             if model.virtualMicrophoneAvailable {
                                 LazyVStack(alignment: .leading, spacing: 4) {
                                     ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
@@ -352,17 +329,20 @@ private struct ControlPanel: View {
                                                     get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
                                                 Button("移除") { model.removeMicrophone(source) }
                                                     .buttonStyle(.link)
-                                                    .disabled(source.microphoneInUse)
+                                                    .disabled(model.sourceActivityUnknown || source.microphoneInUse)
                                             }
                                             DisclosureGroup("设备设置") {
-                                                Text("\(source.microphoneName ?? "") · \(source.microphoneInUse ? "正在使用" : "等待应用选择") · \(source.isExcluded ? "已排除音量协同" : "未排除音量协同")")
+                                                Text("\(source.microphoneName ?? "") · \(model.sourceActivityUnknown ? "使用状态未知" : (source.microphoneInUse ? "正在使用" : "等待应用选择"))")
                                                     .font(.caption2).foregroundStyle(.secondary)
+                                                if source.isExcluded {
+                                                    Text("已排除音量协同").font(.caption2).foregroundStyle(.orange)
+                                                }
                                                 HStack {
                                                     Text(model.microphoneSourceDescription(for: source.selector))
                                                         .font(.caption2).foregroundStyle(.secondary)
                                                     Spacer()
                                                     Button("更换上游…") { model.changeMicrophoneSource(source) }
-                                                        .buttonStyle(.link).disabled(source.microphoneInUse)
+                                                        .buttonStyle(.link).disabled(model.sourceActivityUnknown || source.microphoneInUse)
                                                 }
                                                 HStack {
                                                     Text("快捷键：\(model.microphoneShortcuts[source.selector]?.title ?? "未设置")")
@@ -392,11 +372,14 @@ private struct ControlPanel: View {
                                 Toggle("让前台应用也响应同一快捷键", isOn: Binding(
                                     get: { model.sharedShortcutEnabled }, set: model.setSharedShortcutEnabled))
                                     .font(.caption)
-                                Text(model.sharedShortcutStatus)
-                                    .font(.caption2).foregroundStyle(.secondary)
-                                if model.sharedShortcutEnabled && !model.sharedShortcutActive && !model.microphoneShortcuts.isEmpty {
-                                    Button("重新检查授权") { model.retrySharedShortcutAuthorization() }
-                                        .buttonStyle(.link)
+                                    .help("开启后，系统会向 Nearby 交付所有按键按下事件；Nearby 仅匹配已配置组合，不记录其他按键。")
+                                if model.sharedShortcutEnabled && !model.sharedShortcutActive {
+                                    Text(model.sharedShortcutStatus)
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                    if !model.microphoneShortcuts.isEmpty {
+                                        Button("重新检查授权") { model.retrySharedShortcutAuthorization() }
+                                            .buttonStyle(.link)
+                                    }
                                 }
                             }
                         }
@@ -404,7 +387,6 @@ private struct ControlPanel: View {
 
                     if page == .diagnostics {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("诊断与导出").font(.headline)
                             ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
                                 HStack {
                                     Text("\(source.name)：\(model.forensicDescription(for: source.selector))")
@@ -427,7 +409,7 @@ private struct ControlPanel: View {
                                 Button("导出诊断包…") { model.exportForensics() }.buttonStyle(.link)
                             }
                             .help(model.forensicLocation)
-                            Text("录音时自动持续记录；标记只记录时间点，旧证据按容量上限淘汰。")
+                            Text("音频持续保存在本机，按容量上限淘汰。")
                                 .font(.caption2).foregroundStyle(.secondary)
                             if !model.diagnosticMessage.isEmpty {
                                 Text(model.diagnosticMessage).font(.caption2).foregroundStyle(.secondary)
@@ -447,8 +429,7 @@ private struct ControlPanel: View {
                                    onEditingChanged: model.targetEditChanged)
                                 .disabled(!model.targetKnown || !model.paired)
                                 .accessibilityLabel("\(model.pairedPadName) 响应此 Mac 安静请求时的媒体音量上限")
-                            Text("录音期间更改目标将在下次录音开始时生效。")
-                                .font(.caption).foregroundStyle(.secondary)
+                                .help("录音期间更改目标将在下次录音开始时生效。")
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
@@ -461,14 +442,20 @@ private struct ControlPanel: View {
                             Slider(value: $model.macTarget, in: 0...0.5, step: 0.05,
                                    onEditingChanged: model.macTargetEditChanged)
                                 .accessibilityLabel("此 Mac 响应其他设备安静请求时的媒体音量上限")
-                            Text("iPad 对其他 App 录音的自动检测尚未验证。")
+                            Text("iPad → Mac 自动触发尚未验证")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
 
                         Toggle("登录后自动启动", isOn: Binding(get: { model.loginEnabled }, set: model.setLoginEnabled))
                     }
 
-                    Text(model.lastAction).font(.caption).foregroundStyle(.secondary)
+                    if page == .overview && model.lastAction != "尚无音量操作" {
+                        Text(model.lastAction).font(.caption).foregroundStyle(.secondary)
+                    }
+                    if model.sourceActivityUnknown {
+                        Text("输入使用状态未知；暂不能更换或移除麦克风")
+                            .font(.caption).foregroundStyle(.red)
+                    }
                     if !model.errorMessage.isEmpty {
                         Text(model.errorMessage).font(.caption).foregroundStyle(.red)
                             .textSelection(.enabled)

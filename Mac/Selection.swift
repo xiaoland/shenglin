@@ -307,13 +307,17 @@ struct SourceCandidate: Identifiable {
 }
 
 func availableSources() throws -> [SourceCandidate] {
-    let excluded = try ExclusionStore.load()
-    let muted = try MuteStore.load()
-    let microphones = try MicrophoneStore.load()
     guard let active = activeInputPIDs() else {
         throw NSError(domain: "NearbyAudio", code: 1,
                       userInfo: [NSLocalizedDescriptionKey: "Core Audio 输入状态查询失败"])
     }
+    return try availableSources(active: active)
+}
+
+func availableSources(active: Set<pid_t>) throws -> [SourceCandidate] {
+    let excluded = try ExclusionStore.load()
+    let muted = try MuteStore.load()
+    let microphones = try MicrophoneStore.load()
     let activeIdentities = active.map { sourceIdentities(pid: $0) }
     var rows = [String: String]()
     for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
