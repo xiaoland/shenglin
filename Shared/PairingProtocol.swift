@@ -30,6 +30,13 @@ public struct PairingFrame: Codable {
     }
 }
 
+public enum PeerName {
+    public static func display(_ claimed: String?, fallback: String) -> String {
+        let name = claimed?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? fallback : name
+    }
+}
+
 public enum PairingError: Error, Equatable, LocalizedError {
     case invalidMessage, wrongSession, wrongCode, expired, wrongStep, cryptoFailed
 
@@ -97,17 +104,18 @@ private enum PairingCrypto {
         return data
     }
 
-    static func name(_ text: String) -> String {
+    static func name(_ text: String, fallback: String) -> String {
         let clean = String(String.UnicodeScalarView(text.unicodeScalars.filter {
             !CharacterSet.controlCharacters.contains($0) && $0 != "\\" && $0 != "\""
         }))
-        var filtered = String(clean.prefix(24))
+        var filtered = String(clean.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
         while filtered.utf8.count > 24 { filtered.removeLast() }
-        return filtered.isEmpty ? "设备" : filtered
+        return filtered.isEmpty ? fallback : filtered
     }
 
     static func validName(_ text: String?) -> String? {
-        guard let text, !text.isEmpty, text.utf8.count <= 96, name(text) == text else { return nil }
+        guard let text, !text.isEmpty, text.utf8.count <= 96,
+              name(text, fallback: "") == text else { return nil }
         return text
     }
 
@@ -170,7 +178,7 @@ public final class PairingInitiator {
     public let session: Data
 
     public init(code: String, macName: String, now: Date = Date()) throws {
-        self.macName = PairingCrypto.name(macName)
+        self.macName = PairingCrypto.name(macName, fallback: "Mac")
         pake = try SPAKE2(code: code, role: 0)
         session = try PairingCrypto.random16()
         deadline = now.addingTimeInterval(90)
@@ -227,13 +235,14 @@ public final class PairingResponder {
     public let offerFrame: PairingFrame
     public var confirmedKey: Data? { step == .finished ? keys.control : nil }
 
-    public init(start: PairingFrame, code: String, padName: String, now: Date = Date()) throws {
+    public init(start: PairingFrame, code: String, padName: String,
+                fallbackName: String = "iPad", now: Date = Date()) throws {
         guard start.version == 2, start.kind == .start, start.session.count == 16,
               let message = start.message, message.count == 32,
               let macName = PairingCrypto.validName(start.name) else { throw PairingError.invalidMessage }
         session = start.session
         deadline = now.addingTimeInterval(90)
-        let normalizedPadName = PairingCrypto.name(padName)
+        let normalizedPadName = PairingCrypto.name(padName, fallback: fallbackName)
         let pake = try SPAKE2(code: code, role: 1)
         let secret = try pake.finish(peer: message)
         keys = PairingCrypto.derive(secret: secret, session: session, macName: macName,

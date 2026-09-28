@@ -27,7 +27,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
     @Published private(set) var diagnosticMessage = ""
     @Published private(set) var inputState = InputObservation.active(0)
     @Published private(set) var paired = false
-    @Published private(set) var pairedPadName = "iPad（名称未知）"
+    @Published private(set) var pairedPadName = "iPad"
     @Published private(set) var targetKnown = false
     @Published private(set) var loginEnabled = false
     @Published private(set) var nearbyPads = [NearbyPad]()
@@ -98,7 +98,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
         let space = rawSpaceAllowed ? "允许协同" : spaceAllowed ? "短断连宽限" : "等待空间条件"
         return "\(paired ? pairedPadName : "iPad")：\(paired ? "已配对" : "未配对") · \(link) · \(space)"
     }
-    var localMacName: String { Host.current().localizedName ?? "这台 Mac" }
+    var localMacName: String { PeerName.display(Host.current().localizedName, fallback: "Mac") }
     var macStatus: String {
         macPeerDisplays.map { peer in
             "\(peer.name)：\(peer.authenticated ? "Wi-Fi 已认证" : "未连接") · \(peer.spaceAllowed ? (peer.authenticated ? "允许协同" : "短断连宽限") : "等待空间条件")"
@@ -236,15 +236,15 @@ struct MacPeerDisplay: Identifiable, Equatable {
         spaceAllowed = false
         guard let key, key.count == 32 else {
             paired = false
-            pairedPadName = "iPad（名称未知）"
+            pairedPadName = "iPad"
             connectionState = .message("尚未配对")
             showPairing = true
             return
         }
         paired = true
-        let savedName = preferences.string(forKey: "pairedPadName") ?? ""
-        pairedPadName = preferences.string(forKey: "pairedPadIdentity") == sourceID(for: key) && !savedName.isEmpty
-            ? savedName : "iPad（名称未知）"
+        let savedName = preferences.string(forKey: "pairedPadIdentity") == sourceID(for: key)
+            ? preferences.string(forKey: "pairedPadName") : nil
+        pairedPadName = PeerName.display(savedName, fallback: "iPad")
         showPairing = false
         errorMessage = ""
         connectionState = .message("正在连接")
@@ -915,8 +915,9 @@ struct MacPeerDisplay: Identifiable, Equatable {
             guard let self, self.pairingGeneration == generation else { return }
             self.pairingPadName = name
             self.pairingAwaitingCode = true
-        }, onComplete: { [weak self] key in
+        }, onComplete: { [weak self] key, name in
             guard let self, self.pairingGeneration == generation else { return }
+            self.pairingPadName = name
             self.pairingGeneration += 1
             self.pairClient = nil
             self.pairingActive = false

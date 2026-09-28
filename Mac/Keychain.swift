@@ -22,14 +22,21 @@ enum MacCredentials {
         guard let data = try read("pairedMacs") else { return [] }
         let peers = try JSONDecoder().decode([MacPeer].self, from: data)
         guard peers.allSatisfy({ $0.key.count == 32 }) else { throw PairingError.invalidMessage }
-        return peers
+        let normalized = peers.map { MacPeer(key: $0.key,
+                                             name: PeerName.display($0.name, fallback: "Mac"),
+                                             isInitiator: $0.isInitiator) }
+        if zip(peers, normalized).contains(where: { $0.0.name != $0.1.name }) {
+            try save(JSONEncoder().encode(normalized), account: "pairedMacs")
+        }
+        return normalized
     }
 
     static func addMacPeer(key: Data, name: String, isInitiator: Bool) throws {
         guard key.count == 32 else { throw PairingError.invalidMessage }
         var peers = try macPeers()
         if !peers.contains(where: { $0.key == key }) {
-            peers.append(MacPeer(key: key, name: name, isInitiator: isInitiator))
+            peers.append(MacPeer(key: key, name: PeerName.display(name, fallback: "Mac"),
+                                 isInitiator: isInitiator))
             try save(JSONEncoder().encode(peers), account: "pairedMacs")
         }
     }

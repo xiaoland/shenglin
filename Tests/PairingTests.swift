@@ -8,6 +8,8 @@ final class PairingTests: XCTestCase {
         let pad = try PairingResponder(start: mac.startFrame, code: "004219", padName: "My iPad")
         XCTAssertNil(pad.confirmedKey)
         let proof = try mac.receiveOffer(pad.offerFrame)
+        XCTAssertEqual(mac.peerName, "My iPad")
+        XCTAssertEqual(mac.startFrame.name, "My Mac")
         XCTAssertNil(pad.confirmedKey)
         let finish = try pad.receiveConfirm(proof)
         XCTAssertEqual(try mac.receiveFinish(finish), pad.confirmedKey)
@@ -61,5 +63,21 @@ final class PairingTests: XCTestCase {
             return key
         }
         XCTAssertNotEqual(try pair("Travel Mac A"), try pair("Travel Mac B"))
+    }
+
+    func testPairingNamesNeverBecomeBlank() throws {
+        XCTAssertEqual(PeerName.display(nil, fallback: "iPad"), "iPad")
+        XCTAssertEqual(PeerName.display("  ", fallback: "Mac"), "Mac")
+        let mac = try PairingInitiator(code: "123456", macName: "  ")
+        XCTAssertEqual(mac.startFrame.name, "Mac")
+        let pad = try PairingResponder(start: mac.startFrame, code: "123456", padName: " \n ")
+        XCTAssertEqual(pad.offerFrame.name, "iPad")
+        XCTAssertThrowsError(try PairingResponder(
+            start: PairingFrame(kind: .start, session: mac.session,
+                                message: mac.startFrame.message, name: "  "),
+            code: "123456", padName: "iPad"))
+        XCTAssertThrowsError(try mac.receiveOffer(PairingFrame(
+            kind: .offer, session: mac.session,
+            message: pad.offerFrame.message, name: "")))
     }
 }

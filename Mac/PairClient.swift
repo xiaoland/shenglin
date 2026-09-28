@@ -18,7 +18,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private let onDevices: ([NearbyPad]) -> Void
     private let onStatus: (String) -> Void
     private let onNeedCode: (String) -> Void
-    private let onComplete: (Data) -> Void
+    private let onComplete: (Data, String) -> Void
     private let onFailure: (String) -> Void
     private var central: CBCentralManager!
     private var found = [UUID: CBPeripheral]()
@@ -38,7 +38,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     private var timer: Timer?
 
     init(onDevices: @escaping ([NearbyPad]) -> Void, onStatus: @escaping (String) -> Void,
-         onNeedCode: @escaping (String) -> Void, onComplete: @escaping (Data) -> Void,
+         onNeedCode: @escaping (String) -> Void, onComplete: @escaping (Data, String) -> Void,
          onFailure: @escaping (String) -> Void) {
         self.onDevices = onDevices
         self.onStatus = onStatus
@@ -89,8 +89,9 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                         advertisementData: [String: Any], rssi RSSI: NSNumber) {
         guard !stopped else { return }
         found[peripheral.identifier] = peripheral
-        names[peripheral.identifier] = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-            ?? peripheral.name ?? "附近的 iPad"
+        names[peripheral.identifier] = PeerName.display(
+            advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name,
+            fallback: "iPad")
         publishDevices()
     }
 
@@ -154,8 +155,8 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
               data.count <= 512, let frame = try? JSONDecoder().decode(PairingFrame.self, from: data) else { return }
         if characteristic.uuid == infoID {
             guard frame.version == 2, frame.kind == .info else { fail("iPad 配对信息无效"); return }
-            if let name = frame.name, let id = selected?.identifier {
-                names[id] = name
+            if let id = selected?.identifier {
+                names[id] = PeerName.display(frame.name, fallback: "iPad")
                 publishDevices()
             }
             infoAllowsPairing = frame.pairingMode == true
@@ -183,9 +184,10 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
                 onStatus("正在核验验证码并等待 iPad 确认")
             case .finish:
                 let key = try handshake.receiveFinish(frame)
+                guard let name = handshake.peerName else { throw PairingError.invalidMessage }
                 handled.insert(.finish)
                 stop()
-                onComplete(key)
+                onComplete(key, name)
             default: break
             }
         } catch { fail("配对校验失败：\(error.localizedDescription)") }

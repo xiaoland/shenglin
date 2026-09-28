@@ -94,7 +94,8 @@ private let macPairService = "_nearbyaudio-pair._tcp"
         parameters.requiredInterfaceType = .wifi
         parameters.includePeerToPeer = false
         let listener = try NWListener(using: parameters)
-        listener.service = NWListener.Service(name: "Nearby Audio Mac", type: macPairService)
+        listener.service = NWListener.Service(
+            name: PeerName.display(Host.current().localizedName, fallback: "Mac"), type: macPairService)
         listener.newConnectionHandler = { [weak self] connection in
             Task { @MainActor [weak self] in
                 guard let self, !self.stopped, self.socket == nil else { connection.cancel(); return }
@@ -137,8 +138,8 @@ private let macPairService = "_nearbyaudio-pair._tcp"
                 guard responder == nil, attempts < 3 else { throw PairingError.wrongStep }
                 attempts += 1
                 let responder = try PairingResponder(start: frame, code: code,
-                    padName: Host.current().localizedName ?? "Mac")
-                peerName = frame.name ?? "Mac"
+                    padName: Host.current().localizedName ?? "Mac", fallbackName: "Mac")
+                peerName = PeerName.display(frame.name, fallback: "Mac")
                 self.responder = responder
                 socket.send(responder.offerFrame)
             } else if frame.kind == .confirm, let responder {

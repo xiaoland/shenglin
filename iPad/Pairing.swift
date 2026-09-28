@@ -55,11 +55,16 @@ enum PairingStore {
         if let data = try read(peersAccount) {
             let peers = try JSONDecoder().decode([PairedMac].self, from: data)
             guard peers.allSatisfy({ $0.key.count == 32 }) else { throw PairingError.invalidMessage }
-            return peers
+            let normalized = peers.map { PairedMac(key: $0.key,
+                                                   name: PeerName.display($0.name, fallback: "Mac")) }
+            if zip(peers, normalized).contains(where: { $0.0.name != $0.1.name }) {
+                try save(JSONEncoder().encode(normalized), account: peersAccount)
+            }
+            return normalized
         }
         guard let key = try read(currentAccount) else { return [] }
         guard key.count == 32 else { throw PairingError.invalidMessage }
-        return [PairedMac(key: key, name: "Mac（名称未知）")]
+        return [PairedMac(key: key, name: "Mac")]
     }
 
     static func pending() throws -> Data? {
@@ -75,7 +80,8 @@ enum PairingStore {
 
     static func stage(_ key: Data, name: String = "Mac") throws {
         guard key.count == 32 else { throw PairingError.invalidMessage }
-        try save(JSONEncoder().encode(Pending(key: key, expiresAt: Date().addingTimeInterval(300), name: name)),
+        try save(JSONEncoder().encode(Pending(key: key, expiresAt: Date().addingTimeInterval(300),
+                                            name: PeerName.display(name, fallback: "Mac"))),
                  account: pendingAccount)
     }
 
@@ -85,7 +91,8 @@ enum PairingStore {
         guard pending.expiresAt > Date(), pending.key.count == 32 else { throw PairingError.expired }
         var peers = try all()
         if !peers.contains(where: { $0.key == pending.key }) {
-            peers.append(PairedMac(key: pending.key, name: pending.name ?? "Mac"))
+            peers.append(PairedMac(key: pending.key,
+                                   name: PeerName.display(pending.name, fallback: "Mac")))
         }
         try save(JSONEncoder().encode(peers), account: peersAccount)
         try? delete(pendingAccount)

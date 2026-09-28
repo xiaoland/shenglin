@@ -77,7 +77,9 @@ struct PairedMacDisplay: Identifiable, Equatable {
         FileHandle.standardOutput.write(Data((text + "\n").utf8))
     }
 
-    private var deviceName: String { String(UIDevice.current.name.prefix(32)) }
+    private var deviceName: String {
+        String(PeerName.display(UIDevice.current.name, fallback: "iPad").prefix(32))
+    }
 
     private func advertise() {
         manager?.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceID],
@@ -668,7 +670,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
                 pairAttempts += 1
                 pairing = session
                 pairingCentral = request.central.identifier
-                peerName = frame.name ?? "Mac"
+                peerName = PeerName.display(frame.name, fallback: "Mac")
                 pairingStatus = "正在核验 \(peerName) 输入的验证码"
                 peripheral.respond(to: request, withResult: .success)
                 publishPair(session.offerFrame, to: request.central.identifier)
