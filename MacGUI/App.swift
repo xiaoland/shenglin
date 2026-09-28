@@ -21,11 +21,32 @@ import UniformTypeIdentifiers
         .menuBarExtraStyle(.window)
 
         Window("Nearby Audio", id: "main") {
-            ControlPanel(model: delegate.model)
-            .frame(minWidth: 560, minHeight: 420)
+            MainPanel(model: delegate.model)
+                .frame(minWidth: 500, minHeight: 300)
+                .onAppear { delegate.model.refreshSources() }
+        }
+        .defaultSize(width: 560, height: 340)
+
+        Settings {
+            TabView {
+                ControlPanel(model: delegate.model, page: .devices)
+                    .frame(width: 620, height: 210)
+                    .tabItem { Label("设备", systemImage: "ipad.and.iphone") }
+                ControlPanel(model: delegate.model, page: .apps)
+                    .frame(width: 620, height: 320)
+                    .tabItem { Label("应用", systemImage: "app.badge") }
+                ControlPanel(model: delegate.model, page: .coordination)
+                    .frame(width: 620, height: 290)
+                    .tabItem { Label("协同", systemImage: "slider.horizontal.3") }
+            }
             .onAppear { delegate.model.refreshSources() }
         }
-        .defaultSize(width: 640, height: 440)
+
+        Window("诊断", id: "diagnostics") {
+            ControlPanel(model: delegate.model, page: .diagnostics)
+                .frame(minWidth: 500, minHeight: 200)
+        }
+        .defaultSize(width: 560, height: 240)
     }
 }
 
@@ -99,63 +120,83 @@ private struct QuickPanel: View {
     }
 }
 
-private struct ControlPanel: View {
-    private enum Page: String {
-        case overview = "概览", devices = "设备", apps = "应用", settings = "协同", diagnostics = "诊断"
+private enum SettingsPage {
+    case devices, apps, coordination, diagnostics
+}
+
+private struct MainPanel: View {
+    @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack(spacing: 8) {
+                        Circle().fill(model.isConnected ? .green : .orange).frame(width: 8, height: 8)
+                        Text(model.ipadStatus)
+                    }
+                    if model.macPeerCount > 0 {
+                        Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Divider()
+                    Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
+                    Text("参与协同：\(model.inputCount) 个录音进程")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            GroupBox("专用麦克风") {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
+                        HStack {
+                            Toggle("静音 \(source.name)", isOn: Binding(
+                                get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
+                            if source.microphoneInUse {
+                                Image(systemName: "mic.fill").accessibilityLabel("正在使用")
+                            }
+                        }
+                    }
+                    if !model.sources.contains(where: { $0.microphoneName != nil }) {
+                        Text("尚未添加专用麦克风").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            if model.sourceActivityUnknown {
+                Text("输入使用状态未知；暂不能更换或移除麦克风")
+                    .font(.caption).foregroundStyle(.red)
+            }
+            if !model.errorMessage.isEmpty {
+                Text(model.errorMessage).font(.caption).foregroundStyle(.red)
+                    .textSelection(.enabled)
+            }
+            Spacer(minLength: 0)
+            HStack {
+                Button("设置…") { openSettings() }
+                Button("诊断…") { openWindow(id: "diagnostics") }
+                Spacer()
+                if model.lastAction != "尚无音量操作" {
+                    Text(model.lastAction).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .padding(16)
     }
+}
+
+private struct ControlPanel: View {
 
     @ObservedObject var model: AppModel
     @State private var showingAppPicker = false
     @State private var addingMicrophone = false
-    @State private var page: Page = .overview
+    let page: SettingsPage
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if page == .overview {
-                        GroupBox {
-                            VStack(alignment: .leading, spacing: 12) {
-                                HStack(spacing: 8) {
-                                    Circle().fill(model.isConnected ? .green : .orange).frame(width: 8, height: 8)
-                                    Text(model.ipadStatus)
-                                    Spacer()
-                                    Button("管理设备…") { page = .devices }.buttonStyle(.link)
-                                }
-                                if model.macPeerCount > 0 {
-                                    Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
-                                }
-                                Divider()
-                                Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
-                                Text("参与协同：\(model.inputCount) 个录音进程")
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                        GroupBox("专用麦克风") {
-                            VStack(alignment: .leading, spacing: 10) {
-                                ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
-                                    HStack {
-                                        Toggle("静音 \(source.name)", isOn: Binding(
-                                            get: { source.isMuted }, set: { _ in model.toggleMute(source) }))
-                                        if source.microphoneInUse {
-                                            Image(systemName: "mic.fill").accessibilityLabel("正在使用")
-                                        }
-                                    }
-                                }
-                                if !model.sources.contains(where: { $0.microphoneName != nil }) {
-                                    Text("尚未添加专用麦克风").font(.caption).foregroundStyle(.secondary)
-                                }
-                                Button("管理应用…") { page = .apps }.buttonStyle(.link)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        HStack {
-                            Button("音量与空间条件…") { page = .settings }.buttonStyle(.link)
-                            Spacer()
-                            Button("诊断与导出…") { page = .diagnostics }.buttonStyle(.link)
-                        }
-                    }
-
                     if page == .devices {
                         HStack(spacing: 8) {
                             Circle().fill(model.isConnected ? .green : .orange)
@@ -240,7 +281,7 @@ private struct ControlPanel: View {
                         }
                     }
 
-                    if page == .settings {
+                    if page == .coordination {
                         Picker("空间条件", selection: Binding(get: { model.spaceMode }, set: model.setSpaceMode)) {
                             Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
                             Text("蓝牙且 Wi-Fi").tag(SpaceMode.nearbyAndWiFi)
@@ -413,7 +454,7 @@ private struct ControlPanel: View {
                         }
                     }
 
-                    if page == .settings {
+                    if page == .coordination {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("\(model.pairedPadName) 响应 \(model.localMacName) 安静请求时的音量上限").font(.headline)
@@ -445,10 +486,7 @@ private struct ControlPanel: View {
                         Toggle("登录后自动启动", isOn: Binding(get: { model.loginEnabled }, set: model.setLoginEnabled))
                     }
 
-                    if page == .overview && model.lastAction != "尚无音量操作" {
-                        Text(model.lastAction).font(.caption).foregroundStyle(.secondary)
-                    }
-                    if model.sourceActivityUnknown && (page == .overview || page == .apps) {
+                    if model.sourceActivityUnknown && page == .apps {
                         Text("输入使用状态未知；暂不能更换或移除麦克风")
                             .font(.caption).foregroundStyle(.red)
                     }
@@ -465,20 +503,7 @@ private struct ControlPanel: View {
             if case .success(let url) = result { model.addApp(url, microphone: addingMicrophone) }
             else if case .failure(let error) = result { model.errorMessage = "无法选择应用：\(error.localizedDescription)" }
         }
-        .onChange(of: page) { _, newPage in
-            if newPage != .apps { model.cancelShortcutRecording() }
-        }
-        .navigationTitle(page == .overview ? "Nearby Audio" : page.rawValue)
-        .toolbar {
-            if page != .overview {
-                ToolbarItem(placement: .navigation) {
-                    Button { page = .overview } label: {
-                        Label("返回概览", systemImage: "chevron.left")
-                    }
-                    .help("返回概览")
-                }
-            }
-        }
+        .onDisappear { if page == .apps { model.cancelShortcutRecording() } }
         .padding(16)
     }
 }
