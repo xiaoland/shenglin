@@ -55,3 +55,7 @@ scripts/build-driver.sh  # 构建并离线测试虚拟麦克风驱动，默认�
 SwiftPM 的 `.build/release/shenglin` 支持 `control status|pair start|pair choose <UUID>|pair code|pair cancel` 等本机诊断命令；运行中的 GUI 通过同一用户的 Unix socket 执行它们。`pair code` 从标准输入读取验证码，不从命令参数读取。CLI 还保留 `sources`、`exclude list|add|remove`、`mute list|add|remove`。CLI 与 GUI 共用排除及静音配置；蓝牙控制由 GUI 统一持有。`control microphone add|remove <bundle ID>` 可添加或移除专用设备，`control mute add|remove <bundle ID>` 控制已分配设备。`control status` 按已配对设备返回各自链路、空间条件及目标音量，并返回应用设置、活动进程数、最后一次认证回执及错误；`control target <设备 ID> <0...0.5>` 只更改指定 iPad 的目标音量；超时或连接失败先检查菜单栏 App 是否运行。分享诊断输出前应删去设备名、UUID 和应用列表。仓库不包含配对密钥、设备标识、开发证书或本机日志；不要用会输出 Keychain 密钥内容的命令排障。
 
 代码入口：`MacGUI/AppModel.swift` 持有菜单栏状态、各 peer 会话和本机控制命令；`Mac/MicrophoneAgent.swift` 在独立的 launchd 进程中持有专用设备的采集与驱动写入；`Mac/MacPairing.swift` 管理 Mac 直连配对；`Mac/InputActivity.swift` 报告未排除、未由虚拟麦克风静音的活动输入，`Mac/VirtualMicrophone.swift` 按需采集物理输入并供给 `Driver/Driver.cpp`，`Mac/BLEClient.swift` 负责 BLE 双向状态及回执，`Mac/OutputVolume.swift` 控制本机默认输出音量。`iPad/BLEServer.swift` 校验状态、管理配对激活，`iPad/Volume.swift` 保存及恢复媒体音量。各端共用 `Shared/Protocol.swift` 的 BLE 标识与认证工具、`Shared/PeerState.swift` 的来源租约和空间规则、`Shared/WiFiPeer.swift` 的 Bonjour/TCP 认证通信，以及 `Shared/PairingProtocol.swift` 的 SPAKE2 握手。iPad 目前没有可靠的其他 App 录音检测，因此尚不能从 iPad 真实录音反向触发 Mac 音量变化；Wi-Fi 及三端全连接也未完成真机验证，详见[多设备任务包](tasks/multi-device-volume/packet.md)。修改 BLE 标识或签名字段会改变设备间协议，需同时验证两个 App 工程。
+
+## 许可证
+
+项目代码以 [MIT 许可证](LICENSE)发布。BoringSSL 与 libASPL 的第三方许可证分别保留在 `third_party/` 中；构建产物也会附带适用的许可证文本。
