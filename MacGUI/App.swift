@@ -80,8 +80,20 @@ import UniformTypeIdentifiers
 private struct MenuBarStatus: View {
     @ObservedObject var model: AppModel
     var body: some View {
-        Image(systemName: model.iconName)
-            .accessibilityLabel("声邻：\(model.connection)")
+        Group {
+            if model.iconName == "waveform" || model.iconName == "waveform.circle.fill" {
+                Image("MenuBarIcon")
+                    .renderingMode(.template)
+                    .overlay(alignment: .bottomTrailing) {
+                        if model.inputCount > 0 {
+                            Circle().fill(.primary).frame(width: 4, height: 4).offset(x: 2, y: 2)
+                        }
+                    }
+            } else {
+                Image(systemName: model.iconName)
+            }
+        }
+        .accessibilityLabel("声邻：\(model.connection)")
     }
 }
 
