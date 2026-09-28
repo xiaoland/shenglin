@@ -59,7 +59,7 @@ enum PairingStore {
         }
         guard let key = try read(currentAccount) else { return [] }
         guard key.count == 32 else { throw PairingError.invalidMessage }
-        return [PairedMac(key: key, name: "原有 Mac")]
+        return [PairedMac(key: key, name: "Mac（名称未知）")]
     }
 
     static func pending() throws -> Data? {

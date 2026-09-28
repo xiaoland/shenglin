@@ -12,8 +12,8 @@ enum BLEConnectionState {
     var text: String {
         switch self {
         case .message(let text): text
-        case .awaitingAck: "iPad 已连接，正在确认控制"
-        case .ready: "iPad 已连接"
+        case .awaitingAck: "已连接，正在确认控制"
+        case .ready: "已连接"
         }
     }
 
@@ -96,7 +96,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         guard !stopped else { return }
         if manager.state == .poweredOn {
             report("BLUETOOTH ready; scanning")
-            onStatus(.message("正在搜索 iPad"))
+            onStatus(.message("正在搜索已配对设备"))
             manager.scanForPeripherals(withServices: [serviceID])
         } else {
             report("BLUETOOTH unavailable state=\(manager.state.rawValue)")
@@ -110,7 +110,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         peripheral = found
         manager.stopScan()
         report("DISCOVERED; connecting")
-        onStatus(.message("正在连接 iPad"))
+        onStatus(.message("正在连接"))
         manager.connect(found)
     }
 
@@ -227,7 +227,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
                   !self.stopped, let found = self.peripheral, let ack = self.ackCharacteristic else { return }
             if self.retryCount >= 4 || pending.validUntil <= Int64(Date().timeIntervalSince1970) {
                 self.report("NO PEER ACK rev=\(revision)")
-                self.onStatus(.message("iPad 未确认状态，正在重连"))
+                self.onStatus(.message("状态未获确认，正在重连"))
                 self.pendingPeer = nil
                 self.central.cancelPeripheralConnection(found)
                 return
@@ -244,7 +244,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
                   !self.stopped, let found = self.peripheral, let ack = self.ackCharacteristic else { return }
             if self.retryCount >= 4 || pending.expiresAt <= Int64(Date().timeIntervalSince1970) {
                 self.report("NO APPLICATION ACK seq=\(sequence)")
-                self.onStatus(.message("iPad 未确认命令，正在重连"))
+                self.onStatus(.message("命令未获确认，正在重连"))
                 self.pending = nil
                 self.central.cancelPeripheralConnection(found)
                 return

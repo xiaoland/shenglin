@@ -2,6 +2,13 @@ import CoreBluetooth
 import Foundation
 import UIKit
 
+struct PairedMacDisplay: Identifiable, Equatable {
+    let id: String
+    let name: String
+    let link: String
+    let space: String
+}
+
 @MainActor final class BLEServer: NSObject, ObservableObject, @preconcurrency CBPeripheralManagerDelegate {
     static let serviceID = CBUUID(string: BLEIdentifiers.service)
     static let pairServiceID = CBUUID(string: BLEIdentifiers.pairingService)
@@ -16,6 +23,7 @@ import UIKit
     @Published private(set) var status = "正在启动"
     @Published private(set) var isPaired = false
     @Published private(set) var pairedCount = 0
+    @Published private(set) var pairedMacDisplays = [PairedMacDisplay]()
     @Published private(set) var pairingMode = false
     @Published private(set) var pairingStatus = "配对模式未开启"
     @Published private(set) var shortCode: String?
@@ -47,6 +55,7 @@ import UIKit
     private var pairRegistered = false
     private var subscribed = Set<UUID>()
     private var pairedKeys = [Data]()
+    private var pairedMacs = [PairingStore.PairedMac]()
     private var lastAckByCentral = [UUID: Data]()
     private var pendingKey: Data?
     var pairingPendingActivation: Bool { pendingKey != nil }
@@ -79,6 +88,7 @@ import UIKit
         super.init()
         do {
             let peers = try PairingStore.all()
+            pairedMacs = peers
             pairedKeys = peers.map(\.key)
             pairedCount = pairedKeys.count
             do { pendingKey = try PairingStore.pending() }
@@ -166,6 +176,16 @@ import UIKit
                 else { _ = volume?.apply(quiet: false, target: 0) }
             }
         }
+        let displays = pairedMacs.map { peer in
+            let source = sourceID(for: peer.key)
+            let ble = bleProofs.values.contains { $0.key == peer.key }
+            let wifi = wifiVerifiedSources.contains(source)
+            let allowed = allowedSources.contains(source)
+            return PairedMacDisplay(id: source, name: peer.name,
+                link: ble ? "蓝牙已认证" : wifi ? "Wi-Fi 已认证" : "未连接",
+                space: allowed ? (ble || wifi ? "允许协同" : "短断连宽限") : "等待空间条件")
+        }
+        if displays != pairedMacDisplays { pairedMacDisplays = displays }
         if !removed.isEmpty { persistPeerLedger() }
         if changed {
             publishLocalState()
@@ -403,7 +423,8 @@ import UIKit
                     // Activate on the first authenticated command; the Mac waits for our signed ACK.
                     _ = try PairingStore.promotePending()
                     self.pendingKey = nil
-                    pairedKeys = try PairingStore.all().map(\.key)
+                    pairedMacs = try PairingStore.all()
+                    pairedKeys = pairedMacs.map(\.key)
                     pairedCount = pairedKeys.count
                     startWiFi()
                     isPaired = true
@@ -492,7 +513,8 @@ import UIKit
             do {
                 _ = try PairingStore.promotePending()
                 self.pendingKey = nil
-                pairedKeys = try PairingStore.all().map(\.key)
+                pairedMacs = try PairingStore.all()
+                pairedKeys = pairedMacs.map(\.key)
                 pairedCount = pairedKeys.count
                 startWiFi()
                 isPaired = true
@@ -696,7 +718,7 @@ import UIKit
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         if characteristic.uuid == Self.ackID { subscribed.insert(central.identifier) }
         if characteristic.uuid == Self.peerStateID { publishLocalState() }
-        status = "Mac 已连接"
+        status = "设备已连接"
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
@@ -723,7 +745,7 @@ import UIKit
                 let result = volume?.apply(quiet: false, target: 0)
                 if let result { lastAction = "连接中断：\(result.0)" }
             }
-            status = "等待 Mac 重连"
+            status = "等待设备重连"
         }
     }
 }

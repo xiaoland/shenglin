@@ -27,7 +27,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
     @Published private(set) var diagnosticMessage = ""
     @Published private(set) var inputState = InputObservation.active(0)
     @Published private(set) var paired = false
-    @Published private(set) var pairedPadName = "iPad"
+    @Published private(set) var pairedPadName = "iPad（名称未知）"
     @Published private(set) var targetKnown = false
     @Published private(set) var loginEnabled = false
     @Published private(set) var nearbyPads = [NearbyPad]()
@@ -98,10 +98,13 @@ struct MacPeerDisplay: Identifiable, Equatable {
         let space = rawSpaceAllowed ? "允许协同" : spaceAllowed ? "短断连宽限" : "等待空间条件"
         return "\(paired ? pairedPadName : "iPad")：\(paired ? "已配对" : "未配对") · \(link) · \(space)"
     }
+    var localMacName: String { Host.current().localizedName ?? "这台 Mac" }
     var macStatus: String {
-        "Mac 直连：已配对 \(macPeerCount) 台 · 已认证连接 \(directMacCount) 台 · 允许协同 \(macPeerAllowed.count) 台（含宽限）"
+        macPeerDisplays.map { peer in
+            "\(peer.name)：\(peer.authenticated ? "Wi-Fi 已认证" : "未连接") · \(peer.spaceAllowed ? (peer.authenticated ? "允许协同" : "短断连宽限") : "等待空间条件")"
+        }.joined(separator: "；")
     }
-    var connection: String { "\(ipadStatus)；\(macStatus)" }
+    var connection: String { macPeerCount == 0 ? ipadStatus : "\(ipadStatus)；\(macStatus)" }
     var isConnected: Bool { connectionState.isReady || wifiVerified || directMacCount > 0 }
     var inputCount: Int { inputState.count }
     var inputError: String? { inputState.error }
@@ -233,7 +236,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
         spaceAllowed = false
         guard let key, key.count == 32 else {
             paired = false
-            pairedPadName = "iPad"
+            pairedPadName = "iPad（名称未知）"
             connectionState = .message("尚未配对")
             showPairing = true
             return
@@ -241,10 +244,10 @@ struct MacPeerDisplay: Identifiable, Equatable {
         paired = true
         let savedName = preferences.string(forKey: "pairedPadName") ?? ""
         pairedPadName = preferences.string(forKey: "pairedPadIdentity") == sourceID(for: key) && !savedName.isEmpty
-            ? savedName : "iPad"
+            ? savedName : "iPad（名称未知）"
         showPairing = false
         errorMessage = ""
-        connectionState = .message("正在连接 iPad")
+        connectionState = .message("正在连接")
         client = BLEClient(key: key, onStatus: { [weak self] status in
             Task { @MainActor [weak self] in
                 guard let self, self.clientGeneration == generation else { return }
@@ -301,11 +304,11 @@ struct MacPeerDisplay: Identifiable, Equatable {
             targetKnown = true
         }
         switch ack.result {
-        case "applied": lastAction = "iPad 媒体音量已降低至 \(ack.volumeMilli)‰"
-        case "restored": lastAction = "iPad 媒体音量已恢复至 \(ack.volumeMilli)‰"
+        case "applied": lastAction = "\(pairedPadName) 媒体音量已降低至 \(ack.volumeMilli)‰"
+        case "restored": lastAction = "\(pairedPadName) 媒体音量已恢复至 \(ack.volumeMilli)‰"
         case "preservedManualOrRoute": lastAction = "保留了你手动调整的音量或新输出设备"
-        case "alreadyRestored": lastAction = "iPad 音量保持原状"
-        default: lastAction = "iPad 回执：\(ack.result)"
+        case "alreadyRestored": lastAction = "\(pairedPadName) 音量保持原状"
+        default: lastAction = "\(pairedPadName) 回执：\(ack.result)"
         }
     }
 
@@ -322,7 +325,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
                     preferences.set(pairingPadName, forKey: "pairedPadName")
                     pairedPadName = pairingPadName
                 }
-                pairingStatus = "配对完成，iPad 已接受新密钥"
+                pairingStatus = "配对完成，\(pairedPadName) 已接受新密钥"
             } catch {
                 errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)"
                 pairingStatus = errorMessage
@@ -341,11 +344,11 @@ struct MacPeerDisplay: Identifiable, Equatable {
             targetKnown = true
         }
         switch ack.result {
-        case "applied": lastAction = "iPad 媒体音量已降低"
-        case "restored": lastAction = "iPad 媒体音量正在恢复"
+        case "applied": lastAction = "\(pairedPadName) 媒体音量已降低"
+        case "restored": lastAction = "\(pairedPadName) 媒体音量正在恢复"
         case "preservedManualOrRoute": lastAction = "保留了你手动调整的音量或新输出设备"
-        case "alreadyRestored": lastAction = "iPad 音量保持原状"
-        default: lastAction = "iPad 回执：\(ack.result)"
+        case "alreadyRestored": lastAction = "\(pairedPadName) 音量保持原状"
+        default: lastAction = "\(pairedPadName) 回执：\(ack.result)"
         }
     }
 
@@ -389,7 +392,7 @@ struct MacPeerDisplay: Identifiable, Equatable {
                 self.recordConnection(verified ? "mac-peer-\(index)-verified" : "mac-peer-\(index)-disconnected")
                 if verified { self.macWifiPeers[source]?.sendCurrentState() }
             }, onIssue: { [unowned self] issue in
-                if let issue { self.macPairStatus = "Mac 链路：\(issue)" }
+                if let issue { self.macPairStatus = "\(peer.name) 链路：\(issue)" }
             })
             macWifiPeers[source] = link
             link.start()
@@ -458,12 +461,12 @@ struct MacPeerDisplay: Identifiable, Equatable {
         persistPeerLedger()
         if change.ended {
             localOutput?.finish(manualAtEnd: change.manualAtEnd)
-            lastAction = change.manualAtEnd ? "保留了你手动调整的 Mac 音量" : "Mac 音量正在恢复"
+            lastAction = change.manualAtEnd ? "保留了你手动调整的 \(localMacName) 音量" : "\(localMacName) 音量正在恢复"
             return change.manualAtEnd ? "preservedManual" : "restoring"
         }
         if change.started {
             let result = localOutput?.begin(target: Float(macTarget)) ?? "outputUnsupported"
-            lastAction = "Mac 音量：\(result)"
+            lastAction = "\(localMacName) 音量：\(result)"
             return result
         }
         return change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored"

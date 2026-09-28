@@ -53,8 +53,10 @@ private struct QuickPanel: View {
             }
             Text(model.ipadStatus).font(.subheadline)
                 .fixedSize(horizontal: false, vertical: true)
-            Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+            if model.macPeerCount > 0 {
+                Text(model.macStatus).font(.caption).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             Divider()
             Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
@@ -207,7 +209,7 @@ private struct ControlPanel: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(model.macPeerCount == 0 ? "Mac：未配对" : model.macStatus)
+                            Text(model.macPeerCount == 0 ? "其他 Mac：未配对" : "其他 Mac")
                                 .font(.headline)
                                 .fixedSize(horizontal: false, vertical: true)
                             ForEach(model.macPeerDisplays) { peer in
@@ -420,7 +422,7 @@ private struct ControlPanel: View {
                     if page == .settings {
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("\(model.pairedPadName) 响应此 Mac 安静请求时的音量上限").font(.headline)
+                                Text("\(model.pairedPadName) 响应 \(model.localMacName) 安静请求时的音量上限").font(.headline)
                                 Spacer()
                                 Text(model.targetKnown ? "\(Int((model.target * 100).rounded()))%" : "连接后读取")
                                     .monospacedDigit()
@@ -428,20 +430,20 @@ private struct ControlPanel: View {
                             Slider(value: $model.target, in: 0...0.5, step: 0.05,
                                    onEditingChanged: model.targetEditChanged)
                                 .disabled(!model.targetKnown || !model.paired)
-                                .accessibilityLabel("\(model.pairedPadName) 响应此 Mac 安静请求时的媒体音量上限")
+                                .accessibilityLabel("\(model.pairedPadName) 响应 \(model.localMacName) 安静请求时的媒体音量上限")
                                 .help("录音期间更改目标将在下次录音开始时生效。")
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
-                                Text("此 Mac 响应其他设备安静请求时的音量上限").font(.headline)
+                                Text("\(model.localMacName) 响应其他设备安静请求时的音量上限").font(.headline)
                                 Spacer()
                                 Text("\(Int((model.macTarget * 100).rounded()))%")
                                     .monospacedDigit()
                             }
                             Slider(value: $model.macTarget, in: 0...0.5, step: 0.05,
                                    onEditingChanged: model.macTargetEditChanged)
-                                .accessibilityLabel("此 Mac 响应其他设备安静请求时的媒体音量上限")
+                                .accessibilityLabel("\(model.localMacName) 响应其他设备安静请求时的媒体音量上限")
                             Text("iPad → Mac 自动触发尚未验证")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
