@@ -154,7 +154,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
         guard !stopped, !cancelAfterWrite, error == nil, let data = characteristic.value,
               data.count <= 512, let frame = try? JSONDecoder().decode(PairingFrame.self, from: data) else { return }
         if characteristic.uuid == infoID {
-            guard frame.version == 2, frame.kind == .info else { fail("iPad 配对信息无效"); return }
+            guard frame.version == 3, frame.kind == .info else { fail("iPad 配对信息无效"); return }
             if let id = selected?.identifier {
                 names[id] = PeerName.display(frame.name, fallback: "iPad")
                 publishDevices()
@@ -205,7 +205,7 @@ final class PairClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate
     func enterCode(_ code: String) throws {
         guard !stopped, codeRequested, handshake == nil else { throw PairingError.wrongStep }
         let macName = Host.current().localizedName ?? "Mac"
-        let session = try PairingInitiator(code: code, macName: macName)
+        let session = try PairingInitiator(code: code, initiatorName: macName)
         handshake = session
         deadline = Date().addingTimeInterval(90)
         onStatus("正在进行安全配对")

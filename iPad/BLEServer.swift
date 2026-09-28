@@ -2,7 +2,7 @@ import CoreBluetooth
 import Foundation
 import UIKit
 
-struct PairedMacDisplay: Identifiable, Equatable {
+struct PairedPeerDisplay: Identifiable, Equatable {
     let id: String
     let name: String
     let link: String
@@ -12,8 +12,8 @@ struct PairedMacDisplay: Identifiable, Equatable {
 @MainActor final class BLEServer: NSObject, ObservableObject, @preconcurrency CBPeripheralManagerDelegate {
     static let serviceID = CBUUID(string: BLEIdentifiers.service)
     static let pairServiceID = CBUUID(string: BLEIdentifiers.pairingService)
-    static let commandID = CBUUID(string: BLEIdentifiers.command)
-    static let ackID = CBUUID(string: BLEIdentifiers.ack)
+    static let stateWriteID = CBUUID(string: BLEIdentifiers.stateWrite)
+    static let stateAckID = CBUUID(string: BLEIdentifiers.stateAck)
     static let peerStateID = CBUUID(string: BLEIdentifiers.peerState)
     static let peerAckWriteID = CBUUID(string: BLEIdentifiers.peerAckWrite)
     static let pairWriteID = CBUUID(string: BLEIdentifiers.pairingWrite)
@@ -23,7 +23,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
     @Published private(set) var status = "正在启动"
     @Published private(set) var isPaired = false
     @Published private(set) var pairedCount = 0
-    @Published private(set) var pairedMacDisplays = [PairedMacDisplay]()
+    @Published private(set) var pairedPeerDisplays = [PairedPeerDisplay]()
     @Published private(set) var pairingMode = false
     @Published private(set) var pairingStatus = "配对模式未开启"
     @Published private(set) var deviceName = String(PeerName.display(
@@ -50,7 +50,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
     private var wifiIssues = [String: String]()
     private var spaceGates = [String: SpaceGate]()
     private var allowedSources = Set<String>()
-    private var ackCharacteristic: CBMutableCharacteristic?
+    private var stateAckCharacteristic: CBMutableCharacteristic?
     private var peerStateCharacteristic: CBMutableCharacteristic?
     private var pairResponseCharacteristic: CBMutableCharacteristic?
     private var pairResponseData: Data?
@@ -58,7 +58,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
     private var pairRegistered = false
     private var subscribed = Set<UUID>()
     private var pairedKeys = [Data]()
-    private var pairedMacs = [PairingStore.PairedMac]()
+    private var pairedPeers = [PairedPeer]()
     private var lastAckByCentral = [UUID: Data]()
     private var pendingKey: Data?
     var pairingPendingActivation: Bool { pendingKey != nil }
@@ -68,12 +68,10 @@ struct PairedMacDisplay: Identifiable, Equatable {
     private var pairAttempts = 0
     private var pairingTimer: Timer?
     private var volume: VolumeCoordinator?
-    private var legacySequences = UserDefaults.standard.dictionary(forKey: "legacySequences") as? [String: String] ?? [:]
-    private var peerLedger = (UserDefaults.standard.data(forKey: "peerDemandLedger")
+    private var peerLedger = (UserDefaults.standard.data(forKey: "peerDemandLedgerV3")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
-    private var peerProtocolActive = UserDefaults.standard.bool(forKey: "peerProtocolActive")
     private var localQuiet = false
-    private var localRevision = UserDefaults.standard.string(forKey: "localPeerRevision").flatMap(UInt64.init) ?? 0
+    private var localRevision = UserDefaults.standard.string(forKey: "localPeerRevisionV3").flatMap(UInt64.init) ?? 0
     private var peerTimer: Timer?
 
     private func note(_ text: String) {
@@ -90,7 +88,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         UserDefaults.standard.set(deviceName, forKey: "deviceName")
         do {
             let peers = try PairingStore.all()
-            pairedMacs = peers
+            pairedPeers = peers
             pairedKeys = peers.map(\.key)
             pairedCount = pairedKeys.count
             do { pendingKey = try PairingStore.pending() }
@@ -119,6 +117,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         guard !name.isEmpty, name.count <= 32, !pairingMode else { return }
         deviceName = name
         UserDefaults.standard.set(name, forKey: "deviceName")
+        publishWiFiState()
         if manager?.isAdvertising == true {
             manager?.stopAdvertising()
             advertise()
@@ -138,7 +137,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
             cancelPairing(reason: "已停止配对")
             manager?.stopAdvertising()
             manager?.removeAllServices()
-            ackCharacteristic = nil
+            stateAckCharacteristic = nil
             peerStateCharacteristic = nil
             pairResponseCharacteristic = nil
             controlRegistered = false
@@ -148,8 +147,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
             refreshSpace()
             let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
             persistPeerLedger()
-            if peerProtocolActive { _ = volume?.release(manual: change.manualAtEnd) }
-            else { _ = volume?.apply(quiet: false, target: 0) }
+            _ = volume?.release(manual: change.manualAtEnd)
             status = "已停止监听"
         }
     }
@@ -185,20 +183,19 @@ struct PairedMacDisplay: Identifiable, Equatable {
         for source in removed {
             let change = peerLedger.stopResponding(to: source, at: now)
             if change.ended {
-                if peerProtocolActive { _ = volume?.release(manual: change.manualAtEnd) }
-                else { _ = volume?.apply(quiet: false, target: 0) }
+                _ = volume?.release(manual: change.manualAtEnd)
             }
         }
-        let displays = pairedMacs.map { peer in
+        let displays = pairedPeers.map { peer in
             let source = sourceID(for: peer.key)
             let ble = bleProofs.values.contains { $0.key == peer.key }
             let wifi = wifiVerifiedSources.contains(source)
             let allowed = allowedSources.contains(source)
-            return PairedMacDisplay(id: source, name: peer.name,
+            return PairedPeerDisplay(id: source, name: peer.name,
                 link: ble ? "蓝牙已认证" : wifi ? "Wi-Fi 已认证" : "未连接",
                 space: allowed ? (ble || wifi ? "允许协同" : "短断连宽限") : "等待空间条件")
         }
-        if displays != pairedMacDisplays { pairedMacDisplays = displays }
+        if displays != pairedPeerDisplays { pairedPeerDisplays = displays }
         if !removed.isEmpty { persistPeerLedger() }
         if changed {
             publishLocalState()
@@ -215,12 +212,10 @@ struct PairedMacDisplay: Identifiable, Equatable {
 
     func restoreNow() {
         guard let volume else { return }
-        if peerProtocolActive {
-            peerLedger.takeOver(at: Int64(Date().timeIntervalSince1970))
-            persistPeerLedger()
-        }
+        peerLedger.takeOver(at: Int64(Date().timeIntervalSince1970))
+        persistPeerLedger()
         let result = volume.apply(quiet: false, target: 0)
-        lastAction = "手动恢复：\(result.0)"
+        lastAction = PeerResult.message(result.0, device: deviceName)
     }
 
     func beginPairing() {
@@ -302,13 +297,13 @@ struct PairedMacDisplay: Identifiable, Equatable {
             return
         }
         if !controlRegistered {
-            let command = CBMutableCharacteristic(type: Self.commandID, properties: [.write], value: nil, permissions: [.writeable])
-            let ack = CBMutableCharacteristic(type: Self.ackID, properties: [.read, .notify], value: nil, permissions: [.readable])
+            let command = CBMutableCharacteristic(type: Self.stateWriteID, properties: [.write], value: nil, permissions: [.writeable])
+            let ack = CBMutableCharacteristic(type: Self.stateAckID, properties: [.read, .notify], value: nil, permissions: [.readable])
             let peerState = CBMutableCharacteristic(type: Self.peerStateID, properties: [.read, .notify], value: nil, permissions: [.readable])
             let peerAckWrite = CBMutableCharacteristic(type: Self.peerAckWriteID, properties: [.write], value: nil, permissions: [.writeable])
             let service = CBMutableService(type: Self.serviceID, primary: true)
             service.characteristics = [command, ack, peerState, peerAckWrite]
-            ackCharacteristic = ack
+            stateAckCharacteristic = ack
             peerStateCharacteristic = peerState
             controlRegistered = true
             manager.add(service)
@@ -340,12 +335,12 @@ struct PairedMacDisplay: Identifiable, Equatable {
         for service in state[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] ?? [] {
             let characteristics = service.characteristics ?? []
             if service.uuid == Self.serviceID,
-               let ack = characteristics.first(where: { $0.uuid == Self.ackID }) as? CBMutableCharacteristic,
+               let ack = characteristics.first(where: { $0.uuid == Self.stateAckID }) as? CBMutableCharacteristic,
                let peerState = characteristics.first(where: { $0.uuid == Self.peerStateID }) as? CBMutableCharacteristic,
-               characteristics.contains(where: { $0.uuid == Self.commandID }),
+               characteristics.contains(where: { $0.uuid == Self.stateWriteID }),
                characteristics.contains(where: { $0.uuid == Self.peerAckWriteID }) {
                 controlRegistered = true
-                ackCharacteristic = ack
+                stateAckCharacteristic = ack
                 peerStateCharacteristic = peerState
             } else if service.uuid == Self.pairServiceID,
                       let response = characteristics.first(where: { $0.uuid == Self.pairResponseID }) as? CBMutableCharacteristic,
@@ -379,13 +374,13 @@ struct PairedMacDisplay: Identifiable, Equatable {
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         let central = request.central.identifier
         if let proof = bleProofs[central],
-           request.characteristic.uuid == Self.ackID || request.characteristic.uuid == Self.peerStateID {
+           request.characteristic.uuid == Self.stateAckID || request.characteristic.uuid == Self.peerStateID {
             recordBLEProof(from: central, key: proof.key,
                            at: Int64(Date().timeIntervalSince1970))
         }
         let data: Data
         switch request.characteristic.uuid {
-        case Self.ackID:
+        case Self.stateAckID:
             data = lastAckByCentral[central] ?? Data()
         case Self.peerStateID:
             expirePeerRequests()
@@ -417,84 +412,18 @@ struct PairedMacDisplay: Identifiable, Equatable {
                 receivePeerAck(request, peripheral: peripheral)
                 continue
             }
-            if request.characteristic.uuid == Self.commandID,
+            if request.characteristic.uuid == Self.stateWriteID,
                let data = request.value, data.count <= 512,
                let update = try? JSONDecoder().decode(PeerQuietUpdate.self, from: data) {
                 receivePeerUpdate(update, request: request, peripheral: peripheral)
                 continue
             }
-            guard enabled, request.characteristic.uuid == Self.commandID,
-                  let data = request.value, data.count <= 512,
-                  let command = try? JSONDecoder().decode(ControlCommand.self, from: data) else {
-                peripheral.respond(to: request, withResult: .unlikelyError)
-                continue
-            }
-            let now = Int64(Date().timeIntervalSince1970)
-            let authenticatedKey: Data
-            if let pendingKey, command.valid(key: pendingKey, now: now) {
-                do {
-                    // Activate on the first authenticated command; the Mac waits for our signed ACK.
-                    _ = try PairingStore.promotePending()
-                    self.pendingKey = nil
-                    pairedMacs = try PairingStore.all()
-                    pairedKeys = pairedMacs.map(\.key)
-                    pairedCount = pairedKeys.count
-                    startWiFi()
-                    isPaired = true
-                    pairingStatus = "配对完成，已添加一台 Mac"
-                    authenticatedKey = pendingKey
-                } catch {
-                    peripheral.respond(to: request, withResult: .unlikelyError)
-                    pairingStatus = "无法激活新配对：\(error.localizedDescription)"
-                    continue
-                }
-            } else if let matched = pairedKeys.first(where: { command.valid(key: $0, now: now) }) {
-                authenticatedKey = matched
-            } else {
-                peripheral.respond(to: request, withResult: .unlikelyError)
-                continue
-            }
-            let central = request.central.identifier
-            recordBLEProof(from: central, key: authenticatedKey, at: now)
-            let source = sourceID(for: authenticatedKey)
-            let previous = UInt64(legacySequences[source] ?? "") ??
-                (pairedKeys.count == 1 ? UInt64(UserDefaults.standard.integer(forKey: "lastSequence")) : 0)
-            if command.sequence < previous {
-                peripheral.respond(to: request, withResult: .unlikelyError)
-                continue
-            }
-            if command.sequence == previous {
-                let target = Float(UserDefaults.standard.double(forKey: "targetVolume"))
-                let duplicate = ControlAck(sequence: command.sequence, quiet: command.quiet,
-                    result: "duplicate", volumeMilli: Int(((volume?.current() ?? 0) * 1000).rounded()),
-                    targetMilli: Int((target * 1000).rounded()), key: authenticatedKey)
-                lastAckByCentral[central] = try? JSONEncoder().encode(duplicate)
-                peripheral.respond(to: request, withResult: .success)
-                publishAck(to: central)
-                continue
-            }
-            if let targetMilli = command.targetMilli {
-                UserDefaults.standard.set(Double(targetMilli) / 1000, forKey: "targetVolume")
-            }
-            let target = Float(UserDefaults.standard.double(forKey: "targetVolume"))
-            let result = command.quiet && !allowedSources.contains(source) ? ("outsideSpace", -1)
-                         : volume?.apply(quiet: command.quiet, target: target) ?? ("unsupported", -1)
-            let ack = ControlAck(sequence: command.sequence, quiet: command.quiet,
-                                 result: result.0, volumeMilli: result.1,
-                                 targetMilli: Int((target * 1000).rounded()), key: authenticatedKey)
-            legacySequences[source] = String(command.sequence)
-            lastAckByCentral[central] = try? JSONEncoder().encode(ack)
-            UserDefaults.standard.set(legacySequences, forKey: "legacySequences")
-            UserDefaults.standard.synchronize()
-            lastAction = "\(command.quiet ? "降低" : "恢复")：\(result.0)（\(result.1)‰）"
-            note("APPLIED seq=\(command.sequence) quiet=\(command.quiet) result=\(result.0) volumeMilli=\(result.1)")
-            peripheral.respond(to: request, withResult: .success)
-            publishAck(to: central)
+            peripheral.respond(to: request, withResult: .unlikelyError)
         }
     }
 
     private func persistPeerLedger() {
-        UserDefaults.standard.set(try? JSONEncoder().encode(peerLedger), forKey: "peerDemandLedger")
+        UserDefaults.standard.set(try? JSONEncoder().encode(peerLedger), forKey: "peerDemandLedgerV3")
     }
 
     private func expirePeerRequests() {
@@ -504,7 +433,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         if change.ended {
             persistPeerLedger()
             let result = volume?.release(manual: change.manualAtEnd)
-            if let result { lastAction = "请求超时：\(result.0)" }
+            if let result { lastAction = PeerResult.message(result.0, device: deviceName) }
         }
     }
 
@@ -522,12 +451,12 @@ struct PairedMacDisplay: Identifiable, Equatable {
         guard enabled else { peripheral.respond(to: request, withResult: .unlikelyError); return }
         let now = Int64(Date().timeIntervalSince1970)
         let authenticatedKey: Data
-        if let pendingKey, update.valid(key: pendingKey, expectedOrigin: "mac", now: now) {
+        if let pendingKey, update.valid(key: pendingKey, expectedOrigin: PeerRole.initiator.rawValue, now: now) {
             do {
                 _ = try PairingStore.promotePending()
                 self.pendingKey = nil
-                pairedMacs = try PairingStore.all()
-                pairedKeys = pairedMacs.map(\.key)
+                pairedPeers = try PairingStore.all()
+                pairedKeys = pairedPeers.map(\.key)
                 pairedCount = pairedKeys.count
                 startWiFi()
                 isPaired = true
@@ -538,7 +467,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
                 pairingStatus = "无法激活新配对：\(error.localizedDescription)"
                 return
             }
-        } else if let matched = pairedKeys.first(where: { update.valid(key: $0, expectedOrigin: "mac", now: now) }) {
+        } else if let matched = pairedKeys.first(where: { update.valid(key: $0, expectedOrigin: PeerRole.initiator.rawValue, now: now) }) {
             authenticatedKey = matched
         } else {
             peripheral.respond(to: request, withResult: .unlikelyError)
@@ -548,7 +477,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         recordBLEProof(from: central, key: authenticatedKey, at: now)
         let ack = processPeerUpdate(update, key: authenticatedKey, now: now)
         lastAckByCentral[central] = try? JSONEncoder().encode(ack)
-        lastAction = "对等请求：\(ack.result)"
+        lastAction = PeerResult.message(ack.result, device: deviceName)
         peripheral.respond(to: request, withResult: .success)
         publishAck(to: central)
         publishLocalState()
@@ -558,18 +487,16 @@ struct PairedMacDisplay: Identifiable, Equatable {
         let currentTarget = Float(UserDefaults.standard.double(forKey: "targetVolume"))
         let source = sourceID(for: key)
         guard enabled else {
-            return PeerStateAck(origin: "ipad", revision: update.revision, quiet: update.quiet,
+            return PeerStateAck(origin: PeerRole.responder.rawValue, revision: update.revision, quiet: update.quiet,
                                 result: "paused", targetMilli: Int((currentTarget * 1000).rounded()), key: key)
         }
         guard allowedSources.contains(source) else {
-            return PeerStateAck(origin: "ipad", revision: update.revision, quiet: update.quiet,
+            return PeerStateAck(origin: PeerRole.responder.rawValue, revision: update.revision, quiet: update.quiet,
                                 result: "outsideSpace", targetMilli: Int((currentTarget * 1000).rounded()), key: key)
         }
         observeManualTakeover(at: now)
-        let change = peerLedger.accept(update, from: source, expectedOrigin: "mac",
+        let change = peerLedger.accept(update, from: source, expectedOrigin: PeerRole.initiator.rawValue,
                                        key: key, at: now)
-        peerProtocolActive = true
-        UserDefaults.standard.set(true, forKey: "peerProtocolActive")
         persistPeerLedger()
         if change.accepted, let targetMilli = update.targetMilli {
             UserDefaults.standard.set(Double(targetMilli) / 1000, forKey: "targetVolume")
@@ -585,7 +512,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         } else {
             result = (change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored", -1)
         }
-        return PeerStateAck(origin: "ipad", revision: update.revision, quiet: update.quiet,
+        return PeerStateAck(origin: PeerRole.responder.rawValue, revision: update.revision, quiet: update.quiet,
                             result: result.0, targetMilli: Int((target * 1000).rounded()), key: key)
     }
 
@@ -598,8 +525,8 @@ struct PairedMacDisplay: Identifiable, Equatable {
         let now = Int64(Date().timeIntervalSince1970)
         let clock = UInt64(Date().timeIntervalSince1970 * 1000)
         localRevision = max(clock, localRevision &+ 1)
-        UserDefaults.standard.set(String(localRevision), forKey: "localPeerRevision")
-        return PeerQuietUpdate(origin: "ipad", revision: localRevision,
+        UserDefaults.standard.set(String(localRevision), forKey: "localPeerRevisionV3")
+        return PeerQuietUpdate(origin: PeerRole.responder.rawValue, revision: localRevision,
                                quiet: localQuiet && enabled && allowedSources.contains(sourceID(for: key)),
                                validUntil: now + PeerTiming.leaseSeconds, key: key)
     }
@@ -608,14 +535,23 @@ struct PairedMacDisplay: Identifiable, Equatable {
         for peerKey in pairedKeys {
             let source = sourceID(for: peerKey)
             guard wifiPeers[source] == nil else { continue }
-            let peer = WiFiPeer(localOrigin: "ipad", remoteOrigin: "mac", listens: false,
+            let peer = WiFiPeer(localOrigin: PeerRole.responder.rawValue, remoteOrigin: PeerRole.initiator.rawValue, listens: false,
                                 key: peerKey, localUpdate: { [unowned self] in
                 self.makeLocalState(key: peerKey)
+            }, localName: { [unowned self] in self.deviceName },
+            receiveName: { [unowned self] name in
+                guard let index = self.pairedPeers.firstIndex(where: { $0.key == peerKey }),
+                      self.pairedPeers[index].name != name else { return }
+                do {
+                    try PairingStore.updateName(peerKey, name: name)
+                    self.pairedPeers[index].name = name
+                    self.refreshSpace()
+                } catch { self.pairingStatus = "无法保存设备名称：\(error.localizedDescription)" }
             }, receiveUpdate: { [unowned self] update in
                 guard self.pairedKeys.contains(peerKey) else { return ("stalePairing", nil) }
                 let ack = self.processPeerUpdate(update, key: peerKey,
                                                  now: Int64(Date().timeIntervalSince1970))
-                self.lastAction = "Wi-Fi 对等请求：\(ack.result)"
+                self.lastAction = PeerResult.message(ack.result, device: self.deviceName)
                 return (ack.result, ack.targetMilli)
             }, verifiedChanged: { [unowned self] verified in
                 if verified { self.wifiVerifiedSources.insert(source) }
@@ -656,7 +592,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         guard let key = bleProofs[request.central.identifier]?.key,
               let data = request.value, data.count <= 512,
               let ack = try? JSONDecoder().decode(PeerStateAck.self, from: data),
-              ack.valid(key: key, expectedOrigin: "mac") else {
+              ack.valid(key: key, expectedOrigin: PeerRole.initiator.rawValue) else {
             peripheral.respond(to: request, withResult: .unlikelyError)
             return
         }
@@ -666,7 +602,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
 
     private func receivePairWrite(_ request: CBATTRequest, peripheral: CBPeripheralManager) {
         guard enabled, let data = request.value, data.count <= 512,
-              let frame = try? JSONDecoder().decode(PairingFrame.self, from: data), frame.version == 2 else {
+              let frame = try? JSONDecoder().decode(PairingFrame.self, from: data), frame.version == 3 else {
             peripheral.respond(to: request, withResult: .unlikelyError)
             return
         }
@@ -677,7 +613,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
                 return
             }
             do {
-                let session = try PairingResponder(start: frame, code: shortCode!, padName: deviceName)
+                let session = try PairingResponder(start: frame, code: shortCode!, responderName: deviceName)
                 pairAttempts += 1
                 pairing = session
                 pairingCentral = request.central.identifier
@@ -723,13 +659,13 @@ struct PairedMacDisplay: Identifiable, Equatable {
     }
 
     private func publishAck(to id: UUID) {
-        guard let manager, let ackCharacteristic, let data = lastAckByCentral[id],
-              let central = ackCharacteristic.subscribedCentrals?.first(where: { $0.identifier == id }) else { return }
-        _ = manager.updateValue(data, for: ackCharacteristic, onSubscribedCentrals: [central])
+        guard let manager, let stateAckCharacteristic, let data = lastAckByCentral[id],
+              let central = stateAckCharacteristic.subscribedCentrals?.first(where: { $0.identifier == id }) else { return }
+        _ = manager.updateValue(data, for: stateAckCharacteristic, onSubscribedCentrals: [central])
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
-        if characteristic.uuid == Self.ackID { subscribed.insert(central.identifier) }
+        if characteristic.uuid == Self.stateAckID { subscribed.insert(central.identifier) }
         if characteristic.uuid == Self.peerStateID { publishLocalState() }
         status = "设备已连接"
     }
@@ -743,7 +679,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
             peerName = ""
             pairingStatus = "连接中断；配对时间内可用同一验证码重试"
         }
-        guard characteristic.uuid == Self.ackID else { return }
+        guard characteristic.uuid == Self.stateAckID else { return }
         subscribed.remove(central.identifier)
         lastAckByCentral.removeValue(forKey: central.identifier)
         if bleProofs.removeValue(forKey: central.identifier) != nil {
@@ -752,12 +688,7 @@ struct PairedMacDisplay: Identifiable, Equatable {
         if subscribed.isEmpty {
             publishLocalState()
             publishWiFiState()
-            if peerProtocolActive {
-                expirePeerRequests()
-            } else {
-                let result = volume?.apply(quiet: false, target: 0)
-                if let result { lastAction = "连接中断：\(result.0)" }
-            }
+            expirePeerRequests()
             status = "等待设备重连"
         }
     }

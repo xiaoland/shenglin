@@ -3,6 +3,15 @@ import NearbyAudioCore
 import XCTest
 
 final class ProtocolTests: XCTestCase {
+    func testPeerResultsNeverExposeWireCodes() {
+        XCTAssertEqual(PeerResult.message("restoring", device: "测试 iPad"),
+                       "测试 iPad 音量正在恢复")
+        XCTAssertEqual(PeerResult.message("outsideSpace", device: "测试 iPad"),
+                       "测试 iPad 未满足空间条件")
+        XCTAssertEqual(PeerResult.message("unexpectedCode", device: "测试 iPad"),
+                       "测试 iPad 响应异常")
+    }
+
     func testSpaceModesRequireVerifiedTransportEvidence() {
         XCTAssertFalse(SpaceMode.nearbyOrWiFi.allows(ble: false, wifi: false))
         XCTAssertTrue(SpaceMode.nearbyOrWiFi.allows(ble: true, wifi: false))
@@ -34,103 +43,85 @@ final class ProtocolTests: XCTestCase {
         let keyA = Data(repeating: 21, count: 32)
         let keyB = Data(repeating: 22, count: 32)
         let nonce = Data(repeating: 23, count: 16).base64EncodedString()
-        let proofA = WiFiProof.sign(role: "mac-initiator", nonce: nonce, key: keyA)
-        XCTAssertTrue(WiFiProof.valid(proofA, role: "mac-initiator", nonce: nonce, key: keyA))
-        XCTAssertFalse(WiFiProof.valid(proofA, role: "mac-initiator", nonce: nonce, key: keyB))
-        XCTAssertFalse(WiFiProof.valid(proofA, role: "mac-responder", nonce: nonce, key: keyA))
+        let proofA = WiFiProof.sign(role: PeerRole.initiator.rawValue, nonce: nonce, key: keyA)
+        XCTAssertTrue(WiFiProof.valid(proofA, role: PeerRole.initiator.rawValue, nonce: nonce, key: keyA))
+        XCTAssertFalse(WiFiProof.valid(proofA, role: PeerRole.initiator.rawValue, nonce: nonce, key: keyB))
+        XCTAssertFalse(WiFiProof.valid(proofA, role: PeerRole.responder.rawValue, nonce: nonce, key: keyA))
 
-        let a = PeerQuietUpdate(origin: "mac-initiator", revision: 1, quiet: true,
+        let a = PeerQuietUpdate(origin: PeerRole.initiator.rawValue, revision: 1, quiet: true,
                                 validUntil: 120, key: keyA)
-        let b = PeerQuietUpdate(origin: "mac-responder", revision: 1, quiet: true,
+        let b = PeerQuietUpdate(origin: PeerRole.responder.rawValue, revision: 1, quiet: true,
                                 validUntil: 120, key: keyB)
         var ledger = PeerDemandLedger()
-        XCTAssertTrue(ledger.accept(a, from: "mac-a", expectedOrigin: "mac-initiator",
+        XCTAssertTrue(ledger.accept(a, from: "mac-a", expectedOrigin: PeerRole.initiator.rawValue,
                                     key: keyA, at: 100).started)
-        XCTAssertEqual(ledger.accept(b, from: "mac-b", expectedOrigin: "mac-responder",
+        XCTAssertEqual(ledger.accept(b, from: "mac-b", expectedOrigin: PeerRole.responder.rawValue,
                                      key: keyB, at: 100).activeCount, 2)
         XCTAssertFalse(ledger.stopResponding(to: "mac-a", at: 101).ended)
         XCTAssertEqual(ledger.activeCount(at: 101), 1)
-        let ack = PeerStateAck(origin: "mac-responder", revision: 1, quiet: true,
+        let ack = PeerStateAck(origin: PeerRole.responder.rawValue, revision: 1, quiet: true,
                                result: "alreadyQuiet", key: keyA)
-        XCTAssertTrue(ack.valid(key: keyA, expectedOrigin: "mac-responder"))
-        XCTAssertFalse(ack.valid(key: keyB, expectedOrigin: "mac-responder"))
+        XCTAssertTrue(ack.valid(key: keyA, expectedOrigin: PeerRole.responder.rawValue))
+        XCTAssertFalse(ack.valid(key: keyB, expectedOrigin: PeerRole.responder.rawValue))
         XCTAssertTrue(ledger.stopResponding(to: "mac-b", at: 102).ended)
     }
 
     func testPeerRequestsRemainIndependentAcrossRetriesExpiryAndManualTakeover() throws {
         let key = Data(repeating: 9, count: 32)
         func update(_ revision: UInt64, _ quiet: Bool, _ until: Int64) -> PeerQuietUpdate {
-            PeerQuietUpdate(origin: "ipad", revision: revision, quiet: quiet, validUntil: until, key: key)
+            PeerQuietUpdate(origin: PeerRole.responder.rawValue, revision: revision, quiet: quiet, validUntil: until, key: key)
         }
         var ledger = PeerDemandLedger()
-        XCTAssertTrue(ledger.accept(update(1, true, 120), from: "a", expectedOrigin: "ipad", key: key, at: 100).started)
-        let replay = ledger.accept(update(1, true, 120), from: "a", expectedOrigin: "ipad", key: key, at: 101)
+        XCTAssertTrue(ledger.accept(update(1, true, 120), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 100).started)
+        let replay = ledger.accept(update(1, true, 120), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 101)
         XCTAssertEqual(replay.activeCount, 1)
         XCTAssertFalse(replay.accepted)
-        XCTAssertEqual(ledger.accept(update(1, true, 125), from: "b", expectedOrigin: "ipad", key: key, at: 105).activeCount, 2)
-        XCTAssertEqual(ledger.accept(update(2, false, 120), from: "a", expectedOrigin: "ipad", key: key, at: 106).activeCount, 1)
+        XCTAssertEqual(ledger.accept(update(1, true, 125), from: "b", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 105).activeCount, 2)
+        XCTAssertEqual(ledger.accept(update(2, false, 120), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 106).activeCount, 1)
         XCTAssertFalse(ledger.expire(at: 124).ended)
         XCTAssertTrue(ledger.expire(at: 125).ended)
 
-        XCTAssertTrue(ledger.accept(update(3, true, 145), from: "a", expectedOrigin: "ipad", key: key, at: 130).started)
+        XCTAssertTrue(ledger.accept(update(3, true, 145), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 130).started)
         ledger.takeOver(at: 130)
-        XCTAssertFalse(ledger.accept(update(2, true, 145), from: "b", expectedOrigin: "ipad", key: key, at: 131).started)
-        XCTAssertFalse(ledger.accept(update(4, false, 145), from: "a", expectedOrigin: "ipad", key: key, at: 132).ended)
-        let ended = ledger.accept(update(3, false, 145), from: "b", expectedOrigin: "ipad", key: key, at: 133)
+        XCTAssertFalse(ledger.accept(update(2, true, 145), from: "b", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 131).started)
+        XCTAssertFalse(ledger.accept(update(4, false, 145), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 132).ended)
+        let ended = ledger.accept(update(3, false, 145), from: "b", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 133)
         XCTAssertTrue(ended.ended && ended.manualAtEnd)
         XCTAssertFalse(ledger.manualTakeover)
 
         let restored = try JSONDecoder().decode(PeerDemandLedger.self, from: JSONEncoder().encode(ledger))
         var next = restored
-        XCTAssertFalse(next.accept(update(2, true, 145), from: "a", expectedOrigin: "ipad", key: key, at: 134).started)
-        XCTAssertFalse(next.accept(update(5, true, 145), from: "a", expectedOrigin: "mac", key: key, at: 134).started)
-        XCTAssertFalse(next.accept(update(5, true, 145), from: "a", expectedOrigin: "ipad", key: Data(repeating: 8, count: 32), at: 134).started)
-        XCTAssertTrue(next.accept(update(5, true, 145), from: "a", expectedOrigin: "ipad", key: key, at: 134).started)
-        let renewalAfterTimerDelay = next.accept(update(6, true, 160), from: "a", expectedOrigin: "ipad", key: key, at: 146)
+        XCTAssertFalse(next.accept(update(2, true, 145), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 134).started)
+        XCTAssertFalse(next.accept(update(5, true, 145), from: "a", expectedOrigin: PeerRole.initiator.rawValue, key: key, at: 134).started)
+        XCTAssertFalse(next.accept(update(5, true, 145), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: Data(repeating: 8, count: 32), at: 134).started)
+        XCTAssertTrue(next.accept(update(5, true, 145), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 134).started)
+        let renewalAfterTimerDelay = next.accept(update(6, true, 160), from: "a", expectedOrigin: PeerRole.responder.rawValue, key: key, at: 146)
         XCTAssertTrue(renewalAfterTimerDelay.accepted)
         XCTAssertFalse(renewalAfterTimerDelay.started || renewalAfterTimerDelay.ended)
         XCTAssertEqual(renewalAfterTimerDelay.activeCount, 1)
         XCTAssertTrue(next.expire(at: 160).ended)
-        let ack = PeerStateAck(origin: "mac", revision: 5, quiet: true, result: "applied", key: key)
-        XCTAssertTrue(ack.valid(key: key, expectedOrigin: "mac"))
-        XCTAssertFalse(ack.valid(key: key, expectedOrigin: "ipad"))
+        let ack = PeerStateAck(origin: PeerRole.initiator.rawValue, revision: 5, quiet: true, result: "applied", key: key)
+        XCTAssertTrue(ack.valid(key: key, expectedOrigin: PeerRole.initiator.rawValue))
+        XCTAssertFalse(ack.valid(key: key, expectedOrigin: PeerRole.responder.rawValue))
 
         var threeSources = PeerDemandLedger()
         for source in ["mac-a", "mac-b", "ipad-c"] {
             _ = threeSources.accept(update(10, true, 155), from: source,
-                                    expectedOrigin: "ipad", key: key, at: 140)
+                                    expectedOrigin: PeerRole.responder.rawValue, key: key, at: 140)
         }
         XCTAssertEqual(threeSources.activeCount(at: 140), 3)
         XCTAssertFalse(threeSources.stopResponding(to: "mac-a", at: 141).ended)
         XCTAssertEqual(threeSources.activeCount(at: 141), 2)
         for source in ["mac-b"] {
             XCTAssertFalse(threeSources.accept(update(11, false, 155), from: source,
-                                               expectedOrigin: "ipad", key: key, at: 141).ended)
+                                               expectedOrigin: PeerRole.responder.rawValue, key: key, at: 141).ended)
         }
         XCTAssertEqual(threeSources.activeCount(at: 141), 1)
         XCTAssertTrue(threeSources.accept(update(11, false, 155), from: "ipad-c",
-                                          expectedOrigin: "ipad", key: key, at: 141).ended)
+                                          expectedOrigin: PeerRole.responder.rawValue, key: key, at: 141).ended)
     }
 
-    func testAuthenticatedCommandsAndRestoration() throws {
-        let key = Data(repeating: 7, count: 32)
-        let command = ControlCommand(sequence: 4, quiet: true, expiresAt: 110, key: key)
-        XCTAssertTrue(command.valid(key: key, now: 100))
-        XCTAssertFalse(command.valid(key: key, now: 110))
-        XCTAssertFalse(command.valid(key: Data(repeating: 8, count: 32), now: 100))
-        let targetCommand = ControlCommand(sequence: 5, quiet: true, expiresAt: 110, targetMilli: 150, key: key)
-        XCTAssertTrue(targetCommand.valid(key: key, now: 100))
-        XCTAssertFalse(ControlCommand(sequence: 5, quiet: true, expiresAt: 110, targetMilli: 501, key: key).valid(key: key, now: 100))
-        var forgedCommand = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(targetCommand)) as? [String: Any])
-        forgedCommand["targetMilli"] = 200
-        XCTAssertFalse(try JSONDecoder().decode(ControlCommand.self, from: JSONSerialization.data(withJSONObject: forgedCommand)).valid(key: key, now: 100))
-        let ack = ControlAck(sequence: 4, quiet: true, result: "applied", volumeMilli: 100, targetMilli: 150, key: key)
-        XCTAssertTrue(ack.valid(key: key))
-        XCTAssertFalse(ack.valid(key: Data(repeating: 8, count: 32)))
-        var forgedAck = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ack)) as? [String: Any])
-        forgedAck["targetMilli"] = 200
-        XCTAssertFalse(try JSONDecoder().decode(ControlAck.self, from: JSONSerialization.data(withJSONObject: forgedAck)).valid(key: key))
-
+    func testVolumeRestoration() {
         XCTAssertEqual(VolumePolicy.target(current: 0.5, configured: 0.1), 0.1)
         XCTAssertNil(VolumePolicy.target(current: 0.05, configured: 0.1))
         let saved = QuietSnapshot(original: 0.5, applied: 0.1, route: "speaker")

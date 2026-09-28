@@ -138,7 +138,7 @@ private let macPairService = "_nearbyaudio-pair._tcp"
                 guard responder == nil, attempts < 3 else { throw PairingError.wrongStep }
                 attempts += 1
                 let responder = try PairingResponder(start: frame, code: code,
-                    padName: Host.current().localizedName ?? "Mac", fallbackName: "Mac")
+                    responderName: Host.current().localizedName ?? "Mac", fallbackName: "Mac")
                 peerName = PeerName.display(frame.name, fallback: "Mac")
                 self.responder = responder
                 socket.send(responder.offerFrame)
@@ -249,7 +249,7 @@ struct NearbyMac: Identifiable {
 
     func enterCode(_ code: String) throws {
         guard socket != nil, handshake == nil, !stopped else { throw PairingError.wrongStep }
-        let handshake = try PairingInitiator(code: code, macName: Host.current().localizedName ?? "Mac")
+        let handshake = try PairingInitiator(code: code, initiatorName: Host.current().localizedName ?? "Mac")
         self.handshake = handshake
         socket?.send(handshake.startFrame)
         onStatus("正在验证 Mac 配对码")

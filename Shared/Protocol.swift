@@ -4,57 +4,14 @@ import Foundation
 // These UUIDs are the BLE wire contract shared by the Mac and iPad targets.
 public enum BLEIdentifiers {
     public static let service = "8A27D37F-A94F-4A53-AD7C-0D48CC8108CF"
-    public static let command = "E1FA496A-299F-4C84-9621-63396F75A3F2"
-    public static let ack = "0F20B426-BBC9-48A4-A518-82827239AA9E"
+    public static let stateWrite = "E1FA496A-299F-4C84-9621-63396F75A3F2"
+    public static let stateAck = "0F20B426-BBC9-48A4-A518-82827239AA9E"
     public static let peerState = "1AD254E9-97D9-443F-AB4B-C815B92CD364"
     public static let peerAckWrite = "51BCDB25-1849-480E-9512-2E41A2E52622"
     public static let pairingService = "C985D59E-9D34-4F37-8F14-03C942690C78"
     public static let pairingWrite = "01FA287F-9E5C-4A8A-8B58-23A9808981F4"
     public static let pairingResponse = "D56446C2-AB92-43C6-B80F-BE5E964015B4"
     public static let pairingInfo = "BF903515-CC03-4056-A7D0-16E3267ABEB4"
-}
-
-public struct ControlCommand: Codable {
-    public let sequence: UInt64
-    public let quiet: Bool
-    public let expiresAt: Int64
-    public let targetMilli: Int?
-    public let signature: String
-
-    public init(sequence: UInt64, quiet: Bool, expiresAt: Int64, targetMilli: Int? = nil, key: Data) {
-        self.sequence = sequence
-        self.quiet = quiet
-        self.expiresAt = expiresAt
-        self.targetMilli = targetMilli
-        signature = Authentication.sign("command|\(sequence)|\(quiet ? 1 : 0)|\(expiresAt)|\(targetMilli.map(String.init) ?? "-")", key: key)
-    }
-
-    public func valid(key: Data, now: Int64) -> Bool {
-        expiresAt > now && expiresAt <= now + 30 && (targetMilli.map { (0...500).contains($0) } ?? true) &&
-        Authentication.matches(signature, expected: Authentication.sign("command|\(sequence)|\(quiet ? 1 : 0)|\(expiresAt)|\(targetMilli.map(String.init) ?? "-")", key: key))
-    }
-}
-
-public struct ControlAck: Codable {
-    public let sequence: UInt64
-    public let quiet: Bool
-    public let result: String
-    public let volumeMilli: Int
-    public let targetMilli: Int
-    public let signature: String
-
-    public init(sequence: UInt64, quiet: Bool, result: String, volumeMilli: Int, targetMilli: Int, key: Data) {
-        self.sequence = sequence
-        self.quiet = quiet
-        self.result = result
-        self.volumeMilli = volumeMilli
-        self.targetMilli = targetMilli
-        signature = Authentication.sign("ack|\(sequence)|\(quiet ? 1 : 0)|\(result)|\(volumeMilli)|\(targetMilli)", key: key)
-    }
-
-    public func valid(key: Data) -> Bool {
-        Authentication.matches(signature, expected: Authentication.sign("ack|\(sequence)|\(quiet ? 1 : 0)|\(result)|\(volumeMilli)|\(targetMilli)", key: key))
-    }
 }
 
 public enum Authentication {

@@ -15,12 +15,13 @@ public enum WiFiProof {
 /// One paired Mac/iPad link. Bonjour finds candidates; the pairing key proves identity.
 @MainActor final class WiFiPeer {
     private struct Frame: Codable {
-        enum Kind: String, Codable { case challenge, proof, ready, update, ack }
+        enum Kind: String, Codable { case challenge, proof, ready, update, ack, name }
         let kind: Kind
         var nonce: String? = nil
         var signature: String? = nil
         var update: PeerQuietUpdate? = nil
         var ack: PeerStateAck? = nil
+        var name: PeerNameClaim? = nil
     }
 
     private static let service = "_nearbyaudio._tcp"
@@ -30,6 +31,8 @@ public enum WiFiProof {
     private let serviceName: String
     private let key: Data
     private let localUpdate: () -> PeerQuietUpdate
+    private let localName: () -> String
+    private let receiveName: (String) -> Void
     private let receiveUpdate: (PeerQuietUpdate) -> (String, Int?)
     private let receiveAck: (PeerStateAck) -> Void
     private let verifiedChanged: (Bool) -> Void
@@ -45,11 +48,14 @@ public enum WiFiProof {
     private var verified = false
     private var lastAckAt = Date.distantPast
     private var pendingRevisions = Set<UInt64>()
+    private var lastSentName: String?
     private var timer: Timer?
     private var stopped = false
 
     init(localOrigin: String, remoteOrigin: String, listens: Bool, key: Data,
          localUpdate: @escaping () -> PeerQuietUpdate,
+         localName: @escaping () -> String,
+         receiveName: @escaping (String) -> Void,
          receiveUpdate: @escaping (PeerQuietUpdate) -> (String, Int?),
          receiveAck: @escaping (PeerStateAck) -> Void = { _ in },
          verifiedChanged: @escaping (Bool) -> Void,
@@ -61,6 +67,8 @@ public enum WiFiProof {
         let serviceID = Data(base64Encoded: Authentication.sign("wifi-service", key: key))!.prefix(8)
         self.serviceName = "Nearby-" + serviceID.map { String(format: "%02x", $0) }.joined()
         self.localUpdate = localUpdate
+        self.localName = localName
+        self.receiveName = receiveName
         self.receiveUpdate = receiveUpdate
         self.receiveAck = receiveAck
         self.verifiedChanged = verifiedChanged
@@ -147,12 +155,20 @@ public enum WiFiProof {
 
     func sendCurrentState() {
         guard verified, let connection else { return }
+        sendCurrentName(on: connection)
         let update = localUpdate()
         pendingRevisions.insert(update.revision)
         if pendingRevisions.count > 8, let oldest = pendingRevisions.min() {
             pendingRevisions.remove(oldest)
         }
         send(Frame(kind: .update, update: update), on: connection)
+    }
+
+    private func sendCurrentName(on connection: NWConnection) {
+        let claim = PeerNameClaim(name: localName(), key: key)
+        guard claim.name != lastSentName else { return }
+        lastSentName = claim.name
+        send(Frame(kind: .name, name: claim), on: connection)
     }
 
     private func connectNext() {
@@ -171,6 +187,7 @@ public enum WiFiProof {
         nonce = nil
         remoteProven = false
         pendingRevisions.removeAll()
+        lastSentName = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self, weak connection] in
             guard let self, let connection, self.connection === connection, !self.verified else { return }
             connection.cancel()
@@ -199,6 +216,7 @@ public enum WiFiProof {
         nonce = nil
         remoteProven = false
         pendingRevisions.removeAll()
+        lastSentName = nil
         setVerified(false)
         if !listens && !stopped {
             DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.connectNext() }
@@ -246,6 +264,10 @@ public enum WiFiProof {
         case .ready:
             guard remoteProven else { return false }
             setVerified(true)
+            sendCurrentName(on: connection)
+        case .name:
+            guard verified, let claim = frame.name, claim.valid(key: key) else { return false }
+            receiveName(claim.name)
         case .update:
             guard verified, let update = frame.update,
                   update.valid(key: key, expectedOrigin: remoteOrigin,

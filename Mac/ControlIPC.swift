@@ -1,5 +1,8 @@
 import Darwin
 import Foundation
+#if canImport(NearbyAudioCore)
+import NearbyAudioCore
+#endif
 
 struct ControlRequest: Codable {
     let command: String
@@ -8,24 +11,27 @@ struct ControlRequest: Codable {
 
 struct ControlStatus: Codable {
     struct Device: Codable { let id: UUID; let name: String }
+    struct Peer: Codable {
+        let id: String
+        let name: String
+        let platform: PeerPlatform
+        let bluetoothVerified: Bool
+        let wifiVerified: Bool
+        let spaceAllowed: Bool
+        let target: Double?
+    }
     struct Source: Codable { let selector: String; let name: String; let excluded: Bool; let muted: Bool; let active: Bool; let microphone: String?; let microphoneInUse: Bool }
     let connection: String
     let paired: Bool
     let enabled: Bool
     let inputCount: Int
     let captureDiagnostics: CaptureDiagnostics?
-    let ipadBLEVerified: Bool
-    let ipadWiFiVerified: Bool
-    let ipadSpaceAllowed: Bool
-    let macPairedCount: Int
-    let macVerifiedCount: Int
-    let macSpaceAllowedCount: Int
+    let peers: [Peer]
     let driverInstalling: Bool
     let driverInstallStatus: String
     let inputError: String?
     let lastAction: String
     let lastAckSequence: UInt64?
-    let target: Double?
     let loginEnabled: Bool
     let pairingActive: Bool
     let pairingStatus: String

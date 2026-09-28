@@ -1,5 +1,23 @@
 import Foundation
 
+public enum PeerResult {
+    public static func message(_ result: String, device: String) -> String {
+        switch result {
+        case "applied": "\(device) 音量已降低"
+        case "restored", "restoring": "\(device) 音量正在恢复"
+        case "alreadyRestored": "\(device) 音量保持原状"
+        case "alreadyQuiet", "alreadyBelowTarget": "\(device) 音量已符合目标"
+        case "preservedManualOrRoute", "preservedManual": "保留了你手动调整的音量或新输出设备"
+        case "paused": "\(device) 已暂停协同"
+        case "outsideSpace": "\(device) 未满足空间条件"
+        case "readFailed", "readFailedAfterSet", "setFailed", "restoreFailed", "unsupported", "outputUnsupported":
+            "\(device) 音量操作失败"
+        case "stalePairing": "\(device) 配对需要重新验证"
+        default: "\(device) 响应异常"
+        }
+    }
+}
+
 public enum PeerTiming {
     // Renew well before expiry; the receiver's own clock bounds a lost connection.
     public static let leaseSeconds: Int64 = 20

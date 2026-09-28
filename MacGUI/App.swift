@@ -211,83 +211,65 @@ private struct ControlPanel: View {
                         HStack {
                             Text("已配对设备").font(.headline)
                             Spacer()
-                            Menu("添加设备…") {
-                                Button("iPad…") { model.beginPairing() }
-                                Button("查找 Mac…") { model.browseMacPairing() }
-                                Button("显示 Mac 配对码") { model.offerMacPairing() }
-                            }
+                            Button("添加设备…") { model.beginDeviceDiscovery() }
                         }
-                        ForEach(model.padPeerDisplays) { peer in
+                        ForEach(model.peerDisplays) { peer in
                             Text(peer.status).font(.subheadline)
                         }
-                        ForEach(model.macPeerDisplays) { peer in
-                            Text(peer.status).font(.subheadline)
-                        }
-                        if model.padPeerDisplays.isEmpty && model.macPeerDisplays.isEmpty {
+                        if model.peerDisplays.isEmpty {
                             Text("尚未配对设备").foregroundStyle(.secondary)
                         }
 
-                        if model.showPairing {
+                        if model.showPairing || model.macPairBrowsing || model.macPairCode != nil {
                             VStack(alignment: .leading, spacing: 7) {
-                                Text("添加 iPad").font(.headline)
-                                Text("在 iPad App 点按“开始 2 分钟配对”，然后选择下方的 iPad。")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(model.pairingStatus).font(.caption)
-                                if model.pairingAwaitingCode {
+                                if let code = model.macPairCode {
+                                    Text("本机配对码：\(code)")
+                                        .font(.title2.monospacedDigit()).textSelection(.enabled)
+                                    Text(model.macPairStatus).font(.caption).foregroundStyle(.secondary)
+                                } else if model.pairingAwaitingCode {
                                     Text(model.pairingPadName).font(.subheadline)
-                                    TextField("iPad 上的 6 位验证码", text: $model.pairingCodeInput)
+                                    TextField("设备上的 6 位验证码", text: $model.pairingCodeInput)
                                         .textFieldStyle(.roundedBorder)
                                         .onSubmit { model.submitPairingCode(model.pairingCodeInput) }
-                                    HStack {
-                                        Button("验证并配对") { model.submitPairingCode(model.pairingCodeInput) }
-                                            .disabled(model.pairingCodeInput.count != 6)
-                                        Button("取消") { model.cancelPairing() }
-                                    }
-                                } else {
-                                    ForEach(model.nearbyPads) { pad in
-                                        Button(pad.name) { model.choosePad(pad.id) }
-                                            .buttonStyle(.bordered)
-                                    }
-                                    if model.nearbyPads.isEmpty && model.pairingActive {
-                                        Text("正在查找附近的 iPad…").font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    if !model.pairingActive {
-                                        Button("重新查找") { model.beginPairing() }
-                                    }
-                                    Button("取消") { model.cancelPairing() }.buttonStyle(.link)
-                                }
-                            }
-                            .padding(10)
-                            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Mac 配对").font(.headline)
-                            HStack {
-                                Button("显示配对码") { model.offerMacPairing() }
-                                Button("查找另一台 Mac") { model.browseMacPairing() }
-                                if model.macPairCode != nil || model.macPairBrowsing {
-                                    Button("取消") { model.cancelMacPairing() }.buttonStyle(.link)
-                                }
-                            }
-                            if let code = model.macPairCode {
-                                Text(code).font(.title2.monospacedDigit()).textSelection(.enabled)
-                            }
-                            if model.macPairBrowsing {
-                                ForEach(model.nearbyMacs) { mac in
-                                    Button(mac.name) { model.chooseMac(mac.id) }.buttonStyle(.bordered)
-                                }
-                                if model.macPairAwaitingCode {
-                                    TextField("另一台 Mac 的 6 位配对码", text: $model.macPairCodeInput)
+                                    Button("验证并配对") { model.submitPairingCode(model.pairingCodeInput) }
+                                        .disabled(model.pairingCodeInput.count != 6)
+                                } else if model.macPairAwaitingCode {
+                                    TextField("设备上的 6 位验证码", text: $model.macPairCodeInput)
                                         .textFieldStyle(.roundedBorder)
                                         .onSubmit { model.submitMacPairCode() }
                                     Button("验证并配对") { model.submitMacPairCode() }
                                         .disabled(model.macPairCodeInput.count != 6)
+                                } else {
+                                    Text("在待添加设备上开启配对，然后从列表选择。")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                    ForEach(model.nearbyPads) { pad in
+                                        Button("\(pad.name) · 蓝牙") { model.choosePad(pad.id) }
+                                            .buttonStyle(.bordered)
+                                    }
+                                    ForEach(model.nearbyMacs) { mac in
+                                        Button("\(mac.name) · 局域网") { model.chooseMac(mac.id) }
+                                            .buttonStyle(.bordered)
+                                    }
+                                    if model.nearbyPads.isEmpty && model.nearbyMacs.isEmpty {
+                                        Text("正在查找附近设备…").font(.caption).foregroundStyle(.secondary)
+                                    }
+                                }
+                                if model.showPairing && !model.pairingActive && !model.pairingStatus.isEmpty {
+                                    Text(model.pairingStatus).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if model.macPairBrowsing && !model.macPairStatus.isEmpty && model.macPairAwaitingCode {
+                                    Text(model.macPairStatus).font(.caption).foregroundStyle(.secondary)
+                                }
+                                HStack {
+                                    if model.macPairCode == nil && !model.pairingAwaitingCode && !model.macPairAwaitingCode && !model.pairingPendingActivation {
+                                        Button("显示本机配对码") { model.offerDevicePairingCode() }
+                                        Button("重新查找") { model.beginDeviceDiscovery() }
+                                    }
+                                    Button("取消") { model.cancelDeviceDiscovery() }.buttonStyle(.link)
                                 }
                             }
-                            if !model.macPairStatus.isEmpty {
-                                Text(model.macPairStatus).font(.caption).foregroundStyle(.secondary)
-                            }
+                            .padding(10)
+                            .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 10))
                         }
                     }
 

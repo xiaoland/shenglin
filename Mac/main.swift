@@ -2,7 +2,7 @@ import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
 guard let action = arguments.first else {
-    print("用法：nearby-audio control status|pair|enabled|exclude|mute|target ... | sources | exclude|mute ... | run")
+    print("用法：nearby-audio control status|pair|enabled|exclude|mute|target ... | sources | exclude|mute ...")
     exit(2)
 }
 
@@ -32,10 +32,10 @@ if action == "control" {
         request = ControlRequest(command: "mute.remove", value: parts[2])
     } else if parts.count == 3, parts[0] == "microphone", ["add", "remove"].contains(parts[1]) {
         request = ControlRequest(command: "microphone." + parts[1], value: parts[2])
-    } else if parts.count == 2, parts[0] == "target" {
-        request = ControlRequest(command: "target.set", value: parts[1])
+    } else if parts.count == 3, parts[0] == "target" {
+        request = ControlRequest(command: "target.set", value: "\(parts[1]):\(parts[2])")
     } else {
-        print("用法：nearby-audio control status | driver install | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute|microphone add|remove <标识> | target <0...0.5>")
+        print("用法：nearby-audio control status | driver install | pair start|choose <UUID>|code|cancel | enabled on|off | exclude|mute|microphone add|remove <标识> | target <设备 ID> <0...0.5>")
         exit(2)
     }
     do {
@@ -97,63 +97,5 @@ if action == "mute" {
     exit(0)
 }
 
-if action == "pair" {
-    print("粘贴 iPad 上显示的配对码，然后按回车：")
-    guard let input = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
-          let key = Data(base64Encoded: input), key.count == 32 else {
-        print("配对码无效")
-        exit(2)
-    }
-    do {
-        try MacCredentials.save(key, account: "pairingKey")
-        print("已配对。运行：nearby-audio run")
-    } catch {
-        print("无法保存配对信息：\(error)")
-        exit(1)
-    }
-    exit(0)
-}
-
-guard action == "run", arguments.count == 1 else {
-    print("未知命令：\(action)")
-    exit(2)
-}
-
-let key: Data
-do {
-    guard let saved = try MacCredentials.read("pairingKey"), saved.count == 32 else {
-        print("尚未配对。打开 iPad 上的 Nearby Audio，然后运行：nearby-audio pair")
-        exit(2)
-    }
-    key = saved
-} catch {
-    print("无法读取配对信息：\(error)")
-    exit(1)
-}
-
-guard let runLock = RunLock() else {
-    print("另一个 Nearby Audio 控制程序正在运行；请先退出菜单栏 App 或旧命令行进程。")
-    exit(2)
-}
-
-let client = BLEClient(key: key)
-let input = InputActivity { observation in
-    print("\(Date().timeIntervalSince1970) INPUT active=\(observation.needsQuiet) count=\(observation.count) error=\(observation.error ?? "-")")
-    fflush(stdout)
-    client.setDesired(observation.needsQuiet)
-}
-input.poll() // Synchronize a recording that started before this process.
-Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in input.poll() }
-
-signal(SIGINT, SIG_IGN)
-signal(SIGTERM, SIG_IGN)
-let stopSignals = [SIGINT, SIGTERM].map { number -> DispatchSourceSignal in
-    let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
-    source.setEventHandler {
-        client.setDesired(false)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { exit(0) }
-    }
-    source.resume()
-    return source
-}
-withExtendedLifetime((stopSignals, runLock)) { RunLoop.main.run() }
+print("未知命令：\(action)")
+exit(2)

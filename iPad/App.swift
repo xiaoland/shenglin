@@ -46,7 +46,7 @@ struct SystemVolumeView: UIViewRepresentable {
                 Section("Mac 配对") {
                     Text(server.pairingPendingActivation ? "新配对已验证，等待 Mac 连接。"
                          : server.isPaired ? "已配对 \(server.pairedCount) 台 Mac。新增配对不会撤销已有设备。" : "尚未配对 Mac。")
-                    ForEach(server.pairedMacDisplays) { peer in
+                    ForEach(server.pairedPeerDisplays) { peer in
                         Text("\(peer.name) · \(peer.link) · \(peer.space)")
                             .font(.footnote)
                     }

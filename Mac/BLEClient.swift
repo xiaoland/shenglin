@@ -27,27 +27,25 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private let serviceID = CBUUID(string: BLEIdentifiers.service)
     private let pairServiceID = CBUUID(string: BLEIdentifiers.pairingService)
     private let pairInfoID = CBUUID(string: BLEIdentifiers.pairingInfo)
-    private let commandID = CBUUID(string: BLEIdentifiers.command)
-    private let ackID = CBUUID(string: BLEIdentifiers.ack)
+    private let stateWriteID = CBUUID(string: BLEIdentifiers.stateWrite)
+    private let stateAckID = CBUUID(string: BLEIdentifiers.stateAck)
     private let peerStateID = CBUUID(string: BLEIdentifiers.peerState)
     private let peerAckWriteID = CBUUID(string: BLEIdentifiers.peerAckWrite)
     private let key: Data
     private let targetPeripheralID: UUID?
     private let onStatus: (BLEConnectionState) -> Void
-    private let onAck: (ControlAck) -> Void
     private let onPeerAck: (PeerStateAck) -> Void
     private let onPeerState: (PeerQuietUpdate, @escaping (String) -> Void) -> Void
     private let onAuthenticated: (UUID) -> Void
     private let onPeerName: (String) -> Void
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
-    private var commandCharacteristic: CBCharacteristic?
-    private var ackCharacteristic: CBCharacteristic?
+    private var stateWriteCharacteristic: CBCharacteristic?
+    private var stateAckCharacteristic: CBCharacteristic?
     private var peerStateCharacteristic: CBCharacteristic?
     private var peerAckWriteCharacteristic: CBCharacteristic?
     private var pairInfoCharacteristic: CBCharacteristic?
     private var reportedName: String?
-    private var pending: ControlCommand?
     private var pendingPeer: PeerQuietUpdate?
     private var peerTimer: Timer?
     private var retryCount = 0
@@ -59,7 +57,6 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
 
     init(key: Data, targetPeripheralID: UUID? = nil,
          onStatus: @escaping (BLEConnectionState) -> Void = { _ in },
-         onAck: @escaping (ControlAck) -> Void = { _ in },
          onPeerAck: @escaping (PeerStateAck) -> Void = { _ in },
          onPeerState: @escaping (PeerQuietUpdate, @escaping (String) -> Void) -> Void = { _, done in done("unsupported") },
          onAuthenticated: @escaping (UUID) -> Void = { _ in },
@@ -67,7 +64,6 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         self.key = key
         self.targetPeripheralID = targetPeripheralID
         self.onStatus = onStatus
-        self.onAck = onAck
         self.onPeerAck = onPeerAck
         self.onPeerState = onPeerState
         self.onAuthenticated = onAuthenticated
@@ -85,13 +81,13 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         guard quiet != desiredQuiet else { return }
         desiredQuiet = quiet
         report("DESIRED quiet=\(quiet)")
-        if commandCharacteristic != nil { sendCurrentState() }
+        if stateWriteCharacteristic != nil { sendCurrentState() }
     }
 
     func setTargetMilli(_ target: Int) {
         guard (0...500).contains(target), target != desiredTargetMilli else { return }
         desiredTargetMilli = target
-        if commandCharacteristic != nil { sendCurrentState() }
+        if stateWriteCharacteristic != nil { sendCurrentState() }
     }
 
     func confirmTargetMilli(_ target: Int?) {
@@ -100,7 +96,6 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
 
     func stop() {
         stopped = true
-        pending = nil
         pendingPeer = nil
         peerTimer?.invalidate()
         central.stopScan()
@@ -151,9 +146,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         guard !stopped else { return }
         report("DISCONNECTED; reconnecting")
         onStatus(.message("连接中断，正在重连"))
-        commandCharacteristic = nil
-        ackCharacteristic = nil
-        pending = nil
+        stateWriteCharacteristic = nil
+        stateAckCharacteristic = nil
         pendingPeer = nil
         peerTimer?.invalidate()
         peerTimer = nil
@@ -180,7 +174,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         guard !stopped else { return }
         if let error { report("SERVICE ERROR \(error)"); onStatus(.message("服务发现失败，正在重连")); central.cancelPeripheralConnection(found); return }
         for service in found.services ?? [] where service.uuid == serviceID {
-            found.discoverCharacteristics([commandID, ackID, peerStateID, peerAckWriteID], for: service)
+            found.discoverCharacteristics([stateWriteID, stateAckID, peerStateID, peerAckWriteID], for: service)
         }
         for service in found.services ?? [] where service.uuid == pairServiceID {
             found.discoverCharacteristics([pairInfoID], for: service)
@@ -195,12 +189,13 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
             return
         }
         if let error { report("CHARACTERISTIC ERROR \(error)"); onStatus(.message("服务不完整，正在重连")); central.cancelPeripheralConnection(found); return }
-        commandCharacteristic = service.characteristics?.first(where: { $0.uuid == commandID })
-        ackCharacteristic = service.characteristics?.first(where: { $0.uuid == ackID })
+        stateWriteCharacteristic = service.characteristics?.first(where: { $0.uuid == stateWriteID })
+        stateAckCharacteristic = service.characteristics?.first(where: { $0.uuid == stateAckID })
         peerStateCharacteristic = service.characteristics?.first(where: { $0.uuid == peerStateID })
         peerAckWriteCharacteristic = service.characteristics?.first(where: { $0.uuid == peerAckWriteID })
-        guard let ackCharacteristic, commandCharacteristic != nil else { report("SERVICE INCOMPLETE"); onStatus(.message("服务不完整，正在重连")); central.cancelPeripheralConnection(found); return }
-        found.setNotifyValue(true, for: ackCharacteristic)
+        guard let stateAckCharacteristic, stateWriteCharacteristic != nil,
+              peerStateCharacteristic != nil, peerAckWriteCharacteristic != nil else { report("SERVICE INCOMPLETE"); onStatus(.message("服务不完整，正在重连")); central.cancelPeripheralConnection(found); return }
+        found.setNotifyValue(true, for: stateAckCharacteristic)
         if let peerStateCharacteristic, peerAckWriteCharacteristic != nil {
             found.setNotifyValue(true, for: peerStateCharacteristic)
         }
@@ -212,7 +207,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
             if error == nil, characteristic.isNotifying { found.readValue(for: characteristic) }
             return
         }
-        guard characteristic.uuid == ackID else { return }
+        guard characteristic.uuid == stateAckID else { return }
         if let error { report("ACK SUBSCRIPTION FAILED \(error)"); onStatus(.message("回执订阅失败，正在重连")); central.cancelPeripheralConnection(found); return }
         guard characteristic.isNotifying else { return }
         report("READY; reconciling current input state")
@@ -235,30 +230,17 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     }
 
     private func sendCurrentState() {
-        guard !stopped, let found = peripheral, let commandCharacteristic else { return }
+        guard !stopped, let found = peripheral, let stateWriteCharacteristic else { return }
         do {
-            if peerStateCharacteristic != nil && peerAckWriteCharacteristic != nil {
-                let update = PeerQuietUpdate(origin: "mac", revision: MacCredentials.nextSequence(),
-                                             quiet: desiredQuiet,
-                                             validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
-                                             targetMilli: desiredTargetMilli, key: key)
-                pendingPeer = update
-                pending = nil
-                retryCount = 0
-                found.writeValue(try JSONEncoder().encode(update), for: commandCharacteristic, type: .withResponse)
-                report("PEER STATE rev=\(update.revision) quiet=\(desiredQuiet)")
-                schedulePeerAckRead(revision: update.revision)
-                return
-            }
-            let sequence = MacCredentials.nextSequence()
-            let command = ControlCommand(sequence: sequence, quiet: desiredQuiet,
-                                         expiresAt: Int64(Date().timeIntervalSince1970) + 15,
+            let update = PeerQuietUpdate(origin: PeerRole.initiator.rawValue, revision: MacCredentials.nextSequence(),
+                                         quiet: desiredQuiet,
+                                         validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
                                          targetMilli: desiredTargetMilli, key: key)
-            pending = command
+            pendingPeer = update
             retryCount = 0
-            found.writeValue(try JSONEncoder().encode(command), for: commandCharacteristic, type: .withResponse)
-            report("COMMAND seq=\(sequence) quiet=\(desiredQuiet)")
-            scheduleAckRead(sequence: sequence)
+            found.writeValue(try JSONEncoder().encode(update), for: stateWriteCharacteristic, type: .withResponse)
+            report("PEER STATE rev=\(update.revision) quiet=\(desiredQuiet)")
+            schedulePeerAckRead(revision: update.revision)
         } catch {
             report("COMMAND ERROR \(error)")
         }
@@ -267,7 +249,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private func schedulePeerAckRead(revision: UInt64) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
             guard let self, let pending = self.pendingPeer, pending.revision == revision,
-                  !self.stopped, let found = self.peripheral, let ack = self.ackCharacteristic else { return }
+                  !self.stopped, let found = self.peripheral, let ack = self.stateAckCharacteristic else { return }
             if self.retryCount >= 4 || pending.validUntil <= Int64(Date().timeIntervalSince1970) {
                 self.report("NO PEER ACK rev=\(revision)")
                 self.onStatus(.message("状态未获确认，正在重连"))
@@ -281,23 +263,6 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         }
     }
 
-    private func scheduleAckRead(sequence: UInt64) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-            guard let self, let pending = self.pending, pending.sequence == sequence,
-                  !self.stopped, let found = self.peripheral, let ack = self.ackCharacteristic else { return }
-            if self.retryCount >= 4 || pending.expiresAt <= Int64(Date().timeIntervalSince1970) {
-                self.report("NO APPLICATION ACK seq=\(sequence)")
-                self.onStatus(.message("命令未获确认，正在重连"))
-                self.pending = nil
-                self.central.cancelPeripheralConnection(found)
-                return
-            }
-            self.retryCount += 1
-            found.readValue(for: ack)
-            self.scheduleAckRead(sequence: sequence)
-        }
-    }
-
     func peripheral(_ found: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         guard !stopped else { return }
         if let error { report("GATT WRITE FAILED \(error)"); onStatus(.message("发送失败，正在重连")); central.cancelPeripheralConnection(found) }
@@ -308,7 +273,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         if characteristic.uuid == pairInfoID {
             if error == nil, let data = characteristic.value,
                let info = try? JSONDecoder().decode(PairingFrame.self, from: data),
-               info.version == 2, info.kind == .info,
+               info.version == 3, info.kind == .info,
                let name = info.name?.trimmingCharacters(in: .whitespacesAndNewlines),
                !name.isEmpty, name.count <= 32 {
                 reportedName = name
@@ -319,12 +284,12 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         if characteristic.uuid == peerStateID {
             guard !stopped, error == nil, let data = characteristic.value,
                   let update = try? JSONDecoder().decode(PeerQuietUpdate.self, from: data),
-                  update.valid(key: key, expectedOrigin: "ipad",
+                  update.valid(key: key, expectedOrigin: PeerRole.responder.rawValue,
                                now: Int64(Date().timeIntervalSince1970)) else { return }
             onPeerState(update) { [weak self] result in
                 guard let self, !self.stopped, let found = self.peripheral,
                       let ackWrite = self.peerAckWriteCharacteristic else { return }
-                let ack = PeerStateAck(origin: "mac", revision: update.revision,
+                let ack = PeerStateAck(origin: PeerRole.initiator.rawValue, revision: update.revision,
                                        quiet: update.quiet, result: result, key: self.key)
                 if let data = try? JSONEncoder().encode(ack) {
                     found.writeValue(data, for: ackWrite, type: .withResponse)
@@ -332,9 +297,9 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
             }
             return
         }
-        if characteristic.uuid == ackID, error == nil, let data = characteristic.value,
+        if characteristic.uuid == stateAckID, error == nil, let data = characteristic.value,
            let ack = try? JSONDecoder().decode(PeerStateAck.self, from: data),
-           ack.valid(key: key, expectedOrigin: "ipad"),
+           ack.valid(key: key, expectedOrigin: PeerRole.responder.rawValue),
            let pendingPeer, ack.revision == pendingPeer.revision,
            ack.quiet == pendingPeer.quiet {
             report("PEER ACK rev=\(ack.revision) result=\(ack.result)")
@@ -347,16 +312,6 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
             self.pendingPeer = nil
             return
         }
-        guard !stopped, characteristic.uuid == ackID, error == nil, let data = characteristic.value,
-              let ack = try? JSONDecoder().decode(ControlAck.self, from: data), ack.valid(key: key),
-              let pending, ack.sequence == pending.sequence, ack.quiet == pending.quiet else { return }
-        report("APPLICATION ACK seq=\(ack.sequence) result=\(ack.result) volume=\(ack.volumeMilli)‰")
-        onStatus(.ready)
-        authenticated = true
-        onAuthenticated(found.identifier)
-        if let reportedName { onPeerName(reportedName) }
-        onAck(ack)
-        if pending.targetMilli == ack.targetMilli { desiredTargetMilli = nil }
-        self.pending = nil
+
     }
 }

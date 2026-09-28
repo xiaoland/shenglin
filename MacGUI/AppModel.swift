@@ -10,8 +10,10 @@ struct MacPeerDisplay: Identifiable, Equatable {
     let name: String
     let authenticated: Bool
     let spaceAllowed: Bool
+    let pending: Bool
     var status: String {
-        "\(name)：\(authenticated ? "Wi-Fi 已认证" : "未连接") · \(spaceAllowed ? (authenticated ? "允许协同" : "短断连宽限") : "等待空间条件")"
+        if pending { return "\(name)：正在验证新配对" }
+        return "\(name)：\(authenticated ? "Wi-Fi 已认证" : "未连接") · \(spaceAllowed ? (authenticated ? "允许协同" : "短断连宽限") : "等待空间条件")"
     }
 }
 
@@ -23,6 +25,12 @@ struct PadPeerDisplay: Identifiable, Equatable {
     let spaceAllowed: Bool
     let target: Double
     let targetKnown: Bool
+}
+
+struct PeerDisplay: Identifiable {
+    let id: String
+    let name: String
+    let status: String
 }
 
 @MainActor private final class PadPeerSession {
@@ -70,7 +78,6 @@ struct PadPeerDisplay: Identifiable, Equatable {
     @Published private(set) var shortcutMessage = ""
     @Published private(set) var diagnosticMessage = ""
     @Published private(set) var inputState = InputObservation.active(0)
-    @Published private(set) var paired = false
     @Published private(set) var padPeerDisplays = [PadPeerDisplay]()
     @Published private(set) var loginEnabled = false
     @Published private(set) var nearbyPads = [NearbyPad]()
@@ -103,7 +110,9 @@ struct PadPeerDisplay: Identifiable, Equatable {
     private var macPairServer: MacPairServer?
     private var macPairClient: MacPairClient?
     private var macWifiPeers = [String: WiFiPeer]()
-    private var savedMacPeers = [MacCredentials.MacPeer]()
+    private var savedMacPeers = [PairedPeer]()
+    private var pendingMacIDs = Set<String>()
+    private var lastPendingMacCheck = Date.distantPast
     private var macPeerVerified = Set<String>()
     private var macPeerGates = [String: SpaceGate]()
     private var macPeerAllowed = Set<String>()
@@ -119,7 +128,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
     private let muteFeedback = NSSound(named: NSSound.Name("Ping"))
     private var shortcutMonitor: Any?
     private var localOutput: MacQuietVolume?
-    private var peerLedger = (MacPreferences.defaults.data(forKey: "peerDemandLedger")
+    private var peerLedger = (MacPreferences.defaults.data(forKey: "peerDemandLedgerV3")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
     private var timer: Timer?
     private var started = false
@@ -127,6 +136,14 @@ struct PadPeerDisplay: Identifiable, Equatable {
     private var credentialLoadGeneration = 0
 
     var localMacName: String { PeerName.display(Host.current().localizedName, fallback: "Mac") }
+    var paired: Bool { !padPeerDisplays.isEmpty || macPeerCount > 0 }
+    var pairingPendingActivation: Bool { pendingKey != nil }
+    var peerDisplays: [PeerDisplay] {
+        (padPeerDisplays.map { PeerDisplay(id: $0.id, name: $0.name, status: $0.status) } +
+         macPeerDisplays.map { PeerDisplay(id: $0.id, name: $0.name, status: $0.status) })
+            .sorted { $0.name == $1.name ? $0.id < $1.id :
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
     var connection: String {
         let statuses = padPeerDisplays.map(\.status) + macPeerDisplays.map(\.status)
         return statuses.isEmpty ? "尚未配对设备" : statuses.joined(separator: "；")
@@ -193,6 +210,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
             Task { @MainActor [weak self] in
                 self?.input?.poll()
                 self?.expirePendingPairing()
+                self?.expirePendingMacPeers()
                 self?.refreshSpace()
                 self?.refreshMacPeerSpaces()
                 self?.expirePeerRequests()
@@ -201,7 +219,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
         let generation = credentialLoadGeneration
         Task.detached { [weak self] in
             do {
-                let peers = try MacCredentials.padPeers()
+                let peers = try MacCredentials.peers()
                 var pending: (key: Data, expiresAt: Date, name: String?, peripheralID: UUID?)?
                 var pendingError: String?
                 do { pending = try MacCredentials.pendingPairing() }
@@ -213,21 +231,22 @@ struct PadPeerDisplay: Identifiable, Equatable {
         }
     }
 
-    private func loadedKeys(_ peers: [MacCredentials.PadPeer],
+    private func loadedKeys(_ peers: [PairedPeer],
                             pending: (key: Data, expiresAt: Date, name: String?, peripheralID: UUID?)?,
                             errorMessage: String?, generation: Int) {
         guard generation == credentialLoadGeneration else { return }
         startMacPeers()
-        for peer in peers { startPadPeer(peer) }
+        for peer in peers where peer.platform == .ipad { startPadPeer(peer) }
         if let pending {
             pendingKey = pending.key
             pendingExpiresAt = pending.expiresAt
             pendingPadName = pending.name
             pendingPadPeripheralID = pending.peripheralID
             pairingStatus = "正在验证上次的新配对"
-            startPadPeer(.init(key: pending.key,
-                               name: PeerName.display(pending.name, fallback: "iPad"),
-                               peripheralID: pending.peripheralID))
+            if let peer = try? PairedPeer(key: pending.key,
+                                          name: PeerName.display(pending.name, fallback: "iPad"),
+                                          platform: .ipad, localRole: .initiator,
+                                          peripheralID: pending.peripheralID) { startPadPeer(peer) }
         }
         if let errorMessage { self.errorMessage = errorMessage }
         recordConnection("credentials-loaded")
@@ -256,10 +275,9 @@ struct PadPeerDisplay: Identifiable, Equatable {
             return order == .orderedSame ? left.id < right.id : order == .orderedAscending
         }
         if displays != padPeerDisplays { padPeerDisplays = displays }
-        paired = !displays.isEmpty
     }
 
-    private func startPadPeer(_ peer: MacCredentials.PadPeer) {
+    private func startPadPeer(_ peer: PairedPeer) {
         let id = sourceID(for: peer.key)
         if let existing = padSessions[id] {
             existing.name = peer.name
@@ -279,11 +297,6 @@ struct PadPeerDisplay: Identifiable, Equatable {
                     session.bleReachable = status.isReady
                     self.refreshPadSpace(session)
                 }
-            }, onAck: { [weak self, weak session] ack in
-                Task { @MainActor [weak self, weak session] in
-                    guard let self, let session, self.padSessions[id] === session else { return }
-                    self.accept(ack, session: session)
-                }
             }, onPeerAck: { [weak self, weak session] ack in
                 Task { @MainActor [weak self, weak session] in
                     guard let self, let session, self.padSessions[id] === session else { return }
@@ -293,7 +306,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
                 Task { @MainActor [weak self, weak session] in
                     guard let self, let session, self.padSessions[id] === session else { done("stale"); return }
                     done(self.receivePeerState(update, key: session.key,
-                                               expectedOrigin: "ipad", allowed: session.spaceAllowed))
+                                               expectedOrigin: PeerRole.responder.rawValue, allowed: session.spaceAllowed))
                 }
             }, onAuthenticated: { [weak self, weak session] peripheralID in
                 Task { @MainActor [weak self, weak session] in
@@ -308,22 +321,21 @@ struct PadPeerDisplay: Identifiable, Equatable {
                 Task { @MainActor [weak self, weak session] in
                     guard let self, let session, self.padSessions[id] === session,
                           session.name != name else { return }
-                    do {
-                        if self.pendingKey == session.key { self.pendingPadName = name }
-                        else { try MacCredentials.updatePadName(session.key, name: name) }
-                        session.name = name
-                        self.refreshPadDisplays()
-                    } catch { self.errorMessage = "无法保存设备名称：\(error.localizedDescription)" }
+                    self.updatePadName(session, name: name)
                 }
             })
-        session.wifiPeer = WiFiPeer(localOrigin: "mac", remoteOrigin: "ipad", listens: true,
+        session.wifiPeer = WiFiPeer(localOrigin: PeerRole.initiator.rawValue,
+            remoteOrigin: PeerRole.responder.rawValue, listens: true,
             key: peer.key, localUpdate: { [unowned self, unowned session] in
-                PeerQuietUpdate(origin: "mac", revision: MacCredentials.nextSequence(),
+                PeerQuietUpdate(origin: PeerRole.initiator.rawValue, revision: MacCredentials.nextSequence(),
                                 quiet: !self.quitting && self.enabled && self.inputState.needsQuiet && session.spaceAllowed,
                                 validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
                                 targetMilli: session.pendingTargetMilli, key: session.key)
+            }, localName: { [unowned self] in self.localMacName },
+            receiveName: { [unowned self, unowned session] name in
+                if session.name != name { self.updatePadName(session, name: name) }
             }, receiveUpdate: { [unowned self, unowned session] update in
-                (self.receivePeerState(update, key: session.key, expectedOrigin: "ipad",
+                (self.receivePeerState(update, key: session.key, expectedOrigin: PeerRole.responder.rawValue,
                                        allowed: session.spaceAllowed), nil)
             }, receiveAck: { [unowned self, unowned session] ack in
                 self.acceptPeerAck(ack, session: session)
@@ -338,6 +350,16 @@ struct PadPeerDisplay: Identifiable, Equatable {
         publishLocalDemand()
     }
 
+    private func updatePadName(_ session: PadPeerSession, name: String) {
+        do {
+            if pendingKey == session.key { pendingPadName = name }
+            else { try MacCredentials.updatePadName(session.key, name: name) }
+            session.name = name
+            lastAction = "\(name) 设备名称已更新"
+            refreshPadDisplays()
+        } catch { errorMessage = "无法保存设备名称：\(error.localizedDescription)" }
+    }
+
     private func removePadSession(for key: Data) {
         let id = sourceID(for: key)
         guard let session = padSessions.removeValue(forKey: id) else { return }
@@ -346,26 +368,6 @@ struct PadPeerDisplay: Identifiable, Equatable {
         persistPeerLedger()
         if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
         refreshPadDisplays()
-    }
-
-    private func accept(_ ack: ControlAck, session: PadPeerSession) {
-        promotePendingPairing(session.key)
-        guard ack.sequence >= (session.lastAckSequence ?? 0) else { return }
-        session.lastAckSequence = ack.sequence
-        lastAckSequence = max(lastAckSequence ?? 0, ack.sequence)
-        if session.pendingTargetMilli == ack.targetMilli { session.pendingTargetMilli = nil }
-        if !session.targetEditing, (0...500).contains(ack.targetMilli) {
-            session.target = Double(ack.targetMilli) / 1000
-            session.targetKnown = true
-            refreshPadDisplays()
-        }
-        switch ack.result {
-        case "applied": lastAction = "\(session.name) 媒体音量已降低至 \(ack.volumeMilli)‰"
-        case "restored": lastAction = "\(session.name) 媒体音量已恢复至 \(ack.volumeMilli)‰"
-        case "preservedManualOrRoute": lastAction = "保留了你手动调整的音量或新输出设备"
-        case "alreadyRestored": lastAction = "\(session.name) 音量保持原状"
-        default: lastAction = "\(session.name) 回执：\(ack.result)"
-        }
     }
 
     private func promotePendingPairing(_ key: Data) {
@@ -384,6 +386,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
                 padSessions[sourceID(for: key)]?.name = confirmedName
                 refreshPadDisplays()
                 pairingStatus = "配对完成，\(confirmedName) 已接受新密钥"
+                showPairing = false
             } catch {
                 errorMessage = "iPad 已接受新配对，但 Mac 保存失败：\(error.localizedDescription)"
                 pairingStatus = errorMessage
@@ -403,49 +406,63 @@ struct PadPeerDisplay: Identifiable, Equatable {
             session.targetKnown = true
             refreshPadDisplays()
         }
-        switch ack.result {
-        case "applied": lastAction = "\(session.name) 媒体音量已降低"
-        case "restored": lastAction = "\(session.name) 媒体音量正在恢复"
-        case "preservedManualOrRoute": lastAction = "保留了你手动调整的音量或新输出设备"
-        case "alreadyRestored": lastAction = "\(session.name) 音量保持原状"
-        default: lastAction = "\(session.name) 回执：\(ack.result)"
-        }
+        lastAction = PeerResult.message(ack.result, device: session.name)
     }
 
     private func persistPeerLedger() {
-        preferences.set(try? JSONEncoder().encode(peerLedger), forKey: "peerDemandLedger")
+        preferences.set(try? JSONEncoder().encode(peerLedger), forKey: "peerDemandLedgerV3")
     }
 
     private func sourceID(for key: Data) -> String { Authentication.sign("paired-peer-id", key: key) }
 
     private func startMacPeers() {
-        let peers: [MacCredentials.MacPeer]
-        do { peers = try MacCredentials.macPeers() }
-        catch {
-            errorMessage = "无法读取 Mac 配对：\(error.localizedDescription)"
-            recordConnection("mac-keychain-read-failed")
+        let peers: [PairedPeer]
+        do {
+            let pending = try MacCredentials.pendingMacPeers()
+            pendingMacIDs = Set(pending.map { sourceID(for: $0.key) })
+            peers = try MacCredentials.peers().filter { $0.platform == .mac } + pending
+        } catch {
+            errorMessage = "无法读取配对：\(error.localizedDescription)"
             return
         }
         savedMacPeers = peers
-        macPeerCount = peers.count
+        macPeerCount = peers.count - pendingMacIDs.count
         recordConnection("mac-credentials-loaded")
         for (index, peer) in peers.enumerated() {
             let source = sourceID(for: peer.key)
             guard macWifiPeers[source] == nil else { continue }
-            let localOrigin = peer.isInitiator ? "mac-initiator" : "mac-responder"
-            let remoteOrigin = peer.isInitiator ? "mac-responder" : "mac-initiator"
+            let localOrigin = peer.localRole.rawValue
+            let remoteOrigin = peer.localRole.remote.rawValue
             let link = WiFiPeer(localOrigin: localOrigin, remoteOrigin: remoteOrigin,
-                                listens: !peer.isInitiator, key: peer.key, localUpdate: { [unowned self] in
+                                listens: peer.localRole == .responder, key: peer.key, localUpdate: { [unowned self] in
                 PeerQuietUpdate(origin: localOrigin, revision: MacCredentials.nextSequence(),
                                 quiet: !self.quitting && self.enabled && self.inputState.needsQuiet &&
                                        self.macPeerAllowed.contains(source),
                                 validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
                                 key: peer.key)
+            }, localName: { [unowned self] in self.localMacName },
+            receiveName: { [unowned self] name in
+                guard let index = self.savedMacPeers.firstIndex(where: { $0.key == peer.key }),
+                      self.savedMacPeers[index].name != name else { return }
+                do {
+                    try MacCredentials.updatePeerName(peer.key, name: name)
+                    self.savedMacPeers[index].name = name
+                    self.refreshMacPeerSpaces()
+                } catch { self.errorMessage = "无法保存设备名称：\(error.localizedDescription)" }
             }, receiveUpdate: { [unowned self] update in
                 (self.receivePeerState(update, key: peer.key, expectedOrigin: remoteOrigin,
                                        allowed: self.macPeerAllowed.contains(source)), nil)
             }, verifiedChanged: { [unowned self] verified in
-                if verified { self.macPeerVerified.insert(source) }
+                if verified {
+                    self.macPeerVerified.insert(source)
+                    if self.pendingMacIDs.contains(source) {
+                        do {
+                            try MacCredentials.promoteMacPeer(peer.key)
+                            self.pendingMacIDs.remove(source)
+                            self.macPeerCount += 1
+                        } catch { self.errorMessage = "无法保存已验证设备：\(error.localizedDescription)" }
+                    }
+                }
                 else { self.macPeerVerified.remove(source) }
                 self.directMacCount = self.macPeerVerified.count
                 self.refreshMacPeerSpaces()
@@ -460,13 +477,39 @@ struct PadPeerDisplay: Identifiable, Equatable {
         refreshMacPeerSpaces()
     }
 
+    private func expirePendingMacPeers() {
+        guard Date().timeIntervalSince(lastPendingMacCheck) >= 5 else { return }
+        lastPendingMacCheck = Date()
+        do {
+            let current = Set(try MacCredentials.pendingMacPeers().map { sourceID(for: $0.key) })
+            let expired = pendingMacIDs.subtracting(current)
+            guard !expired.isEmpty else { return }
+            let saved = Set(try MacCredentials.peers().map { sourceID(for: $0.key) })
+            for id in expired {
+                if saved.contains(id) { macPeerCount += 1; continue }
+                macWifiPeers.removeValue(forKey: id)?.stop()
+                macPeerVerified.remove(id)
+                macPeerGates.removeValue(forKey: id)
+                macPeerAllowed.remove(id)
+            }
+            pendingMacIDs = current
+            savedMacPeers.removeAll { peer in
+                let id = sourceID(for: peer.key)
+                return expired.contains(id) && !saved.contains(id)
+            }
+            directMacCount = macPeerVerified.count
+            refreshMacPeerSpaces()
+        } catch { errorMessage = "无法检查待验证配对：\(error.localizedDescription)" }
+    }
+
     private func refreshMacPeerSpaces() {
         let now = Int64(Date().timeIntervalSince1970)
         var next = Set<String>()
         for source in macWifiPeers.keys {
             var gate = macPeerGates[source] ?? SpaceGate()
             // Mac-to-Mac has no BLE proof; AND mode must remain closed.
-            if gate.allows(spaceMode, ble: false, wifi: macPeerVerified.contains(source), at: now) {
+            if !pendingMacIDs.contains(source),
+               gate.allows(spaceMode, ble: false, wifi: macPeerVerified.contains(source), at: now) {
                 next.insert(source)
             }
             macPeerGates[source] = gate
@@ -477,7 +520,8 @@ struct PadPeerDisplay: Identifiable, Equatable {
         let displays = savedMacPeers.map { peer in
             let id = sourceID(for: peer.key)
             return MacPeerDisplay(id: id, name: peer.name,
-                authenticated: macPeerVerified.contains(id), spaceAllowed: next.contains(id))
+                authenticated: macPeerVerified.contains(id), spaceAllowed: next.contains(id),
+                pending: pendingMacIDs.contains(id))
         }
         if displays != macPeerDisplays { macPeerDisplays = displays }
         guard changed else { return }
@@ -532,7 +576,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
         }
         if change.started {
             let result = localOutput?.begin(target: Float(macTarget)) ?? "outputUnsupported"
-            lastAction = "\(localMacName) 音量：\(result)"
+            lastAction = PeerResult.message(result, device: localMacName)
             return result
         }
         return change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored"
@@ -993,7 +1037,8 @@ struct PadPeerDisplay: Identifiable, Equatable {
                 self.pendingPadName = name
                 self.pendingPadPeripheralID = peripheralID
                 self.pairingStatus = "验证码已通过，正在验证新密钥"
-                self.startPadPeer(.init(key: key, name: name, peripheralID: peripheralID))
+                self.startPadPeer(try PairedPeer(key: key, name: name, platform: .ipad,
+                                                 localRole: .initiator, peripheralID: peripheralID))
             } catch {
                 self.restorePreviousPairing()
                 self.errorMessage = "无法保存新配对：\(error.localizedDescription)"
@@ -1011,7 +1056,25 @@ struct PadPeerDisplay: Identifiable, Equatable {
         })
     }
 
-    func choosePad(_ id: UUID) { pairClient?.choose(id) }
+    func beginDeviceDiscovery() {
+        beginPairing()
+        browseMacPairing()
+    }
+
+    func cancelDeviceDiscovery() {
+        cancelPairing()
+        cancelMacPairing()
+    }
+
+    func offerDevicePairingCode() {
+        cancelPairing()
+        offerMacPairing()
+    }
+
+    func choosePad(_ id: UUID) {
+        cancelMacPairing()
+        pairClient?.choose(id)
+    }
     @discardableResult func submitPairingCode(_ code: String) -> Bool {
         guard pairingAwaitingCode, let pairClient else {
             pairingStatus = "请先选择处于配对模式的 iPad"
@@ -1035,6 +1098,10 @@ struct PadPeerDisplay: Identifiable, Equatable {
         pairingActive = false
         pairingCodeInput = ""
         pairingAwaitingCode = false
+        if pendingKey != nil {
+            do { try MacCredentials.clearPendingPairing() }
+            catch { errorMessage = "无法取消待激活配对：\(error.localizedDescription)" }
+        }
         restorePreviousPairing()
         showPairing = false
     }
@@ -1046,7 +1113,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
                 self?.macPairStatus = status
                 if status == "Mac 配对已超时" { self?.macPairCode = nil; self?.macPairServer = nil }
             }, onComplete: { [weak self] key, name in
-                try MacCredentials.addMacPeer(key: key, name: name, isInitiator: false)
+                try MacCredentials.stageMacPeer(key: key, name: name, localRole: .responder)
                 self?.startMacPeers()
                 self?.macPairCode = nil
             })
@@ -1073,7 +1140,7 @@ struct PadPeerDisplay: Identifiable, Equatable {
             self?.macPairAwaitingCode = true
             self?.macPairStatus = "请输入另一台 Mac 显示的验证码"
         }, onComplete: { [weak self] key, name in
-            try MacCredentials.addMacPeer(key: key, name: name, isInitiator: true)
+            try MacCredentials.stageMacPeer(key: key, name: name, localRole: .initiator)
             self?.startMacPeers()
             self?.macPairBrowsing = false
             self?.macPairAwaitingCode = false
@@ -1082,7 +1149,10 @@ struct PadPeerDisplay: Identifiable, Equatable {
         browser.start()
     }
 
-    func chooseMac(_ id: String) { macPairClient?.choose(id) }
+    func chooseMac(_ id: String) {
+        cancelPairing()
+        macPairClient?.choose(id)
+    }
 
     func submitMacPairCode() {
         guard let macPairClient, macPairAwaitingCode else { return }
@@ -1127,17 +1197,24 @@ struct PadPeerDisplay: Identifiable, Equatable {
     }
 
     private func controlStatus() -> ControlStatus {
-        ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
+        let peerStatuses = padSessions.values.map { session in
+            ControlStatus.Peer(id: session.id, name: session.name, platform: .ipad,
+                               bluetoothVerified: session.bleReachable, wifiVerified: session.wifiVerified,
+                               spaceAllowed: session.spaceAllowed,
+                               target: session.targetKnown ? session.target : nil)
+        } + savedMacPeers.map { peer in
+            let id = sourceID(for: peer.key)
+            return ControlStatus.Peer(id: id, name: peer.name, platform: .mac,
+                                      bluetoothVerified: false, wifiVerified: macPeerVerified.contains(id),
+                                      spaceAllowed: macPeerAllowed.contains(id), target: nil)
+        }
+        return ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
                       captureDiagnostics: input?.captureDiagnostics,
-                      ipadBLEVerified: padSessions.values.contains(where: \.bleReachable),
-                      ipadWiFiVerified: padSessions.values.contains(where: \.wifiVerified),
-                      ipadSpaceAllowed: padSessions.values.contains(where: \.spaceAllowed),
-                      macPairedCount: macPeerCount,
-                      macVerifiedCount: directMacCount, macSpaceAllowedCount: macPeerAllowed.count,
+                      peers: peerStatuses.sorted { $0.name == $1.name ? $0.id < $1.id :
+                          $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
                       driverInstalling: driverInstalling, driverInstallStatus: driverInstallStatus,
                       inputError: inputError,
                       lastAction: lastAction, lastAckSequence: lastAckSequence,
-                      target: padSessions.values.first(where: \.targetKnown)?.target,
                       loginEnabled: loginEnabled, pairingActive: pairingActive,
                       pairingStatus: pairingStatus, pairingAwaitingCode: pairingAwaitingCode,
                       pairingPadName: pairingPadName,
@@ -1182,13 +1259,12 @@ struct PadPeerDisplay: Identifiable, Equatable {
                 if !setMicrophone(selector, name: name, add: request.command == "microphone.add") { problem = errorMessage }
             } else { problem = "请输入应用 bundle ID" }
         case "target.set":
-            if let value = request.value, let number = Double(value), (0...0.5).contains(number) {
-                for session in padSessions.values {
-                    session.target = number
-                    setPadTarget(session.id, value: number)
-                    padTargetEditChanged(session.id, false)
-                }
-            } else { problem = "目标音量须为 0 到 0.5" }
+            if let value = request.value, let split = value.lastIndex(of: ":"),
+               let number = Double(value[value.index(after: split)...]), (0...0.5).contains(number),
+               let session = padSessions[String(value[..<split])] {
+                setPadTarget(session.id, value: number)
+                padTargetEditChanged(session.id, false)
+            } else { problem = "请提供已配对设备 ID 和 0 到 0.5 的目标音量" }
         default: problem = "未知命令"
         }
         return ControlResponse(ok: problem == nil, message: problem, status: controlStatus())

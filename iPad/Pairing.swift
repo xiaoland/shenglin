@@ -2,10 +2,8 @@ import Foundation
 import Security
 
 enum PairingStore {
-    private static let currentAccount = "NearbyAudioPairingKey" // Also used by the original version.
-    private static let peersAccount = "NearbyAudioPairedMacs"
-    private static let pendingAccount = "NearbyAudioPendingPairingKey"
-    struct PairedMac: Codable { let key: Data; let name: String }
+    private static let peersAccount = "NearbyAudioPairedPeersV3"
+    private static let pendingAccount = "NearbyAudioPendingPeerV3"
     private struct Pending: Codable { let key: Data; let expiresAt: Date; let name: String? }
 
     private static func query(_ account: String) -> [String: Any] {
@@ -47,24 +45,20 @@ enum PairingStore {
         }
     }
 
-    static func current() throws -> Data? {
-        try all().last?.key
+    static func all() throws -> [PairedPeer] {
+        guard let data = try read(peersAccount) else { return [] }
+        let peers = try JSONDecoder().decode([PairedPeer].self, from: data)
+        guard peers.allSatisfy({ $0.key.count == 32 && !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }),
+              Set(peers.map(\.key)).count == peers.count
+        else { throw PairingError.invalidMessage }
+        return peers
     }
 
-    static func all() throws -> [PairedMac] {
-        if let data = try read(peersAccount) {
-            let peers = try JSONDecoder().decode([PairedMac].self, from: data)
-            guard peers.allSatisfy({ $0.key.count == 32 }) else { throw PairingError.invalidMessage }
-            let normalized = peers.map { PairedMac(key: $0.key,
-                                                   name: PeerName.display($0.name, fallback: "Mac")) }
-            if zip(peers, normalized).contains(where: { $0.0.name != $0.1.name }) {
-                try save(JSONEncoder().encode(normalized), account: peersAccount)
-            }
-            return normalized
-        }
-        guard let key = try read(currentAccount) else { return [] }
-        guard key.count == 32 else { throw PairingError.invalidMessage }
-        return [PairedMac(key: key, name: "Mac")]
+    static func updateName(_ key: Data, name: String) throws {
+        var peers = try all()
+        guard let index = peers.firstIndex(where: { $0.key == key }) else { throw PairingError.invalidMessage }
+        peers[index].name = PeerName.display(name, fallback: "Mac")
+        try save(JSONEncoder().encode(peers), account: peersAccount)
     }
 
     static func pending() throws -> Data? {
@@ -91,8 +85,9 @@ enum PairingStore {
         guard pending.expiresAt > Date(), pending.key.count == 32 else { throw PairingError.expired }
         var peers = try all()
         if !peers.contains(where: { $0.key == pending.key }) {
-            peers.append(PairedMac(key: pending.key,
-                                   name: PeerName.display(pending.name, fallback: "Mac")))
+            peers.append(try PairedPeer(key: pending.key,
+                                        name: PeerName.display(pending.name, fallback: "Mac"),
+                                        platform: .mac, localRole: .responder))
         }
         try save(JSONEncoder().encode(peers), account: peersAccount)
         try? delete(pendingAccount)
