@@ -201,6 +201,7 @@ private struct ControlPanel: View {
     @ObservedObject var model: AppModel
     @State private var showingAppPicker = false
     @State private var addingMicrophone = false
+    @State private var appListExpanded = false
     let page: SettingsPage
 
     var body: some View {
@@ -303,7 +304,8 @@ private struct ControlPanel: View {
                                 }
                                     .buttonStyle(.link)
                             }
-                            DisclosureGroup("应用列表 · 已排除 \(model.sources.filter(\.isExcluded).count) 个") {
+                            DisclosureGroup("应用列表 · 已排除 \(model.sources.filter(\.isExcluded).count) 个",
+                                            isExpanded: $appListExpanded) {
                                 LazyVStack(alignment: .leading, spacing: 4) {
                                     ForEach(model.sources) { source in
                                         Toggle(isOn: Binding(get: { source.isExcluded },
@@ -320,6 +322,10 @@ private struct ControlPanel: View {
                                         .accessibilityLabel("排除 \(source.name)")
                                     }
                                 }
+                            }
+                            .transaction { transaction in
+                                transaction.animation = nil
+                                transaction.disablesAnimations = true
                             }
                         }
 
@@ -338,16 +344,12 @@ private struct ControlPanel: View {
                                     }
                                     .buttonStyle(.link)
                                     .help("为需要独立静音的应用创建设备；其他应用若选择同一设备，也会一起静音。")
+                                    Button("重新安装驱动…") { model.installDriver() }
+                                        .buttonStyle(.link).disabled(model.driverInstalling)
                                 }
                             }
                             if !model.driverInstallStatus.isEmpty {
                                 Text(model.driverInstallStatus).font(.caption).foregroundStyle(.secondary)
-                            }
-                            if model.virtualMicrophoneAvailable {
-                                DisclosureGroup("驱动维护") {
-                                    Button("重新安装驱动…") { model.installDriver() }
-                                        .buttonStyle(.link).disabled(model.driverInstalling)
-                                }
                             }
                             if model.virtualMicrophoneAvailable {
                                 LazyVStack(alignment: .leading, spacing: 4) {
