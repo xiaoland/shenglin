@@ -18,6 +18,7 @@ import UniformTypeIdentifiers
             let window = NSWindow(contentRect: NSRect(x: 280, y: 160, width: 560, height: 340),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
+            window.isReleasedWhenClosed = false
             window.title = "Nearby Audio"
             window.contentView = NSHostingView(rootView: MainPanel(model: model))
             window.center()
