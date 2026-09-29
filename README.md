@@ -8,7 +8,7 @@
 
 ## 下载与安装
 
-从 [Releases](https://github.com/xiaoland/shenglin/releases) 下载 macOS DMG。当前预发布使用开发签名，尚未取得用于公开分发的 Developer ID 签名和 Apple 公证；下载后可能被 macOS 拦截，不应把它当作面向普通用户的一键安装包。iPad 版目前没有可供所有设备直接安装的公开包；详情见[安装与分发](manuals/安装与分发.md)。
+macOS DMG 已制作，公开下载仍待 Developer ID 签名和 Apple 公证；届时会在 [Releases](https://github.com/xiaoland/shenglin/releases) 提供。iPad 版目前没有可供所有设备直接安装的公开包；详情见[安装与分发](manuals/安装与分发.md)。
 
 安装后，在 iPad 上打开声邻并点“开始 2 分钟配对”；在 Mac 的“设置”→“设备”点“添加设备…”，选择 iPad 并输入它显示的六位验证码。两台 Mac 也可在设备设置中互相配对。[使用指南](manuals/使用指南.md)说明音量目标、应用排除、专用麦克风和诊断功能。
 
