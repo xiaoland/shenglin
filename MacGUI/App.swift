@@ -15,7 +15,7 @@ import UniformTypeIdentifiers
     func showMainWindow() {
         model.refreshSources()
         if mainWindow == nil {
-            let window = NSWindow(contentRect: NSRect(x: 280, y: 160, width: 560, height: 340),
+            let window = NSWindow(contentRect: NSRect(x: 280, y: 160, width: 560, height: 410),
                                   styleMask: [.titled, .closable, .miniaturizable, .resizable],
                                   backing: .buffered, defer: false)
             window.isReleasedWhenClosed = false
@@ -63,7 +63,7 @@ import UniformTypeIdentifiers
                     .frame(width: 620, height: 320)
                     .tabItem { Label("应用", systemImage: "app.badge") }
                 ControlPanel(model: delegate.model, page: .coordination)
-                    .frame(width: 620, height: 390)
+                    .frame(width: 620, height: 290)
                     .tabItem { Label("协同", systemImage: "slider.horizontal.3") }
             }
             .onAppear { delegate.model.refreshSources() }
@@ -126,6 +126,7 @@ private struct QuickPanel: View {
 
             Divider()
             Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
+            LocalDuckingControl(model: model)
             Text("参与协同的录音进程：\(model.inputCount) 个 · \(model.spaceStatus)")
                 .font(.caption).foregroundStyle(.secondary)
             if let error = model.inputError {
@@ -169,6 +170,26 @@ private enum SettingsPage {
     case devices, apps, coordination, diagnostics
 }
 
+private struct LocalDuckingControl: View {
+    @ObservedObject var model: AppModel
+
+    var body: some View {
+        Toggle("本机协同", isOn: Binding(
+            get: { model.localDuckingEnabled }, set: model.setLocalDuckingEnabled))
+            .disabled(!model.enabled)
+            .help("本机录音时降低 Mac 默认输出音量")
+        HStack {
+            Text("输出音量上限").font(.caption)
+            Slider(value: $model.localDuckingTarget, in: 0...0.5, step: 0.05,
+                   onEditingChanged: model.localDuckingTargetEditChanged)
+                .accessibilityLabel("本机录音时的输出音量上限")
+            Text("\(Int((model.localDuckingTarget * 100).rounded()))%")
+                .monospacedDigit().font(.caption)
+        }
+        .disabled(!model.enabled || !model.localDuckingEnabled)
+    }
+}
+
 private struct MainPanel: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openWindow) private var openWindow
@@ -184,6 +205,7 @@ private struct MainPanel: View {
                     }
                     Divider()
                     Toggle("自动协同", isOn: Binding(get: { model.enabled }, set: model.setEnabled))
+                    LocalDuckingControl(model: model)
                     Text("参与协同：\(model.inputCount) 个录音进程")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -481,23 +503,6 @@ private struct ControlPanel: View {
                     }
 
                     if page == .coordination {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Toggle("本机录音时降低 Mac 输出音量", isOn: Binding(
-                                get: { model.localDuckingEnabled }, set: model.setLocalDuckingEnabled))
-                            HStack {
-                                Text("本机录音时的音量上限").font(.headline)
-                                Spacer()
-                                Text("\(Int((model.localDuckingTarget * 100).rounded()))%")
-                                    .monospacedDigit()
-                            }
-                            Slider(value: $model.localDuckingTarget, in: 0...0.5, step: 0.05,
-                                   onEditingChanged: model.localDuckingTargetEditChanged)
-                                .disabled(!model.localDuckingEnabled)
-                                .accessibilityLabel("Mac 本机录音时的输出音量上限")
-                            Text("调整默认输出设备的整体音量，包括通话声音；手动调音量后保留你的选择。")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-
                         ForEach(model.padPeerDisplays) { peer in
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
