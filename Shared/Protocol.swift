@@ -41,6 +41,10 @@ public struct QuietSnapshot: Codable {
 }
 
 public enum VolumePolicy {
+    public static func quietTarget(local: Float?, remote: Float?) -> Float? {
+        [local, remote].compactMap { $0 }.min()
+    }
+
     public static func target(current: Float, configured: Float) -> Float? {
         guard current.isFinite, configured.isFinite, (0...1).contains(current), (0...1).contains(configured) else { return nil }
         return current > configured + 0.005 ? configured : nil

@@ -63,7 +63,7 @@ import UniformTypeIdentifiers
                     .frame(width: 620, height: 320)
                     .tabItem { Label("应用", systemImage: "app.badge") }
                 ControlPanel(model: delegate.model, page: .coordination)
-                    .frame(width: 620, height: 290)
+                    .frame(width: 620, height: 390)
                     .tabItem { Label("协同", systemImage: "slider.horizontal.3") }
             }
             .onAppear { delegate.model.refreshSources() }
@@ -481,6 +481,23 @@ private struct ControlPanel: View {
                     }
 
                     if page == .coordination {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle("本机录音时降低 Mac 输出音量", isOn: Binding(
+                                get: { model.localDuckingEnabled }, set: model.setLocalDuckingEnabled))
+                            HStack {
+                                Text("本机录音时的音量上限").font(.headline)
+                                Spacer()
+                                Text("\(Int((model.localDuckingTarget * 100).rounded()))%")
+                                    .monospacedDigit()
+                            }
+                            Slider(value: $model.localDuckingTarget, in: 0...0.5, step: 0.05,
+                                   onEditingChanged: model.localDuckingTargetEditChanged)
+                                .disabled(!model.localDuckingEnabled)
+                                .accessibilityLabel("Mac 本机录音时的输出音量上限")
+                            Text("调整默认输出设备的整体音量，包括通话声音；手动调音量后保留你的选择。")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+
                         ForEach(model.padPeerDisplays) { peer in
                             VStack(alignment: .leading, spacing: 6) {
                                 HStack {
@@ -509,7 +526,7 @@ private struct ControlPanel: View {
                             Slider(value: $model.macTarget, in: 0...0.5, step: 0.05,
                                    onEditingChanged: model.macTargetEditChanged)
                                 .accessibilityLabel("\(model.localMacName) 响应其他设备安静请求时的媒体音量上限")
-                            Text("iPad → Mac 自动触发尚未验证")
+                            Text("iPad 端尚未检测其他 App 的录音")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
 

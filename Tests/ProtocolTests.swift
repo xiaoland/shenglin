@@ -3,6 +3,13 @@ import ShenglinCore
 import XCTest
 
 final class ProtocolTests: XCTestCase {
+    func testLocalAndRemoteQuietDemandKeepsTheLowerOutputTarget() {
+        XCTAssertNil(VolumePolicy.quietTarget(local: nil, remote: nil))
+        XCTAssertEqual(VolumePolicy.quietTarget(local: 0.25, remote: nil), 0.25)
+        XCTAssertEqual(VolumePolicy.quietTarget(local: nil, remote: 0.4), 0.4)
+        XCTAssertEqual(VolumePolicy.quietTarget(local: 0.25, remote: 0.1), 0.1)
+    }
+
     func testPeerResultsNeverExposeWireCodes() {
         XCTAssertEqual(PeerResult.message("restoring", device: "测试 iPad"),
                        "测试 iPad 音量正在恢复")

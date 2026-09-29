@@ -77,7 +77,7 @@ struct PeerDisplay: Identifiable {
     @Published private(set) var recordingShortcutFor: String?
     @Published private(set) var shortcutMessage = ""
     @Published private(set) var diagnosticMessage = ""
-    @Published private(set) var inputState = InputObservation.active(0)
+    @Published private(set) var inputState = InputObservation.active(0, false)
     @Published private(set) var padPeerDisplays = [PadPeerDisplay]()
     @Published private(set) var loginEnabled = false
     @Published private(set) var nearbyPads = [NearbyPad]()
@@ -87,6 +87,8 @@ struct PeerDisplay: Identifiable {
     @Published private(set) var pairingPadName = ""
     @Published private(set) var pairingActive = false
     @Published var macTarget = 0.0
+    @Published private(set) var localDuckingEnabled: Bool
+    @Published var localDuckingTarget: Double
     @Published private(set) var spaceMode: SpaceMode
     @Published private(set) var nearbyMacs = [NearbyMac]()
     @Published private(set) var macPairCode: String?
@@ -128,6 +130,7 @@ struct PeerDisplay: Identifiable {
     private let muteFeedback = NSSound(named: NSSound.Name("Ping"))
     private var shortcutMonitor: Any?
     private var localOutput: MacQuietVolume?
+    private var outputQuiet = false
     private var peerLedger = (MacPreferences.defaults.data(forKey: "peerDemandLedgerV3")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
     private var timer: Timer?
@@ -178,6 +181,8 @@ struct PeerDisplay: Identifiable {
         sharedShortcutEnabled = preferences.bool(forKey: "shareMicrophoneHotKeys")
         spaceMode = SpaceMode(rawValue: preferences.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
         macTarget = preferences.object(forKey: "localOutputTarget") as? Double ?? 0
+        localDuckingEnabled = preferences.object(forKey: "localDuckingEnabled") as? Bool ?? true
+        localDuckingTarget = preferences.object(forKey: "localDuckingTarget") as? Double ?? 0.25
         if CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") }) { return }
         loginEnabled = SMAppService.mainApp.status == .enabled
         guard runLock != nil else {
@@ -211,6 +216,7 @@ struct PeerDisplay: Identifiable {
                 guard let self else { return }
                 self.inputState = observation
                 self.publishLocalDemand()
+                self.updateOutputQuiet()
             }
         }
         input?.poll()
@@ -379,7 +385,7 @@ struct PeerDisplay: Identifiable {
         session.stop()
         let change = peerLedger.stopResponding(to: id, at: Int64(Date().timeIntervalSince1970))
         persistPeerLedger()
-        if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+        if change.ended { updateOutputQuiet(manualAtEnd: change.manualAtEnd) }
         refreshPadDisplays()
     }
 
@@ -540,7 +546,7 @@ struct PeerDisplay: Identifiable {
         guard changed else { return }
         for source in removed {
             let change = peerLedger.stopResponding(to: source, at: now)
-            if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+            if change.ended { updateOutputQuiet(manualAtEnd: change.manualAtEnd) }
         }
         if !removed.isEmpty { persistPeerLedger() }
         publishLocalDemand()
@@ -569,7 +575,7 @@ struct PeerDisplay: Identifiable {
             let change = peerLedger.stopResponding(to: session.id,
                                                   at: Int64(Date().timeIntervalSince1970))
             persistPeerLedger()
-            if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+            if change.ended { updateOutputQuiet(manualAtEnd: change.manualAtEnd) }
         }
         publishLocalDemand()
     }
@@ -583,12 +589,12 @@ struct PeerDisplay: Identifiable {
         let change = peerLedger.accept(update, from: source, expectedOrigin: expectedOrigin, key: key, at: now)
         persistPeerLedger()
         if change.ended {
-            localOutput?.finish(manualAtEnd: change.manualAtEnd)
-            lastAction = change.manualAtEnd ? "保留了你手动调整的 \(localMacName) 音量" : "\(localMacName) 音量正在恢复"
-            return change.manualAtEnd ? "preservedManual" : "restoring"
+            let result = updateOutputQuiet(manualAtEnd: change.manualAtEnd)
+            lastAction = PeerResult.message(result, device: localMacName)
+            return result
         }
         if change.started {
-            let result = localOutput?.begin(target: Float(macTarget)) ?? "outputUnsupported"
+            let result = updateOutputQuiet()
             lastAction = PeerResult.message(result, device: localMacName)
             return result
         }
@@ -599,7 +605,7 @@ struct PeerDisplay: Identifiable {
         let change = peerLedger.expire(at: Int64(Date().timeIntervalSince1970))
         guard change.ended else { return }
         persistPeerLedger()
-        localOutput?.finish(manualAtEnd: change.manualAtEnd)
+        updateOutputQuiet(manualAtEnd: change.manualAtEnd)
         lastAction = change.manualAtEnd ? "保留了你手动调整的 Mac 音量" : "远端请求超时，Mac 音量正在恢复"
     }
 
@@ -613,7 +619,8 @@ struct PeerDisplay: Identifiable {
         if !value {
             let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
             persistPeerLedger()
-            if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+            if change.ended { updateOutputQuiet(manualAtEnd: change.manualAtEnd) }
+            else { updateOutputQuiet() }
         }
     }
 
@@ -628,7 +635,43 @@ struct PeerDisplay: Identifiable {
     }
 
     func macTargetEditChanged(_ editing: Bool) {
-        if !editing { preferences.set(macTarget, forKey: "localOutputTarget") }
+        if !editing {
+            preferences.set(macTarget, forKey: "localOutputTarget")
+            updateOutputQuiet()
+        }
+    }
+
+    func setLocalDuckingEnabled(_ value: Bool) {
+        localDuckingEnabled = value
+        preferences.set(value, forKey: "localDuckingEnabled")
+        updateOutputQuiet()
+    }
+
+    func localDuckingTargetEditChanged(_ editing: Bool) {
+        if !editing {
+            preferences.set(localDuckingTarget, forKey: "localDuckingTarget")
+            updateOutputQuiet()
+        }
+    }
+
+    @discardableResult private func updateOutputQuiet(manualAtEnd: Bool = false) -> String {
+        let now = Int64(Date().timeIntervalSince1970)
+        let local: Float? = enabled && !quitting && localDuckingEnabled && inputState.localRecording
+            ? Float(localDuckingTarget) : nil
+        let remote: Float? = enabled && !quitting && peerLedger.activeCount(at: now) > 0
+            ? Float(macTarget) : nil
+        if let target = VolumePolicy.quietTarget(local: local, remote: remote) {
+            let starting = !outputQuiet
+            outputQuiet = true
+            let result = localOutput?.begin(target: target) ?? "outputUnsupported"
+            if starting { lastAction = PeerResult.message(result, device: localMacName) }
+            return result
+        }
+        guard outputQuiet else { return "alreadyRestored" }
+        outputQuiet = false
+        localOutput?.finish(manualAtEnd: manualAtEnd)
+        lastAction = manualAtEnd ? "保留了你手动调整的 \(localMacName) 音量" : "\(localMacName) 音量正在恢复"
+        return manualAtEnd ? "preservedManual" : "restoring"
     }
 
     func refreshSources() {
@@ -1328,7 +1371,7 @@ struct PeerDisplay: Identifiable {
         for peer in macWifiPeers.values { peer.sendCurrentState() }
         let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
         persistPeerLedger()
-        if change.ended { localOutput?.finish(manualAtEnd: change.manualAtEnd) }
+        updateOutputQuiet(manualAtEnd: change.manualAtEnd)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.padSessions.values.forEach { $0.stop() }
             self?.macWifiPeers.values.forEach { $0.stop() }

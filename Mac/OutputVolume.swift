@@ -83,7 +83,25 @@ private struct MacOutput {
     }
 
     func begin(target: Float) -> String {
-        guard !roundActive else { return "alreadyQuiet" }
+        if roundActive, let saved = snapshot {
+            guard !manual, let output = MacOutput.current(),
+                  output.route == saved.route, let expectedVolume,
+                  abs(output.volume - expectedVolume) <= 0.005 else { return "preservedManual" }
+            guard let wanted = VolumePolicy.target(current: output.volume, configured: target) else {
+                return "alreadyQuiet"
+            }
+            self.expectedVolume = wanted
+            guard MacOutput.write(wanted, on: output.id), let actual = MacOutput.current(),
+                  actual.route == saved.route else {
+                self.expectedVolume = output.volume
+                return "setFailed"
+            }
+            snapshot = QuietSnapshot(original: saved.original, applied: actual.volume, route: saved.route)
+            self.expectedVolume = actual.volume
+            save()
+            return "applied"
+        }
+        roundActive = false
         // A new request during the restore ramp must retain the original pre-quiet volume.
         let recovering = restoring ? snapshot : nil
         let previousExpected = expectedVolume

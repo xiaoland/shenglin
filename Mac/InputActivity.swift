@@ -54,19 +54,25 @@ func activeInputPIDs(on device: AudioObjectID? = nil) -> Set<pid_t>? {
 }
 
 enum InputObservation {
-    case active(Int)
-    case partial(Int, String)
+    case active(Int, Bool)
+    case partial(Int, Bool, String)
     case unavailable(String)
 
     var count: Int {
-        if case .active(let count) = self { return count }
-        if case .partial(let count, _) = self { return count }
+        if case .active(let count, _) = self { return count }
+        if case .partial(let count, _, _) = self { return count }
         return 0
+    }
+
+    var localRecording: Bool {
+        if case .active(_, let recording) = self { return recording }
+        if case .partial(_, let recording, _) = self { return recording }
+        return false
     }
 
     var error: String? {
         if case .unavailable(let message) = self { return message }
-        if case .partial(_, let message) = self { return message }
+        if case .partial(_, _, let message) = self { return message }
         return nil
     }
 
@@ -85,12 +91,13 @@ final class InputActivity {
         }
     }
     private var previous: Set<pid_t>?
+    private var previousLocalRecording = false
     private var lastError: String?
     private var captures = [Group: VirtualMicrophone]()
     private let changed: (InputObservation) -> Void
     private let captureEnabled: Bool
     private let ignoredPID: () -> pid_t?
-    private(set) var lastObservation = InputObservation.active(0)
+    private(set) var lastObservation = InputObservation.active(0, false)
 
     var captureDiagnostics: CaptureDiagnostics {
         let values = captures.values.map { $0.diagnostics() }
@@ -117,6 +124,7 @@ final class InputActivity {
         print(message)
         lastError = message
         previous = nil
+        previousLocalRecording = false
         // Unknown input state must not keep a stale request to lower iPad volume.
         lastObservation = .unavailable(message)
         changed(lastObservation)
@@ -146,11 +154,14 @@ final class InputActivity {
         if !captureEnabled {
             let mutedIDs = Set(microphones.filter { muted.contains($0.selector) }
                 .compactMap { VirtualMicrophone.deviceID(uid: $0.uid) })
-            considered.subtract(DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedIDs))
-            if considered != previous || lastError != nil {
+            let mutedPIDs = DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedIDs)
+            considered.subtract(mutedPIDs)
+            let localRecording = !current.subtracting(mutedPIDs).isEmpty
+            if considered != previous || localRecording != previousLocalRecording || lastError != nil {
                 previous = considered
+                previousLocalRecording = localRecording
                 lastError = nil
-                lastObservation = .active(considered.count)
+                lastObservation = .active(considered.count, localRecording)
                 changed(lastObservation)
             }
             return
@@ -181,11 +192,13 @@ final class InputActivity {
                     problem.map { ["error": $0] } ?? [:])
             }
         }
-        guard considered != previous || lastError != problem else { return }
+        let localRecording = !current.isEmpty
+        guard considered != previous || localRecording != previousLocalRecording || lastError != problem else { return }
         previous = considered
+        previousLocalRecording = localRecording
         lastError = problem
-        if let problem { lastObservation = .partial(considered.count, problem) }
-        else { lastObservation = .active(considered.count) }
+        if let problem { lastObservation = .partial(considered.count, localRecording, problem) }
+        else { lastObservation = .active(considered.count, localRecording) }
         changed(lastObservation)
     }
 }
