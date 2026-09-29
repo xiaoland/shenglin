@@ -227,7 +227,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
                 self.pollTick += 1
                 if self.pollTick >= Int(PeerTiming.renewalSeconds) {
                     self.pollTick = 0
-                    if self.desiredQuiet { self.sendCurrentState() }
+                    // Even an idle signed update renews the iPad's BLE space proof.
+                    self.sendCurrentState()
                     if let found = self.peripheral, let info = self.pairInfoCharacteristic {
                         found.readValue(for: info)
                     }
