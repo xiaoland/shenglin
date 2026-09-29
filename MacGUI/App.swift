@@ -79,16 +79,27 @@ import UniformTypeIdentifiers
 
 private struct MenuBarStatus: View {
     @ObservedObject var model: AppModel
+    private static let templateIcon: NSImage? = {
+        guard let image = Bundle.main.image(forResource: "MenuBarIcon") else { return nil }
+        image.isTemplate = true
+        return image
+    }()
+
     var body: some View {
         Group {
             if model.iconName == "waveform" || model.iconName == "waveform.circle.fill" {
-                Image("MenuBarIcon")
-                    .renderingMode(.template)
-                    .overlay(alignment: .bottomTrailing) {
-                        if model.inputCount > 0 {
-                            Circle().fill(.primary).frame(width: 4, height: 4).offset(x: 2, y: 2)
+                if let icon = Self.templateIcon {
+                    Image(nsImage: icon)
+                        .resizable()
+                        .frame(width: 18, height: 18)
+                        .overlay(alignment: .bottomTrailing) {
+                            if model.inputCount > 0 {
+                                Circle().fill(.primary).frame(width: 4, height: 4).offset(x: 2, y: 2)
+                            }
                         }
-                    }
+                } else {
+                    Image(systemName: model.iconName)
+                }
             } else {
                 Image(systemName: model.iconName)
             }
