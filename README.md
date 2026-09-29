@@ -1,6 +1,6 @@
 # 声邻
 
-声邻是 Mac 应用，也提供菜单栏快捷入口。未排除的 Mac 应用开始录音时，它通过蓝牙或已认证的 Wi-Fi 链路请求已配对设备降低媒体音量；Mac 本机录音也可降低本机默认输出设备的音量。最后一个安静请求结束后恢复。链路只传控制状态。启用可选的 Mac 虚拟麦克风后，受系统监管的本机后台进程转发物理麦克风样本，并为诊断在本机滚动保存音频；不会自动上传或向 iPad 传输声音。
+声邻是 Mac 应用，也提供菜单栏快捷入口。未排除的 Mac 应用开始录音时，它通过蓝牙或已认证的 Wi-Fi 链路请求已配对设备降低媒体音量；Mac 本机录音也可降低本机默认输出设备的音量。iPad 端只读系统录音状态，经认证链路请求 Mac 降低默认输出音量。最后一个安静请求结束后恢复。链路只传控制状态。启用可选的 Mac 虚拟麦克风后，受系统监管的本机后台进程转发物理麦克风样本，并为诊断在本机滚动保存音频；不会自动上传或向 iPad 传输声音。
 
 图标的可编辑矢量稿在 `Design/`：`AppIcon.svg` 用于 Mac，`AppIcon-iPad.svg` 为 iPad 的方形底图；`Mark-White.svg` 和 `Mark-Monochrome.svg` 提供透明背景标记。菜单栏使用独立的单色 `MenuBarIcon.svg`，缩小后不依赖波形细节辨认，暂停、断连和异常状态仍分别显示状态符号。
 
@@ -32,7 +32,7 @@ Mac 用公开 Core Audio 接口每 250 毫秒观察各进程是否有活动输�
 
 蓝牙 peer 状态带有效期、递增版本和 HMAC；Mac 等待 iPad 签名的应用执行回执，而不把蓝牙写入确认当作音量已改变。配对使用固定版本的 [BoringSSL SPAKE2](https://github.com/google/boringssl/blob/main/include/openssl/curve25519.h)：六位码参与密码认证密钥交换，双方再以独立方向的证明确认同一密钥。验证码不存为长期控制密钥。它是 App 自身的配对流程，并非系统蓝牙配对认证。控制密钥留在各端 Keychain；iPad 仅在收到新密钥认证的控制状态时添加该 Mac，Mac 验证该状态的 iPad 回执后才将其加入设备列表。Mac↔Mac 双方在新的 Wi-Fi 认证链路建立后才正式保存配对。Mac↔Mac 配对在局域网传输握手消息，验证码本身不发送。非秘密的序号存本机偏好。iPad 音量控制使用在目标设备上实测的私有 `AVSystemController` 媒体接口，系统更新后可能需要重新验证。
 
-iPad 不用静音播放保活、不打开麦克风，也不伪造通话。蓝牙断线时尝试恢复并自动重连，但系统回收 App、用户强制退出、设备重启后第一次解锁和长时间断线不能保证无条件自动恢复。蓝牙可达也不等于同房间。Mac↔Mac 当前只有 Wi-Fi 认证证据，因此空间条件选“蓝牙且 Wi-Fi”时两台 Mac 不互相降音量。只验证了媒体音量，没有验证铃声、通知或通话音量。真机证据和待验边界见 `docs/validation.md`，此前可行性实验见 `docs/feasibility.md`。多端剩余验收见[任务包](tasks/multi-device-volume/packet.md)。
+iPad 不用静音播放保活、不打开麦克风，也不伪造通话。录音检测依赖 iPadOS 私有属性，在目标设备上已完成前台只读对照，但后台、锁屏和系统更新后的行为仍需真机复验。读数不可用时发送“未知”状态，既不立即撤销安静请求，也不续期；既有请求最迟按 20 秒租约到期。蓝牙断线时尝试恢复并自动重连，但系统回收 App、用户强制退出、设备重启后第一次解锁和长时间断线不能保证无条件自动恢复。蓝牙可达也不等于同房间。Mac↔Mac 当前只有 Wi-Fi 认证证据，因此空间条件选“蓝牙且 Wi-Fi”时两台 Mac 不互相降音量。只验证了媒体音量，没有验证铃声、通知或通话音量。真机证据和待验边界见 `docs/validation.md`，此前可行性实验见 `docs/feasibility.md`。多端剩余验收见[任务包](tasks/multi-device-volume/packet.md)。
 
 ## 开发工具
 
@@ -56,7 +56,7 @@ scripts/build-driver.sh  # 构建并离线测试虚拟麦克风驱动，默认�
 
 SwiftPM 的 `.build/release/shenglin` 支持 `control status|pair start|pair choose <UUID>|pair code|pair cancel` 等本机诊断命令；运行中的 GUI 通过同一用户的 Unix socket 执行它们。`pair code` 从标准输入读取验证码，不从命令参数读取。CLI 还保留 `sources`、`exclude list|add|remove`、`mute list|add|remove`。CLI 与 GUI 共用排除及静音配置；蓝牙控制由 GUI 统一持有。`control microphone add|remove <bundle ID>` 可添加或移除专用设备，`control mute add|remove <bundle ID>` 控制已分配设备。`control status` 按已配对设备返回各自链路、空间条件及目标音量，并返回应用设置、活动进程数、最后一次认证回执及错误；`control target <设备 ID> <0...0.5>` 只更改指定 iPad 的目标音量；超时或连接失败先检查菜单栏 App 是否运行。分享诊断输出前应删去设备名、UUID 和应用列表。仓库不包含配对密钥、设备标识、开发证书或本机日志；不要用会输出 Keychain 密钥内容的命令排障。
 
-代码入口：`MacGUI/AppModel.swift` 持有菜单栏状态、各 peer 会话和本机控制命令；`Mac/MicrophoneAgent.swift` 在独立的 launchd 进程中持有专用设备的采集与驱动写入；`Mac/MacPairing.swift` 管理 Mac 直连配对；`Mac/InputActivity.swift` 报告未排除、未由虚拟麦克风静音的活动输入，`Mac/VirtualMicrophone.swift` 按需采集物理输入并供给 `Driver/Driver.cpp`，`Mac/BLEClient.swift` 负责 BLE 双向状态及回执，`Mac/OutputVolume.swift` 控制本机默认输出音量。`iPad/BLEServer.swift` 校验状态、管理配对激活，`iPad/Volume.swift` 保存及恢复媒体音量。各端共用 `Shared/Protocol.swift` 的 BLE 标识与认证工具、`Shared/PeerState.swift` 的来源租约和空间规则、`Shared/WiFiPeer.swift` 的 Bonjour/TCP 认证通信，以及 `Shared/PairingProtocol.swift` 的 SPAKE2 握手。iPad 目前没有可靠的其他 App 录音检测，因此尚不能从 iPad 真实录音反向触发 Mac 音量变化；Wi-Fi 及三端全连接也未完成真机验证，详见[多设备任务包](tasks/multi-device-volume/packet.md)。修改 BLE 标识或签名字段会改变设备间协议，需同时验证两个 App 工程。
+代码入口：`MacGUI/AppModel.swift` 持有菜单栏状态、各 peer 会话和本机控制命令；`Mac/MicrophoneAgent.swift` 在独立的 launchd 进程中持有专用设备的采集与驱动写入；`Mac/MacPairing.swift` 管理 Mac 直连配对；`Mac/InputActivity.swift` 报告未排除、未由虚拟麦克风静音的活动输入，`Mac/VirtualMicrophone.swift` 按需采集物理输入并供给 `Driver/Driver.cpp`，`Mac/BLEClient.swift` 负责 BLE 双向状态及回执，`Mac/OutputVolume.swift` 控制本机默认输出音量。`iPad/RecordingActivity.swift` 只读系统录音状态，`iPad/BLEServer.swift` 校验状态、管理配对激活，`iPad/Volume.swift` 保存及恢复媒体音量。各端共用 `Shared/Protocol.swift` 的 BLE 标识与认证工具、`Shared/PeerState.swift` 的来源租约和空间规则、`Shared/WiFiPeer.swift` 的 Bonjour/TCP 认证通信，以及 `Shared/PairingProtocol.swift` 的 SPAKE2 握手。iPad 录音探针已在目标真机观察到空闲为 0、语音备忘录录音时为非零、结束后回到 0，普通播放保持 0；正式双向降音量仍需完成后台、锁屏和音量恢复真机验收。Wi-Fi 及三端全连接也未完成真机验证，详见[多设备任务包](tasks/multi-device-volume/packet.md)。修改 BLE 标识或签名字段会改变设备间协议，需同时验证两个 App 工程。
 
 ## 许可证
 

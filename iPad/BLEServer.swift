@@ -32,6 +32,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     @Published private(set) var shortCode: String?
     @Published private(set) var peerName = ""
     @Published private(set) var lastAction = "尚无命令"
+    @Published private(set) var recordingStatus = "录音状态待检测"
     @Published private(set) var enabled = UserDefaults.standard.object(forKey: "listeningEnabled") as? Bool ?? true
     @Published private(set) var spaceMode = SpaceMode(rawValue: UserDefaults.standard.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
     @Published private(set) var bleAuthenticated = false
@@ -70,7 +71,6 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     private var volume: VolumeCoordinator?
     private var peerLedger = (UserDefaults.standard.data(forKey: "peerDemandLedgerV3")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
-    private var localQuiet = false
     private var localRevision = UserDefaults.standard.string(forKey: "localPeerRevisionV3").flatMap(UInt64.init) ?? 0
     private var peerTimer: Timer?
 
@@ -133,7 +133,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             guard manager?.state == .poweredOn else { return }
             publishService()
         } else {
-            setLocalQuiet(false)
+            publishLocalState()
             cancelPairing(reason: "已停止配对")
             manager?.stopAdvertising()
             manager?.removeAllServices()
@@ -522,13 +522,25 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     }
 
     private func makeLocalState(key: Data) -> PeerQuietUpdate {
+        let recording = sampleRecording()
         let now = Int64(Date().timeIntervalSince1970)
         let clock = UInt64(Date().timeIntervalSince1970 * 1000)
         localRevision = max(clock, localRevision &+ 1)
         UserDefaults.standard.set(String(localRevision), forKey: "localPeerRevisionV3")
         return PeerQuietUpdate(origin: PeerRole.responder.rawValue, revision: localRevision,
-                               quiet: localQuiet && enabled && allowedSources.contains(sourceID(for: key)),
+                               quiet: recording == true && enabled && allowedSources.contains(sourceID(for: key)),
+                               known: !enabled || recording != nil,
                                validUntil: now + PeerTiming.leaseSeconds, key: key)
+    }
+
+    private func sampleRecording() -> Bool? {
+        let recording = RecordingActivity.current?.sample()
+        let next = recording.map { $0 ? "本机正在录音" : "本机未录音" } ?? "录音状态不可用"
+        if next != recordingStatus {
+            recordingStatus = next
+            note("RECORDING_STATUS \(next) appState=\(UIApplication.shared.applicationState.rawValue)")
+        }
+        return recording
     }
 
     private func startWiFi() {
@@ -579,13 +591,6 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                   let data = currentLocalState(key: key) else { continue }
             _ = manager.updateValue(data, for: characteristic, onSubscribedCentrals: [central])
         }
-    }
-
-    func setLocalQuiet(_ quiet: Bool) {
-        guard localQuiet != quiet else { return }
-        localQuiet = quiet
-        publishLocalState()
-        publishWiFiState()
     }
 
     private func receivePeerAck(_ request: CBATTRequest, peripheral: CBPeripheralManager) {

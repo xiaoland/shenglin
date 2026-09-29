@@ -598,6 +598,7 @@ struct PeerDisplay: Identifiable {
             lastAction = PeerResult.message(result, device: localMacName)
             return result
         }
+        if !update.known { return "unknown" }
         return change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored"
     }
 

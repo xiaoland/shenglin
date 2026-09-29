@@ -10,6 +10,7 @@ public enum PeerResult {
         case "preservedManualOrRoute", "preservedManual": "保留了你手动调整的音量或新输出设备"
         case "paused": "\(device) 已暂停协同"
         case "outsideSpace": "\(device) 未满足空间条件"
+        case "unknown": "\(device) 录音状态暂不可用"
         case "readFailed", "readFailedAfterSet", "setFailed", "restoreFailed", "unsupported", "outputUnsupported":
             "\(device) 音量操作失败"
         case "stalePairing": "\(device) 配对需要重新验证"
@@ -56,25 +57,27 @@ public struct PeerQuietUpdate: Codable {
     public let origin: String
     public let revision: UInt64
     public let quiet: Bool
+    public let known: Bool
     public let validUntil: Int64
     public let targetMilli: Int?
     public let signature: String
 
-    public init(origin: String, revision: UInt64, quiet: Bool, validUntil: Int64,
+    public init(origin: String, revision: UInt64, quiet: Bool, known: Bool = true, validUntil: Int64,
                 targetMilli: Int? = nil, key: Data) {
         self.origin = origin
         self.revision = revision
-        self.quiet = quiet
+        self.quiet = known && quiet
+        self.known = known
         self.validUntil = validUntil
         self.targetMilli = targetMilli
-        signature = Authentication.sign("peer-state|1|\(origin)|\(revision)|\(quiet ? 1 : 0)|\(validUntil)|\(targetMilli.map(String.init) ?? "-")", key: key)
+        signature = Authentication.sign("peer-state|2|\(origin)|\(revision)|\(self.quiet ? 1 : 0)|\(known ? 1 : 0)|\(validUntil)|\(targetMilli.map(String.init) ?? "-")", key: key)
     }
 
     public func valid(key: Data, expectedOrigin: String, now: Int64) -> Bool {
         origin == expectedOrigin && validUntil > now && validUntil <= now + PeerTiming.leaseSeconds &&
         (targetMilli.map { (0...500).contains($0) } ?? true) &&
-        Authentication.matches(signature, expected: Authentication.sign(
-            "peer-state|1|\(origin)|\(revision)|\(quiet ? 1 : 0)|\(validUntil)|\(targetMilli.map(String.init) ?? "-")", key: key))
+        (!quiet || known) && Authentication.matches(signature, expected: Authentication.sign(
+            "peer-state|2|\(origin)|\(revision)|\(quiet ? 1 : 0)|\(known ? 1 : 0)|\(validUntil)|\(targetMilli.map(String.init) ?? "-")", key: key))
     }
 }
 
@@ -140,7 +143,8 @@ public struct PeerDemandLedger: Codable {
             guard update.valid(key: key, expectedOrigin: expectedOrigin, now: now),
                   update.revision > (records[source]?.revision ?? 0) else { return false }
             records[source] = Record(revision: update.revision,
-                                     validUntil: update.quiet ? update.validUntil : nil)
+                                     validUntil: update.known ? (update.quiet ? update.validUntil : nil)
+                                                              : records[source]?.validUntil)
             return true
         }
     }

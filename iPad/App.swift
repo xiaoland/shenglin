@@ -27,6 +27,7 @@ struct SystemVolumeView: UIViewRepresentable {
                 }
                 Section("状态") {
                     Text(server.status)
+                    Text(server.recordingStatus)
                     Text(server.lastAction)
                     Picker("空间条件", selection: Binding(get: { server.spaceMode }, set: server.setSpaceMode)) {
                         Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
@@ -63,7 +64,7 @@ struct SystemVolumeView: UIViewRepresentable {
                         Button("开始 2 分钟配对") { server.beginPairing() }
                     }
                 }
-                Text("通过蓝牙或已认证的 Wi-Fi 局域网接收 Mac 录音状态；不采集 iPad 麦克风，也尚未检测其他 iPad App 的录音。")
+                Text("通过蓝牙或已认证的 Wi-Fi 局域网协调录音状态；不采集或传输麦克风音频。")
                     .font(.footnote)
             }
             .onAppear { deviceNameInput = server.deviceName }

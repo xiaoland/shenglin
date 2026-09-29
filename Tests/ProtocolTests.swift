@@ -128,6 +128,28 @@ final class ProtocolTests: XCTestCase {
                                           expectedOrigin: PeerRole.responder.rawValue, key: key, at: 141).ended)
     }
 
+    func testUnknownPeerRecordingStateDoesNotRenewOrImmediatelyClearQuietLease() throws {
+        let key = Data(repeating: 7, count: 32)
+        var ledger = PeerDemandLedger()
+        let active = PeerQuietUpdate(origin: PeerRole.responder.rawValue, revision: 1,
+                                     quiet: true, validUntil: 120, key: key)
+        let unknown = PeerQuietUpdate(origin: PeerRole.responder.rawValue, revision: 2,
+                                      quiet: false, known: false, validUntil: 124, key: key)
+        var modified = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(unknown)) as? [String: Any])
+        modified["known"] = true
+        let forged = try JSONDecoder().decode(PeerQuietUpdate.self,
+                                              from: JSONSerialization.data(withJSONObject: modified))
+        XCTAssertFalse(forged.valid(key: key, expectedOrigin: PeerRole.responder.rawValue, now: 105))
+        XCTAssertTrue(ledger.accept(active, from: "ipad", expectedOrigin: PeerRole.responder.rawValue,
+                                    key: key, at: 100).started)
+        let change = ledger.accept(unknown, from: "ipad", expectedOrigin: PeerRole.responder.rawValue,
+                                   key: key, at: 105)
+        XCTAssertTrue(change.accepted)
+        XCTAssertFalse(change.ended)
+        XCTAssertEqual(ledger.activeCount(at: 119), 1)
+        XCTAssertTrue(ledger.expire(at: 120).ended)
+    }
+
     func testVolumeRestoration() {
         XCTAssertEqual(VolumePolicy.target(current: 0.5, configured: 0.1), 0.1)
         XCTAssertNil(VolumePolicy.target(current: 0.05, configured: 0.1))

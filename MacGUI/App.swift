@@ -531,8 +531,6 @@ private struct ControlPanel: View {
                             Slider(value: $model.macTarget, in: 0...0.5, step: 0.05,
                                    onEditingChanged: model.macTargetEditChanged)
                                 .accessibilityLabel("\(model.localMacName) 响应其他设备安静请求时的媒体音量上限")
-                            Text("iPad 端尚未检测其他 App 的录音")
-                                .font(.caption).foregroundStyle(.secondary)
                         }
 
                         Toggle("登录后自动启动", isOn: Binding(get: { model.loginEnabled }, set: model.setLoginEnabled))

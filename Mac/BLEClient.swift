@@ -48,6 +48,8 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private var reportedName: String?
     private var pendingPeer: PeerQuietUpdate?
     private var peerTimer: Timer?
+    private var peerReadAt: Date?
+    private var pollTick = 0
     private var retryCount = 0
     private var stopped = false
     private var authenticated = false
@@ -98,6 +100,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         stopped = true
         pendingPeer = nil
         peerTimer?.invalidate()
+        peerReadAt = nil
         central.stopScan()
         if let peripheral { central.cancelPeripheralConnection(peripheral) }
     }
@@ -151,6 +154,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         pendingPeer = nil
         peerTimer?.invalidate()
         peerTimer = nil
+        peerReadAt = nil
         peerStateCharacteristic = nil
         peerAckWriteCharacteristic = nil
         pairInfoCharacteristic = nil
@@ -204,7 +208,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     func peripheral(_ found: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         guard !stopped else { return }
         if characteristic.uuid == peerStateID {
-            if error == nil, characteristic.isNotifying { found.readValue(for: characteristic) }
+            if error == nil, characteristic.isNotifying { readPeerState() }
             return
         }
         guard characteristic.uuid == stateAckID else { return }
@@ -215,18 +219,28 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         sendCurrentState()
         if peerStateCharacteristic != nil && peerAckWriteCharacteristic != nil {
             peerTimer?.invalidate()
-            peerTimer = Timer.scheduledTimer(withTimeInterval: PeerTiming.renewalSeconds,
+            pollTick = 0
+            peerTimer = Timer.scheduledTimer(withTimeInterval: 1,
                                              repeats: true) { [weak self] _ in
                 guard let self, !self.stopped else { return }
-                if self.desiredQuiet { self.sendCurrentState() }
-                if let found = self.peripheral, let peerState = self.peerStateCharacteristic {
-                    found.readValue(for: peerState)
-                }
-                if let found = self.peripheral, let info = self.pairInfoCharacteristic {
-                    found.readValue(for: info)
+                self.readPeerState()
+                self.pollTick += 1
+                if self.pollTick >= Int(PeerTiming.renewalSeconds) {
+                    self.pollTick = 0
+                    if self.desiredQuiet { self.sendCurrentState() }
+                    if let found = self.peripheral, let info = self.pairInfoCharacteristic {
+                        found.readValue(for: info)
+                    }
                 }
             }
         }
+    }
+
+    private func readPeerState() {
+        guard let found = peripheral, let peerState = peerStateCharacteristic,
+              peerReadAt.map({ Date().timeIntervalSince($0) >= 3 }) ?? true else { return }
+        peerReadAt = Date()
+        found.readValue(for: peerState)
     }
 
     private func sendCurrentState() {
@@ -282,6 +296,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
             return
         }
         if characteristic.uuid == peerStateID {
+            peerReadAt = nil
             guard !stopped, error == nil, let data = characteristic.value,
                   let update = try? JSONDecoder().decode(PeerQuietUpdate.self, from: data),
                   update.valid(key: key, expectedOrigin: PeerRole.responder.rawValue,
