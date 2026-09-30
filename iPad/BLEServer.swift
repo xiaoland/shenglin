@@ -7,6 +7,13 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     let name: String
     let link: String
     let space: String
+    let connected: Bool
+    let allowsCoordination: Bool
+
+    var summary: String {
+        if allowsCoordination { return connected ? "可协同" : "短暂断连，仍可协同" }
+        return connected ? "等待空间条件" : "未连接"
+    }
 }
 
 @MainActor final class BLEServer: NSObject, ObservableObject, @preconcurrency CBPeripheralManagerDelegate {
@@ -21,6 +28,8 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     static let pairInfoID = CBUUID(string: BLEIdentifiers.pairingInfo)
 
     @Published private(set) var status = "正在启动"
+    @Published private(set) var startupIssue: String?
+    @Published private(set) var bluetoothIssue: String?
     @Published private(set) var isPaired = false
     @Published private(set) var pairedCount = 0
     @Published private(set) var pairedPeerDisplays = [PairedPeerDisplay]()
@@ -96,6 +105,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             isPaired = !pairedKeys.isEmpty
             volume = VolumeCoordinator()
             status = volume == nil ? "当前系统的媒体音量接口不兼容" : "等待蓝牙"
+            if volume == nil { startupIssue = status }
             note("BLUETOOTH_AUTHORIZATION \(CBPeripheralManager.authorization.rawValue)")
             manager = CBPeripheralManager(delegate: self, queue: .main,
                                           options: [CBPeripheralManagerOptionRestoreIdentifierKey: "ShenglinPeripheral"])
@@ -109,6 +119,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             }
         } catch {
             status = "无法读取配对密钥：\(error.localizedDescription)"
+            startupIssue = status
         }
     }
 
@@ -193,7 +204,8 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             let allowed = allowedSources.contains(source)
             return PairedPeerDisplay(id: source, name: peer.name,
                 link: ble ? "蓝牙已认证" : wifi ? "Wi-Fi 已认证" : "未连接",
-                space: allowed ? (ble || wifi ? "允许协同" : "短断连宽限") : "等待空间条件")
+                space: allowed ? (ble || wifi ? "允许协同" : "短断连宽限") : "等待空间条件",
+                connected: ble || wifi, allowsCoordination: allowed)
         }
         if displays != pairedPeerDisplays { pairedPeerDisplays = displays }
         if !removed.isEmpty { persistPeerLedger() }
@@ -220,7 +232,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
 
     func beginPairing() {
         guard enabled, manager?.state == .poweredOn else {
-            pairingStatus = "请先开启蓝牙监听"
+            pairingStatus = "请先开启自动协同，并确认蓝牙可用"
             return
         }
         do {
@@ -234,7 +246,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             peerName = ""
             pairingMode = true
             pairingDeadline = Date().addingTimeInterval(120)
-            pairingStatus = "2 分钟内在 Mac 输入下方验证码；最多尝试 3 次"
+            pairingStatus = "验证码最多可尝试 3 次"
             pairingTimer?.invalidate()
             pairingTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
                 Task { @MainActor [weak self] in
@@ -245,7 +257,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         } catch { pairingStatus = "无法准备配对：\(error.localizedDescription)" }
     }
 
-    func rejectPairing() { cancelPairing(reason: "已拒绝配对") }
+    func rejectPairing() { cancelPairing(reason: "已取消配对") }
 
     private func cancelPairing(reason: String) {
         if let pairing, let central = pairingCentral {
@@ -267,7 +279,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         do {
             try PairingStore.stage(key, name: peerName)
             pendingKey = key
-            pairingStatus = "验证码已通过，等待新 Mac 使用新密钥连接"
+            pairingStatus = "验证码已通过，等待新设备连接"
             pairingMode = false
             pairingDeadline = nil
             pairingTimer?.invalidate()
@@ -321,6 +333,13 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     }
 
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
+        switch peripheral.state {
+        case .poweredOn, .unknown, .resetting: bluetoothIssue = nil
+        case .poweredOff: bluetoothIssue = "蓝牙已关闭"
+        case .unauthorized: bluetoothIssue = "请在系统设置中允许声邻使用蓝牙"
+        case .unsupported: bluetoothIssue = "此设备不支持蓝牙"
+        @unknown default: bluetoothIssue = "蓝牙暂不可用"
+        }
         status = peripheral.state == .poweredOn ? "蓝牙已开启" : "蓝牙不可用（\(peripheral.state.rawValue)）"
         note("BLUETOOTH_STATE \(peripheral.state.rawValue)")
         if peripheral.state == .poweredOn { publishService() }
@@ -361,6 +380,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             if service.uuid == Self.serviceID { controlRegistered = false }
             if service.uuid == Self.pairServiceID { pairRegistered = false }
             status = "发布服务失败：\(error.localizedDescription)"
+            bluetoothIssue = status
             return
         }
         if controlRegistered && pairRegistered && !peripheral.isAdvertising { advertise() }
@@ -369,6 +389,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
         note("ADVERTISING \(error.map(String.init(describing:)) ?? "ready")")
         status = error.map { "蓝牙广播失败：\($0.localizedDescription)" } ?? "蓝牙已就绪"
+        bluetoothIssue = error.map { "蓝牙广播失败：\($0.localizedDescription)" }
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
@@ -460,7 +481,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                 pairedCount = pairedKeys.count
                 startWiFi()
                 isPaired = true
-                pairingStatus = "配对完成，已添加一台 Mac"
+                pairingStatus = "配对完成，已添加一台设备"
                 authenticatedKey = pendingKey
             } catch {
                 peripheral.respond(to: request, withResult: .unlikelyError)
@@ -642,7 +663,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                 finishPairing(finish)
             case .reject:
                 peripheral.respond(to: request, withResult: .success)
-                cancelPairing(reason: "Mac 已取消配对")
+                cancelPairing(reason: "对方已取消配对")
             default:
                 peripheral.respond(to: request, withResult: .unlikelyError)
             }
