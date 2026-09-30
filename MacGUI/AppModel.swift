@@ -21,16 +21,27 @@ struct PadPeerDisplay: Identifiable, Equatable {
     let id: String
     let name: String
     let status: String
+    let link: String
     let connected: Bool
     let spaceAllowed: Bool
     let target: Double
     let targetKnown: Bool
 }
 
-struct PeerDisplay: Identifiable {
+struct PeerDisplay: Identifiable, Equatable {
     let id: String
     let name: String
     let status: String
+    let link: String
+    let connected: Bool
+    let spaceAllowed: Bool
+    let pending: Bool
+
+    var summary: String {
+        if pending { return "正在验证配对" }
+        if spaceAllowed { return connected ? "可协同" : "短断连宽限" }
+        return connected ? "等待空间条件" : "等待连接"
+    }
 }
 
 @MainActor private final class PadPeerSession {
@@ -140,10 +151,17 @@ struct PeerDisplay: Identifiable {
 
     var localMacName: String { PeerName.display(Host.current().localizedName, fallback: "Mac") }
     var paired: Bool { !padPeerDisplays.isEmpty || macPeerCount > 0 }
-    var pairingPendingActivation: Bool { pendingKey != nil }
+    var pairingPendingActivation: Bool { pendingKey != nil || !pendingMacIDs.isEmpty }
     var peerDisplays: [PeerDisplay] {
-        (padPeerDisplays.map { PeerDisplay(id: $0.id, name: $0.name, status: $0.status) } +
-         macPeerDisplays.map { PeerDisplay(id: $0.id, name: $0.name, status: $0.status) })
+        (padPeerDisplays.map {
+            PeerDisplay(id: $0.id, name: $0.name, status: $0.status, link: $0.link,
+                        connected: $0.connected, spaceAllowed: $0.spaceAllowed,
+                        pending: pendingKey.map { sourceID(for: $0) } == $0.id)
+        } + macPeerDisplays.map {
+            PeerDisplay(id: $0.id, name: $0.name, status: $0.status,
+                        link: $0.authenticated ? "Wi-Fi 已认证" : "未连接",
+                        connected: $0.authenticated, spaceAllowed: $0.spaceAllowed, pending: $0.pending)
+        })
             .sorted { $0.name == $1.name ? $0.id < $1.id :
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
@@ -153,6 +171,16 @@ struct PeerDisplay: Identifiable {
     }
     var isConnected: Bool { padPeerDisplays.contains(where: \.connected) || directMacCount > 0 }
     var inputCount: Int { inputState.count }
+    var coordinationStatus: String {
+        if !enabled { return "自动协同已暂停" }
+        let peers = peerDisplays.filter { !$0.pending }
+        let ready = peers.filter { $0.connected && $0.spaceAllowed }.count
+        if ready > 0 { return "\(ready) 台设备可协同" }
+        if pairingPendingActivation { return "正在验证新配对" }
+        if peers.isEmpty { return localDuckingEnabled ? "本机协同已开启" : "尚未添加设备" }
+        if peers.contains(where: \.spaceAllowed) { return "设备短断连宽限" }
+        return peers.contains(where: \.connected) ? "等待空间条件" : "等待设备连接"
+    }
     var inputError: String? {
         if let error = inputState.error { return error }
         guard ((try? MicrophoneStore.load()) ?? []).isEmpty == false else { return nil }
@@ -166,10 +194,10 @@ struct PeerDisplay: Identifiable {
     }
 
     var iconName: String {
-        if runLock == nil || (padPeerDisplays.isEmpty && macPeerCount == 0) { return "exclamationmark.triangle.fill" }
+        if runLock == nil { return "exclamationmark.triangle.fill" }
         if !enabled { return "waveform.slash" }
-        if !isConnected { return "exclamationmark.circle" }
-        return inputCount > 0 ? "waveform.circle.fill" : "waveform"
+        if paired && !isConnected { return "exclamationmark.circle" }
+        return inputState.localRecording ? "waveform.circle.fill" : "waveform"
     }
 
     private func recordConnection(_ event: String) {
@@ -286,6 +314,7 @@ struct PeerDisplay: Identifiable {
                 : "等待空间条件"
             return PadPeerDisplay(id: session.id, name: session.name,
                                   status: "\(session.name)：\(link) · \(space)",
+                                  link: link,
                                   connected: session.bleReachable || session.wifiVerified,
                                   spaceAllowed: session.spaceAllowed, target: session.target,
                                   targetKnown: session.targetKnown)
@@ -1124,6 +1153,18 @@ struct PeerDisplay: Identifiable {
 
     func cancelDeviceDiscovery() {
         cancelPairing()
+        cancelMacPairing()
+    }
+
+    func endDevicePairingPresentation() {
+        // 关闭弹窗撤销临时验证码会话；已验证的密钥仍等待链路确认，与另一端的关闭行为一致。
+        pairingGeneration += 1
+        pairClient?.reject()
+        pairClient = nil
+        pairingActive = false
+        pairingCodeInput = ""
+        pairingAwaitingCode = false
+        showPairing = false
         cancelMacPairing()
     }
 
