@@ -1,0 +1,40 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>声邻网页音频实验</title>
+<style>body{font:18px system-ui;max-width:720px;margin:60px auto;padding:20px}button{font:inherit;padding:12px;margin:8px}pre{white-space:pre-wrap}</style>
+<h1>声邻网页音频实验</h1>
+<p id="description"></p>
+<p>仅播放本页生成的低幅合成音，180 秒后自动停止。不会使用麦克风。</p>
+<button id="start">开始播放</button><button id="stop" disabled>停止播放</button>
+<pre id="state">未播放</pre>
+<script>
+const source = new URLSearchParams(location.search).get('source') === 'B' ? 'B' : 'A';
+const frequency = source === 'A' ? 440 : 660;
+document.title = `声邻实验 ${source}`;
+document.querySelector('#description').textContent = `网页 ${source} · ${frequency} Hz · 幅度 0.002`;
+let context, timer;
+const state = document.querySelector('#state');
+async function stop(reason = '手动停止') {
+  clearTimeout(timer);
+  if (context) { const old = context; context = null; await old.close(); }
+  document.querySelector('#start').disabled = false;
+  document.querySelector('#stop').disabled = true;
+  state.textContent = `${source} 已停止：${reason}`;
+}
+document.querySelector('#start').onclick = async () => {
+  if (context) return;
+  document.querySelector('#start').disabled = true;
+  try {
+    context = new AudioContext();
+    const tone = context.createOscillator(), gain = context.createGain();
+    tone.frequency.value = frequency; gain.gain.value = 0.002;
+    tone.connect(gain).connect(context.destination); tone.start();
+    await context.resume();
+    state.textContent = `${source} 正在播放：${context.state}，${context.sampleRate} Hz；开始 ${new Date().toISOString()}`;
+    document.querySelector('#stop').disabled = false;
+    timer = setTimeout(() => stop('达到 180 秒上限'), 180000);
+  } catch (error) { await stop(`错误：${error.message}`); }
+};
+document.querySelector('#stop').onclick = () => stop();
+addEventListener('pagehide', () => { if (context) context.close(); });
+</script>

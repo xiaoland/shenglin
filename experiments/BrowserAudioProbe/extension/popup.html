@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8">
+<style>body{font:15px system-ui;width:310px;padding:12px}button{padding:8px;margin:4px}pre{white-space:pre-wrap}</style>
+<h3>声邻网页增益实验</h3>
+<p>仅接入 localhost:18763 的实验页。90 秒自动解除，不读取麦克风、不保存音频。</p>
+<button data-gain="1">保留当前页 100%</button>
+<button data-gain="0.2">降低当前页至 20%</button>
+<button id="release">解除当前页</button>
+<hr><p>ChatGPT 输入观察：不启动麦克风、不读取音频内容。请在开启 Voice 前启用；10 分钟自动结束。刷新后重新启用。</p>
+<button id="observe">启用输入观察／保护标记</button>
+<button id="inspect">读取观察记录</button>
+<button id="unobserve">结束观察／保护标记</button>
+<pre id="state">等待操作</pre>
+<script src="popup.js"></script>

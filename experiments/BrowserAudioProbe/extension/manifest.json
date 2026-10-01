@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "声邻网页增益实验",
+  "version": "0.2.0",
+  "description": "本地合成音增益实验，以及用户启用后的 ChatGPT 输入轨道状态观察；不保存音频。",
+  "permissions": ["activeTab", "tabCapture", "offscreen", "scripting"],
+  "background": {"service_worker": "worker.js"},
+  "action": {"default_popup": "popup.html", "default_title": "声邻网页增益实验"}
+}
