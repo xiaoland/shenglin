@@ -101,6 +101,7 @@ struct PeerDisplay: Identifiable, Equatable {
     @Published private(set) var localDuckingEnabled: Bool
     @Published var localDuckingTarget: Double
     @Published private(set) var outputStatus = "应用输出保持原状"
+    @Published private(set) var outputNotice: String?
     @Published private(set) var protectedOutputStatus = "暂无受保护的原生输入应用"
     @Published private(set) var browserStatus = "尚未接入网页；浏览器录音请通过扩展参与"
     @Published private(set) var spaceMode: SpaceMode
@@ -721,6 +722,12 @@ struct PeerDisplay: Identifiable, Equatable {
                                          inputKnown: inputState.error == nil && (input?.protectedPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true),
                                          manualOverride: remote != nil && peerLedger.manualTakeover) ?? "outputUnsupported"
         outputStatus = localOutput?.status ?? "应用输出暂不可用"
+        switch result {
+        case "preservedManual": outputNotice = "已保留手动音量，本轮不再降低。"
+        case "outputUnsupported": outputNotice = "部分应用暂时无法降低音量。"
+        case "unknown": outputNotice = "输入状态未知，暂时保持原音量。"
+        default: outputNotice = nil
+        }
         let protectedNames = Set(nativePIDs(input?.protectedPIDs ?? []).compactMap { pid -> String? in
             let identities = sourceIdentities(pid: pid)
             return sources.first { identities.contains($0.selector) }?.name ?? NSRunningApplication(processIdentifier: pid)?.localizedName

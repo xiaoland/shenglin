@@ -162,17 +162,20 @@ private struct VolumeTargetControl: View {
     let onEditingChanged: (Bool) -> Void
     var relative = false
 
+    private var sliderRange: ClosedRange<Double> { 0...(relative ? 1 : 0.5) }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text(title)
                 Spacer()
-                Text("\(Int((value * 100).rounded()))%")
+                Text(relative ? "保留 \(Int((value * 100).rounded()))%" : "\(Int((value * 100).rounded()))%")
                     .foregroundStyle(.secondary).monospacedDigit()
             }
-            Slider(value: $value, in: 0...0.5, step: 0.05, onEditingChanged: onEditingChanged)
+            Slider(value: $value, in: sliderRange, step: 0.05, onEditingChanged: onEditingChanged)
                 .labelsHidden()
-                .accessibilityLabel("\(title)的\(relative ? "背景应用保留比例" : "音量上限")")
+                .accessibilityLabel(relative ? "\(title)的背景音量比例" : title)
+                .help(relative ? "按应用自己的音量降低；保留 25% 表示降到原来的四分之一，100% 保持原音量。" : "此设备的媒体音量上限。")
         }
         .frame(maxWidth: .infinity)
     }
@@ -199,35 +202,31 @@ private struct MainPanel: View {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red).font(.caption)
                     } else {
-                        Label(model.localInputActive ? "本机有有效输入" : "暂无参与协同的有效输入",
+                        Label(model.localInputActive ? "检测到录音或通话" : "暂无录音或通话参与协同",
                               systemImage: model.localInputActive ? "mic.fill" : "mic")
                             .foregroundStyle(.secondary)
-                            .help("当前有 \(model.inputCount) 个录音进程参与设备间协同；排除应用仍可触发本机协同。")
+                            .help("当前有 \(model.inputCount) 个有效输入来源参与设备间协同；排除应用仍可触发本机协同。")
                     }
                 }
                 Section {
-                    VolumeTargetControl(title: "其他设备录音时，背景保留", value: $model.macTarget,
+                    VolumeTargetControl(title: "其他设备录音时", value: $model.macTarget,
                                         onEditingChanged: model.macTargetEditChanged, relative: true)
                     Toggle("本机协同", isOn: Binding(
                         get: { model.localDuckingEnabled }, set: model.setLocalDuckingEnabled))
                         .toggleStyle(.switch)
                         .help("保留所有输入应用的输出，只降低其他可控应用。浏览器需通过扩展参与。")
                     if model.localDuckingEnabled {
-                        VolumeTargetControl(title: "本机录音时，背景保留", value: $model.localDuckingTarget,
+                        VolumeTargetControl(title: "本机录音时", value: $model.localDuckingTarget,
                                             onEditingChanged: model.localDuckingTargetEditChanged, relative: true)
                     }
-                    Text(model.outputStatus).font(.caption).foregroundStyle(.secondary)
-                    Text(model.protectedOutputStatus).font(.caption).foregroundStyle(.secondary)
+                    if let notice = model.outputNotice {
+                        Label(notice, systemImage: "info.circle")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 } header: {
-                    Text("其他应用的协调音量")
+                    Text("背景应用音量")
                 } footer: {
-                    Text("百分比相对于应用自己的音量，不修改系统音量。手动调整系统音量或更换输出设备会解除本轮衰减。")
-                }
-                Section("浏览器网页") {
-                    Text(model.browserStatus).font(.caption).foregroundStyle(.secondary)
-                    Button("安装浏览器连接并显示扩展…", action: model.installBrowserAdapter)
-                    Text("每个通话页和背景页分别调用扩展。通话页先选择保留输出，再开启 ChatGPT Voice；刷新后重新参与。")
-                        .font(.caption).foregroundStyle(.secondary)
+                    Text("录音和通话应用保留原音量，其他应用按比例降低。")
                 }
                 Section {
                     if model.peerDisplays.isEmpty {
@@ -364,6 +363,11 @@ private struct SettingsPanel: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
+            Section("浏览器协同") {
+                Button("设置浏览器扩展…", action: model.installBrowserAdapter)
+                Text("每个网页分别调用扩展。通话页先选择“保留通话输出”，再开启 Voice；背景页选择“背景网页，允许调音”。刷新后需要重新参与。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 DisclosureGroup("已排除 \(model.sources.filter(\.isExcluded).count) 个应用") {
                     ForEach(model.sources) { source in
@@ -495,7 +499,7 @@ private struct DiagnosticsPanel: View {
             Form {
                 Section("运行状态") {
                     LabeledContent("自动协同", value: model.coordinationStatus)
-                    LabeledContent("参与协同的录音进程", value: "\(model.inputCount)")
+                    LabeledContent("参与协同的有效输入来源", value: "\(model.inputCount)")
                     LabeledContent("空间条件", value: model.spaceStatus)
                     LabeledContent("上次音量操作", value: model.lastAction)
                     ForEach(model.peerDisplays) { peer in
@@ -505,6 +509,12 @@ private struct DiagnosticsPanel: View {
                         Text(error).font(.caption).foregroundStyle(.red)
                     }
                 }
+                Section("音频协同") {
+                    LabeledContent("本机输出", value: model.outputStatus)
+                    LabeledContent("输出保护", value: model.protectedOutputStatus)
+                    LabeledContent("浏览器网页", value: model.browserStatus)
+                }
+                .textSelection(.enabled)
                 Section("音频记录") {
                     ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
                         VStack(alignment: .leading, spacing: 8) {

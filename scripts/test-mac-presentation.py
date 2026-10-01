@@ -16,6 +16,10 @@ status = member(model, '    var coordinationStatus:', '    var inputError:')
 close = member(model, '    func endDevicePairingPresentation()', '    func offerDevicePairingCode()')
 stop = member(model, '    func cancelMacPairing()', '    private func restorePreviousPairing()')
 code = member(views, '    private var code: String', '    private func findDevices()')
+volume = member(views, 'private struct VolumeTargetControl:', 'private struct MainPanel:')
+volume_range = member(volume, '    private var sliderRange:', '    var body:')
+output = member(model, '    @discardableResult private func updateOutputQuiet(', '    func installBrowserAdapter()')
+notice = member(output, '        switch result {', '        let protectedNames')
 
 source = r'''import Foundation
 final class Session {
@@ -49,6 +53,26 @@ struct CodeProbe {
  let model: Presentation
 '''+code+r'''
  var acceptsCode: Bool { validCode }
+}
+struct VolumeRangeProbe {
+ var relative: Bool
+'''+volume_range+r'''
+ var range: ClosedRange<Double> { sliderRange }
+}
+final class OutputNoticeProbe {
+ var outputNotice: String?
+ func apply(_ result: String) {
+'''+notice+r'''
+ }
+}
+assert(VolumeRangeProbe(relative: true).range == 0...1)
+assert(VolumeRangeProbe(relative: false).range == 0...0.5)
+let notice = OutputNoticeProbe()
+notice.apply("preservedManual"); assert(notice.outputNotice?.contains("手动音量") == true)
+notice.apply("outputUnsupported"); assert(notice.outputNotice?.contains("无法降低音量") == true)
+notice.apply("unknown"); assert(notice.outputNotice?.contains("状态未知") == true)
+for result in ["selectiveApplied", "alreadyQuiet", "restored", "alreadyRestored"] {
+ notice.apply(result); assert(notice.outputNotice == nil)
 }
 func peer(_ id: String, connected: Bool, allowed: Bool, pending: Bool = false) -> PeerDisplay {
  PeerDisplay(id: id, name: "设备", status: "", link: "", connected: connected, spaceAllowed: allowed, pending: pending)
