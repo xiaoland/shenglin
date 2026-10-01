@@ -1,0 +1,6 @@
+body { font: 14px system-ui; width: 310px; margin: 16px; color: #202020; }
+h1 { font-size: 17px; }
+button { display: block; width: 100%; margin: 8px 0; padding: 9px; font: inherit; cursor: pointer; }
+p { color: #555; font-size: 12px; line-height: 1.5; }
+pre { white-space: pre-wrap; font: inherit; line-height: 1.5; }
+@media (prefers-color-scheme: dark) { body { background: #202020; color: #eee; } p { color: #bbb; } }

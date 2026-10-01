@@ -41,6 +41,18 @@ public struct QuietSnapshot: Codable {
 }
 
 public enum VolumePolicy {
+    // iPad yields its category-volume control whenever local input may need that output.
+    public static func remoteDuckingAllowed(hasDemand: Bool, localRecording: Bool?, manual: Bool) -> Bool {
+        hasDemand && localRecording == false && !manual
+    }
+
+    public static func outputGain(identities: Set<String>, protected: Set<String>,
+                                  browser: Bool, requested: Float?) -> Float {
+        guard !browser, !identities.isEmpty, identities.isDisjoint(with: protected),
+              let requested, requested.isFinite, (0...1).contains(requested) else { return 1 }
+        return requested
+    }
+
     public static func quietTarget(local: Float?, remote: Float?) -> Float? {
         [local, remote].compactMap { $0 }.min()
     }

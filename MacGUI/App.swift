@@ -39,6 +39,8 @@ import UniformTypeIdentifiers
     @NSApplicationDelegateAdaptor(ShenglinAppDelegate.self) private var delegate
 
     init() {
+        if CommandLine.arguments.contains("--browser-native-host") { BrowserNativeHost.run() }
+        if CommandLine.arguments.contains("--output-validation") { ApplicationOutputValidation.run() }
         if CommandLine.arguments.contains("--microphone-agent") { MicrophoneAgent.run() }
         if CommandLine.arguments.contains("--microphone-agent-stop") {
             do { try MicrophoneAgentStatus.service.unregister(); exit(0) }
@@ -121,10 +123,10 @@ private struct QuickPanel: View {
                 Text("本机协同").frame(maxWidth: .infinity, alignment: .leading)
             }
                 .disabled(!model.enabled)
-                .help("本机录音时降低扬声器音量；音量上限在主窗口调整。")
+                .help("保留输入应用的输出，降低其他应用；网页通过扩展逐页参与。")
             if let error = model.inputError {
                 Text(error).font(.caption).foregroundStyle(.red)
-            } else if model.inputState.localRecording {
+            } else if model.localInputActive {
                 Label("本机正在录音", systemImage: "mic.fill")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -158,6 +160,7 @@ private struct VolumeTargetControl: View {
     let title: String
     @Binding var value: Double
     let onEditingChanged: (Bool) -> Void
+    var relative = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -169,7 +172,7 @@ private struct VolumeTargetControl: View {
             }
             Slider(value: $value, in: 0...0.5, step: 0.05, onEditingChanged: onEditingChanged)
                 .labelsHidden()
-                .accessibilityLabel("\(title)的音量上限")
+                .accessibilityLabel("\(title)的\(relative ? "背景应用保留比例" : "音量上限")")
         }
         .frame(maxWidth: .infinity)
     }
@@ -196,27 +199,35 @@ private struct MainPanel: View {
                         Label(error, systemImage: "exclamationmark.triangle")
                             .foregroundStyle(.red).font(.caption)
                     } else {
-                        Label(model.inputState.localRecording ? "本机正在录音" : "本机未在录音",
-                              systemImage: model.inputState.localRecording ? "mic.fill" : "mic")
+                        Label(model.localInputActive ? "本机有有效输入" : "暂无参与协同的有效输入",
+                              systemImage: model.localInputActive ? "mic.fill" : "mic")
                             .foregroundStyle(.secondary)
                             .help("当前有 \(model.inputCount) 个录音进程参与设备间协同；排除应用仍可触发本机协同。")
                     }
                 }
                 Section {
-                    VolumeTargetControl(title: "其他设备录音时", value: $model.macTarget,
-                                        onEditingChanged: model.macTargetEditChanged)
+                    VolumeTargetControl(title: "其他设备录音时，背景保留", value: $model.macTarget,
+                                        onEditingChanged: model.macTargetEditChanged, relative: true)
                     Toggle("本机协同", isOn: Binding(
                         get: { model.localDuckingEnabled }, set: model.setLocalDuckingEnabled))
                         .toggleStyle(.switch)
-                        .help("本机录音时降低默认输出设备的整体音量，通话声音也会一起降低。")
+                        .help("保留所有输入应用的输出，只降低其他可控应用。浏览器需通过扩展参与。")
                     if model.localDuckingEnabled {
-                        VolumeTargetControl(title: "本机录音时", value: $model.localDuckingTarget,
-                                            onEditingChanged: model.localDuckingTargetEditChanged)
+                        VolumeTargetControl(title: "本机录音时，背景保留", value: $model.localDuckingTarget,
+                                            onEditingChanged: model.localDuckingTargetEditChanged, relative: true)
                     }
+                    Text(model.outputStatus).font(.caption).foregroundStyle(.secondary)
+                    Text(model.protectedOutputStatus).font(.caption).foregroundStyle(.secondary)
                 } header: {
-                    Text("本机音量上限")
+                    Text("其他应用的协调音量")
                 } footer: {
-                    Text("录音结束后恢复原音量；手动调整会保留。")
+                    Text("百分比相对于应用自己的音量，不修改系统音量。手动调整系统音量或更换输出设备会解除本轮衰减。")
+                }
+                Section("浏览器网页") {
+                    Text(model.browserStatus).font(.caption).foregroundStyle(.secondary)
+                    Button("安装浏览器连接并显示扩展…", action: model.installBrowserAdapter)
+                    Text("每个通话页和背景页分别调用扩展。通话页先选择保留输出，再开启 ChatGPT Voice；刷新后重新参与。")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section {
                     if model.peerDisplays.isEmpty {

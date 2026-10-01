@@ -78,6 +78,8 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     private var pairAttempts = 0
     private var pairingTimer: Timer?
     private var volume: VolumeCoordinator?
+    private var outputDemandActive = false
+    private var outputPausedForInput = false
     private var peerLedger = (UserDefaults.standard.data(forKey: "peerDemandLedgerV3")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
     private var localRevision = UserDefaults.standard.string(forKey: "localPeerRevisionV3").flatMap(UInt64.init) ?? 0
@@ -104,6 +106,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             catch { pairingStatus = "待激活配对不可用：\(error.localizedDescription)" }
             isPaired = !pairedKeys.isEmpty
             volume = VolumeCoordinator()
+            outputDemandActive = volume?.hasSnapshot == true
             status = volume == nil ? "当前系统的媒体音量接口不兼容" : "等待蓝牙"
             if volume == nil { startupIssue = status }
             note("BLUETOOTH_AUTHORIZATION \(CBPeripheralManager.authorization.rawValue)")
@@ -451,11 +454,54 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         let now = Int64(Date().timeIntervalSince1970)
         observeManualTakeover(at: now)
         let change = peerLedger.expire(at: now)
-        if change.ended {
-            persistPeerLedger()
-            let result = volume?.release(manual: change.manualAtEnd)
-            if let result { lastAction = PeerResult.message(result.0, device: deviceName) }
+        if change.ended { persistPeerLedger() }
+        let result = coordinateOutput(at: now, manualAtEnd: change.manualAtEnd)
+        if result.0 != "alreadyQuiet" && result.0 != "alreadyRestored" {
+            lastAction = PeerResult.message(result.0, device: deviceName)
         }
+    }
+
+    private func coordinateOutput(at now: Int64, manualAtEnd: Bool = false) -> (String, Int) {
+        guard let volume else { return ("unsupported", -1) }
+        let demand = enabled && peerLedger.activeCount(at: now) > 0
+        guard demand else {
+            guard outputDemandActive || (volume.hasSnapshot && !volume.isRestoring) else { return ("alreadyRestored", -1) }
+            outputDemandActive = false
+            outputPausedForInput = false
+            return volume.release(manual: manualAtEnd)
+        }
+        let recording = sampleRecording()
+        let manual = peerLedger.manualTakeover
+        if manual {
+            outputDemandActive = true
+            outputPausedForInput = false
+            return volume.release(manual: true)
+        }
+        if !VolumePolicy.remoteDuckingAllowed(hasDemand: demand, localRecording: recording, manual: manual) {
+            if !outputPausedForInput {
+                let restored = volume.pauseForLocalInput()
+                outputDemandActive = true
+                if ["restoreFailed", "readFailed", "readFailedAfterSet"].contains(restored.0) {
+                    return restored
+                }
+                if restored.0 == "preservedManualOrRoute" {
+                    peerLedger.takeOver(at: now)
+                    persistPeerLedger()
+                    return restored
+                }
+            }
+            outputDemandActive = true
+            outputPausedForInput = true
+            return (recording == true ? "protectedLocal" : "unknown", -1)
+        }
+        outputDemandActive = true
+        outputPausedForInput = false
+        let result = volume.apply(quiet: true, target: Float(UserDefaults.standard.double(forKey: "targetVolume")))
+        if result.0 == "preservedManualOrRoute" {
+            peerLedger.takeOver(at: now)
+            persistPeerLedger()
+        }
+        return result
     }
 
     private func observeManualTakeover(at now: Int64) {
@@ -523,16 +569,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             UserDefaults.standard.set(Double(targetMilli) / 1000, forKey: "targetVolume")
         }
         let target = Float(UserDefaults.standard.double(forKey: "targetVolume"))
-        let result: (String, Int)
-        if change.ended && !change.manualAtEnd {
-            result = volume?.release(manual: false) ?? ("unsupported", -1)
-        } else if change.ended {
-            result = volume?.release(manual: true) ?? ("unsupported", -1)
-        } else if change.started {
-            result = volume?.apply(quiet: true, target: target) ?? ("unsupported", -1)
-        } else {
-            result = (change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored", -1)
-        }
+        let result = coordinateOutput(at: now, manualAtEnd: change.manualAtEnd)
         return PeerStateAck(origin: PeerRole.responder.rawValue, revision: update.revision, quiet: update.quiet,
                             result: result.0, targetMilli: Int((target * 1000).rounded()), key: key)
     }

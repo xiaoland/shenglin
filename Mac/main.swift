@@ -1,6 +1,8 @@
 import Foundation
 
 let arguments = Array(CommandLine.arguments.dropFirst())
+if arguments.contains("--browser-native-host") { BrowserNativeHost.run() }
+if arguments.contains("--output-validation") { ApplicationOutputValidation.run() }
 guard let action = arguments.first else {
     print("用法：shenglin control status|pair|enabled|exclude|mute|target ... | sources | exclude|mute ...")
     exit(2)

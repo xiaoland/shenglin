@@ -7,6 +7,7 @@ import ShenglinCore
 struct ControlRequest: Codable {
     let command: String
     var value: String?
+    var browser: BrowserSnapshot?
 }
 
 struct ControlStatus: Codable {
@@ -47,6 +48,7 @@ struct ControlResponse: Codable {
     let ok: Bool
     let message: String?
     let status: ControlStatus?
+    var browser: BrowserReply?
 }
 
 enum ControlIPC {

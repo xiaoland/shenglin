@@ -15,6 +15,9 @@ import Darwin
     private var restoreTimer: Timer?
     private var restoreStepCount = 0
     private var restoreStart: Float = 0
+    private var roundBaseline: QuietSnapshot?
+    var hasSnapshot: Bool { snapshot != nil }
+    var isRestoring: Bool { restoreTimer != nil }
 
     init?() {
         _ = dlopen("/System/Library/PrivateFrameworks/MediaExperience.framework/MediaExperience", RTLD_LAZY | RTLD_LOCAL)
@@ -55,13 +58,26 @@ import Darwin
     }
 
     func manualOrRouteChanged() -> Bool {
-        guard let saved = snapshot else { return false }
+        guard let saved = snapshot ?? roundBaseline else { return false }
         guard let now = current() else { return false }
         return route() != saved.route || abs(now - saved.applied) > 0.005
     }
 
+    // Restore immediately before local input, then keep observing manual changes in this round.
+    func pauseForLocalInput() -> (String, Int) {
+        restoreTimer?.invalidate()
+        restoreTimer = nil
+        let result = apply(quiet: false, target: 0)
+        if !["restoreFailed", "readFailed", "readFailedAfterSet"].contains(result.0), let now = current() {
+            roundBaseline = QuietSnapshot(original: now, applied: now, route: route())
+        }
+        return result
+    }
+
     func release(manual: Bool) -> (String, Int) {
+        roundBaseline = nil
         guard let saved = snapshot else { return ("alreadyRestored", Int(((current() ?? 0) * 1000).rounded())) }
+        if !manual && current() == nil { return ("readFailed", -1) }
         guard !manual, let now = current(), route() == saved.route,
               abs(now - saved.applied) <= 0.005 else {
             restoreTimer?.invalidate()
@@ -85,7 +101,13 @@ import Darwin
     }
 
     private func restoreStep() {
-        guard let saved = snapshot, let now = current(), route() == saved.route,
+        guard let saved = snapshot else { return }
+        guard let now = current() else {
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            return
+        }
+        guard route() == saved.route,
               abs(now - saved.applied) <= 0.005 else {
             restoreTimer?.invalidate()
             restoreTimer = nil
@@ -95,7 +117,14 @@ import Darwin
         }
         restoreStepCount += 1
         let next = restoreStart + (saved.original - restoreStart) * Float(restoreStepCount) / 8
-        guard write(next), let actual = current() else {
+        guard write(next) else {
+            restoreTimer?.invalidate()
+            restoreTimer = nil
+            return
+        }
+        snapshot = QuietSnapshot(original: saved.original, applied: next, route: saved.route)
+        save()
+        guard let actual = current() else {
             restoreTimer?.invalidate()
             restoreTimer = nil
             return
@@ -113,6 +142,11 @@ import Darwin
     func apply(quiet: Bool, target: Float) -> (String, Int) {
         guard let now = current() else { return ("readFailed", -1) }
         if quiet {
+            if let baseline = roundBaseline, route() != baseline.route || abs(now - baseline.applied) > 0.005 {
+                roundBaseline = nil
+                return ("preservedManualOrRoute", Int((now * 1000).rounded()))
+            }
+            roundBaseline = nil
             if restoreTimer != nil {
                 // Keep the baseline if a new request interrupts the restore ramp.
                 restoreTimer?.invalidate()
@@ -129,16 +163,18 @@ import Darwin
                 }
                 snapshot = QuietSnapshot(original: saved.original, applied: wanted, route: saved.route)
                 save()
-                guard write(wanted), let actual = current() else {
+                guard write(wanted) else {
                     snapshot = saved
                     save()
                     return ("setFailed", -1)
                 }
+                guard let actual = current() else { return ("readFailedAfterSet", -1) }
                 snapshot = QuietSnapshot(original: saved.original, applied: actual, route: saved.route)
                 save()
                 return ("applied", Int((actual * 1000).rounded()))
             }
             guard let wanted = VolumePolicy.target(current: now, configured: target) else {
+                roundBaseline = QuietSnapshot(original: now, applied: now, route: route())
                 return ("alreadyBelowTarget", Int((now * 1000).rounded()))
             }
             snapshot = QuietSnapshot(original: now, applied: wanted, route: route())
@@ -159,7 +195,10 @@ import Darwin
             save()
             return ("preservedManualOrRoute", Int((now * 1000).rounded()))
         }
-        guard write(original), let actual = current() else { return ("restoreFailed", -1) }
+        guard write(original) else { return ("restoreFailed", -1) }
+        snapshot = QuietSnapshot(original: saved.original, applied: original, route: saved.route)
+        save()
+        guard let actual = current() else { return ("readFailedAfterSet", -1) }
         snapshot = nil
         save()
         return ("restored", Int((actual * 1000).rounded()))

@@ -11,6 +11,9 @@ public enum PeerResult {
         case "paused": "\(device) 已暂停协同"
         case "outsideSpace": "\(device) 未满足空间条件"
         case "unknown": "\(device) 录音状态暂不可用"
+        case "protectedLocal": "\(device) 正在使用本机输入，保留本机输出"
+        case "partialOutput": "\(device) 已协调可控输出，部分输出暂不支持"
+        case "selectiveApplied": "\(device) 已降低其他应用，保留输入应用的输出"
         case "readFailed", "readFailedAfterSet", "setFailed", "restoreFailed", "unsupported", "outputUnsupported":
             "\(device) 音量操作失败"
         case "stalePairing": "\(device) 配对需要重新验证"

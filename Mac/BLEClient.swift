@@ -55,6 +55,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
     private var authenticated = false
     private var skippedPeripherals = [UUID: Date]()
     private(set) var desiredQuiet = false
+    private var desiredKnown = true
     private var desiredTargetMilli: Int?
 
     init(key: Data, targetPeripheralID: UUID? = nil,
@@ -79,9 +80,10 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         fflush(stdout)
     }
 
-    func setDesired(_ quiet: Bool) {
-        guard quiet != desiredQuiet else { return }
+    func setDesired(_ quiet: Bool, known: Bool = true) {
+        guard quiet != desiredQuiet || known != desiredKnown else { return }
         desiredQuiet = quiet
+        desiredKnown = known
         report("DESIRED quiet=\(quiet)")
         if stateWriteCharacteristic != nil { sendCurrentState() }
     }
@@ -249,6 +251,7 @@ final class BLEClient: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate 
         do {
             let update = PeerQuietUpdate(origin: PeerRole.initiator.rawValue, revision: MacCredentials.nextSequence(),
                                          quiet: desiredQuiet,
+                                         known: desiredKnown,
                                          validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
                                          targetMilli: desiredTargetMilli, key: key)
             pendingPeer = update

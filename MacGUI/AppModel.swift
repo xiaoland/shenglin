@@ -100,6 +100,9 @@ struct PeerDisplay: Identifiable, Equatable {
     @Published var macTarget = 0.0
     @Published private(set) var localDuckingEnabled: Bool
     @Published var localDuckingTarget: Double
+    @Published private(set) var outputStatus = "应用输出保持原状"
+    @Published private(set) var protectedOutputStatus = "暂无受保护的原生输入应用"
+    @Published private(set) var browserStatus = "尚未接入网页；浏览器录音请通过扩展参与"
     @Published private(set) var spaceMode: SpaceMode
     @Published private(set) var nearbyMacs = [NearbyMac]()
     @Published private(set) var macPairCode: String?
@@ -118,7 +121,7 @@ struct PeerDisplay: Identifiable, Equatable {
 
     private let preferences = MacPreferences.defaults
     private let connectionLog = Logger(subsystem: "local.shenglin.mac", category: "connections")
-    private let runLock: RunLock? = CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") }) ? nil : RunLock()
+    private let runLock: RunLock? = CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") || $0 == "--browser-native-host" || $0 == "--output-validation" }) ? nil : RunLock()
     private var padSessions = [String: PadPeerSession]()
     private var macPairServer: MacPairServer?
     private var macPairClient: MacPairClient?
@@ -140,8 +143,10 @@ struct PeerDisplay: Identifiable, Equatable {
     private var hotKeys: MicrophoneHotKeys?
     private let muteFeedback = NSSound(named: NSSound.Name("Ping"))
     private var shortcutMonitor: Any?
-    private var localOutput: MacQuietVolume?
+    private var localOutput: ApplicationOutput?
+    private let browser = BrowserAdapter()
     private var outputQuiet = false
+    private var observedInputDemand: [Bool]?
     private var peerLedger = (MacPreferences.defaults.data(forKey: "peerDemandLedgerV3")
         .flatMap { try? JSONDecoder().decode(PeerDemandLedger.self, from: $0) }) ?? PeerDemandLedger()
     private var timer: Timer?
@@ -170,7 +175,14 @@ struct PeerDisplay: Identifiable, Equatable {
         return statuses.isEmpty ? "尚未配对设备" : statuses.joined(separator: "；")
     }
     var isConnected: Bool { padPeerDisplays.contains(where: \.connected) || directMacCount > 0 }
-    var inputCount: Int { inputState.count }
+    private func nativePIDs(_ pids: Set<pid_t>) -> Set<pid_t> {
+        Set(pids.filter { let identities = sourceIdentities(pid: $0); return !identities.isEmpty && !isBrowser(identities) })
+    }
+    var inputCount: Int { nativePIDs(input?.participatingPIDs ?? []).count + browser.pages.filter { $0.role == "conversation" && $0.input == "active" }.count }
+    private var needsQuiet: Bool { inputCount > 0 }
+    private var inputKnown: Bool { needsQuiet || (inputState.error == nil && browser.known &&
+        (input?.participatingPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true)) }
+    var localInputActive: Bool { !nativePIDs(input?.localDemandPIDs ?? []).isEmpty || browser.needsQuiet }
     var coordinationStatus: String {
         if !enabled { return "自动协同已暂停" }
         let peers = peerDisplays.filter { !$0.pending }
@@ -208,10 +220,10 @@ struct PeerDisplay: Identifiable, Equatable {
         enabled = preferences.object(forKey: "coordinationEnabled") as? Bool ?? true
         sharedShortcutEnabled = preferences.bool(forKey: "shareMicrophoneHotKeys")
         spaceMode = SpaceMode(rawValue: preferences.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
-        macTarget = preferences.object(forKey: "localOutputTarget") as? Double ?? 0
+        macTarget = preferences.object(forKey: "remoteApplicationGain") as? Double ?? 0.25
         localDuckingEnabled = preferences.object(forKey: "localDuckingEnabled") as? Bool ?? true
-        localDuckingTarget = preferences.object(forKey: "localDuckingTarget") as? Double ?? 0.25
-        if CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") }) { return }
+        localDuckingTarget = preferences.object(forKey: "localApplicationGain") as? Double ?? 0.25
+        if CommandLine.arguments.contains(where: { $0.hasPrefix("--microphone-agent") || $0 == "--browser-native-host" || $0 == "--output-validation" }) { return }
         loginEnabled = SMAppService.mainApp.status == .enabled
         guard runLock != nil else {
             Task { @MainActor in NSApp.terminate(nil) }
@@ -231,13 +243,15 @@ struct PeerDisplay: Identifiable, Equatable {
         } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
         restoreMicrophoneShortcuts()
-        localOutput = MacQuietVolume { [weak self] in
+        if let issue = LegacyOutputRecovery.recover() { errorMessage = issue }
+        _ = peerLedger.expire(at: Int64(Date().timeIntervalSince1970))
+        persistPeerLedger()
+        localOutput = ApplicationOutput { [weak self] in
             guard let self else { return }
             self.peerLedger.takeOver(at: Int64(Date().timeIntervalSince1970))
             self.persistPeerLedger()
-            self.lastAction = "保留了你手动调整的 Mac 音量"
+            self.lastAction = "已解除本轮应用衰减，保留手动音量"
         }
-        localOutput?.recoverPreviousRound()
         input = InputActivity(captureEnabled: false,
                               ignoredPID: { MicrophoneAgentStatus.current()?.pid }) { [weak self] observation in
             Task { @MainActor [weak self] in
@@ -256,6 +270,9 @@ struct PeerDisplay: Identifiable, Equatable {
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.input?.poll()
+                self?.browser.expire()
+                self?.publishInputDemandIfChanged()
+                self?.updateOutputQuiet()
                 self?.expirePendingPairing()
                 self?.expirePendingMacPeers()
                 self?.refreshSpace()
@@ -376,9 +393,9 @@ struct PeerDisplay: Identifiable, Equatable {
             remoteOrigin: PeerRole.responder.rawValue, listens: true,
             key: peer.key, localUpdate: { [unowned self, unowned session] in
                 PeerQuietUpdate(origin: PeerRole.initiator.rawValue, revision: MacCredentials.nextSequence(),
-                                quiet: !self.quitting && self.enabled && self.inputState.needsQuiet && session.spaceAllowed,
-                                validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
-                                targetMilli: session.pendingTargetMilli, key: session.key)
+                                quiet: !self.quitting && self.enabled && self.needsQuiet && session.spaceAllowed,
+                                known: !self.enabled || self.quitting || !session.spaceAllowed || self.inputKnown,
+                                validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds, targetMilli: session.pendingTargetMilli, key: session.key)
             }, localName: { [unowned self] in self.localMacName },
             receiveName: { [unowned self, unowned session] name in
                 if session.name != name { self.updatePadName(session, name: name) }
@@ -484,10 +501,10 @@ struct PeerDisplay: Identifiable, Equatable {
             let link = WiFiPeer(localOrigin: localOrigin, remoteOrigin: remoteOrigin,
                                 listens: peer.localRole == .responder, key: peer.key, localUpdate: { [unowned self] in
                 PeerQuietUpdate(origin: localOrigin, revision: MacCredentials.nextSequence(),
-                                quiet: !self.quitting && self.enabled && self.inputState.needsQuiet &&
+                                quiet: !self.quitting && self.enabled && self.needsQuiet &&
                                        self.macPeerAllowed.contains(source),
-                                validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds,
-                                key: peer.key)
+                                known: !self.enabled || self.quitting || !self.macPeerAllowed.contains(source) || self.inputKnown,
+                                validUntil: Int64(Date().timeIntervalSince1970) + PeerTiming.leaseSeconds, key: peer.key)
             }, localName: { [unowned self] in self.localMacName },
             receiveName: { [unowned self] name in
                 guard let index = self.savedMacPeers.firstIndex(where: { $0.key == peer.key }),
@@ -581,9 +598,16 @@ struct PeerDisplay: Identifiable, Equatable {
         publishLocalDemand()
     }
 
+    private func publishInputDemandIfChanged() {
+        let current = [enabled, needsQuiet, inputKnown]
+        guard current != observedInputDemand else { return }
+        observedInputDemand = current
+        publishLocalDemand()
+    }
+
     private func publishLocalDemand() {
         for session in padSessions.values {
-            session.client?.setDesired(enabled && inputState.needsQuiet && session.spaceAllowed)
+            session.client?.setDesired(enabled && needsQuiet && session.spaceAllowed, known: !enabled || !session.spaceAllowed || inputKnown)
             session.wifiPeer?.sendCurrentState()
         }
         for peer in macWifiPeers.values { peer.sendCurrentState() }
@@ -628,7 +652,7 @@ struct PeerDisplay: Identifiable, Equatable {
             return result
         }
         if !update.known { return "unknown" }
-        return change.activeCount > 0 ? "alreadyQuiet" : "alreadyRestored"
+        return updateOutputQuiet()
     }
 
     private func expirePeerRequests() {
@@ -666,7 +690,7 @@ struct PeerDisplay: Identifiable, Equatable {
 
     func macTargetEditChanged(_ editing: Bool) {
         if !editing {
-            preferences.set(macTarget, forKey: "localOutputTarget")
+            preferences.set(macTarget, forKey: "remoteApplicationGain")
             updateOutputQuiet()
         }
     }
@@ -679,29 +703,40 @@ struct PeerDisplay: Identifiable, Equatable {
 
     func localDuckingTargetEditChanged(_ editing: Bool) {
         if !editing {
-            preferences.set(localDuckingTarget, forKey: "localDuckingTarget")
+            preferences.set(localDuckingTarget, forKey: "localApplicationGain")
             updateOutputQuiet()
         }
     }
 
     @discardableResult private func updateOutputQuiet(manualAtEnd: Bool = false) -> String {
         let now = Int64(Date().timeIntervalSince1970)
-        let local: Float? = enabled && !quitting && localDuckingEnabled && inputState.localRecording
+        let local: Float? = enabled && !quitting && localDuckingEnabled && localInputActive
             ? Float(localDuckingTarget) : nil
         let remote: Float? = enabled && !quitting && peerLedger.activeCount(at: now) > 0
             ? Float(macTarget) : nil
-        if let target = VolumePolicy.quietTarget(local: local, remote: remote) {
-            let starting = !outputQuiet
-            outputQuiet = true
-            let result = localOutput?.begin(target: target) ?? "outputUnsupported"
-            if starting { lastAction = PeerResult.message(result, device: localMacName) }
-            return result
-        }
-        guard outputQuiet else { return "alreadyRestored" }
-        outputQuiet = false
-        localOutput?.finish(manualAtEnd: manualAtEnd)
-        lastAction = manualAtEnd ? "保留了你手动调整的 \(localMacName) 音量" : "\(localMacName) 音量正在恢复"
-        return manualAtEnd ? "preservedManual" : "restoring"
+        let target = VolumePolicy.quietTarget(local: local, remote: remote)
+        let starting = !outputQuiet && target != nil
+        outputQuiet = target != nil
+        let result = localOutput?.update(requested: target, protected: input?.protectedIdentities ?? [],
+                                         inputKnown: inputState.error == nil && (input?.protectedPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true),
+                                         manualOverride: remote != nil && peerLedger.manualTakeover) ?? "outputUnsupported"
+        outputStatus = localOutput?.status ?? "应用输出暂不可用"
+        let protectedNames = Set(nativePIDs(input?.protectedPIDs ?? []).compactMap { pid -> String? in
+            let identities = sourceIdentities(pid: pid)
+            return sources.first { identities.contains($0.selector) }?.name ?? NSRunningApplication(processIdentifier: pid)?.localizedName
+        }).sorted()
+        protectedOutputStatus = protectedNames.isEmpty ? "暂无受保护的原生输入应用" : "保留输出：\(protectedNames.joined(separator: "、"))"
+        browserStatus = browser.summary
+        if starting { lastAction = PeerResult.message(result, device: localMacName) }
+        return result
+    }
+
+    func installBrowserAdapter() {
+        do {
+            let folder = try BrowserNativeHost.install()
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
+            lastAction = "已安装本机连接。请在 Helium 扩展管理页加载显示的 extension 文件夹。"
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func refreshSources() {
@@ -1330,6 +1365,20 @@ struct PeerDisplay: Identifiable, Equatable {
     }
 
     private func handleControl(_ request: ControlRequest) -> ControlResponse {
+        if request.command == "browser.state" {
+            do {
+                guard let snapshot = request.browser else { throw NSError(domain: "ShenglinBrowser", code: 1) }
+                try browser.accept(snapshot)
+                publishInputDemandIfChanged()
+                updateOutputQuiet()
+                let now = Int64(Date().timeIntervalSince1970)
+                let local: Float? = enabled && !quitting && localDuckingEnabled && localInputActive ? Float(localDuckingTarget) : nil
+                let remote: Float? = enabled && !quitting && peerLedger.activeCount(at: now) > 0 ? Float(macTarget) : nil
+                let gain = localOutput?.yielded == true || (remote != nil && peerLedger.manualTakeover) ? 1 : VolumePolicy.quietTarget(local: local, remote: remote) ?? 1
+                return ControlResponse(ok: true, message: nil, status: nil,
+                    browser: BrowserReply(gain: gain, leaseSeconds: 5, message: browserStatus))
+            } catch { return ControlResponse(ok: false, message: error.localizedDescription, status: nil) }
+        }
         var problem: String?
         switch request.command {
         case "status": refreshSources()

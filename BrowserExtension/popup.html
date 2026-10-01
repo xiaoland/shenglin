@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>声邻网页协同</title>
+<link rel="stylesheet" href="popup.css"><body><h1>此网页如何参与？</h1>
+<button data-command="conversation">保留通话输出</button>
+<button data-command="background">背景网页，允许调音</button>
+<button data-command="release">结束此网页参与</button>
+<p>通话首版支持 ChatGPT Voice。请先点击“保留通话输出”，再开启 Voice。静音不会解除输出保护。刷新、跨站导航后请重新调用扩展。</p>
+<p>背景网页的音频只在浏览器内重放。声邻断开后自动解除调音，需要重新授权背景页。</p>
+<pre id="state" role="status" aria-live="polite"></pre><script src="popup.js"></script></body></html>

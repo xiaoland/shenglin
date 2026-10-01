@@ -98,6 +98,11 @@ final class InputActivity {
     private let captureEnabled: Bool
     private let ignoredPID: () -> pid_t?
     private(set) var lastObservation = InputObservation.active(0, false)
+    // Excluding a source from remote requests must not remove its output protection.
+    private(set) var protectedPIDs = Set<pid_t>()
+    private(set) var protectedIdentities = Set<String>()
+    private(set) var participatingPIDs = Set<pid_t>()
+    private(set) var localDemandPIDs = Set<pid_t>()
 
     var captureDiagnostics: CaptureDiagnostics {
         let values = captures.values.map { $0.diagnostics() }
@@ -119,6 +124,10 @@ final class InputActivity {
     }
 
     private func unavailable(_ message: String) {
+        protectedPIDs = []
+        protectedIdentities = []
+        participatingPIDs = []
+        localDemandPIDs = []
         for capture in captures.values { capture.suspend() }
         guard lastError != message else { return }
         print(message)
@@ -151,11 +160,17 @@ final class InputActivity {
         }
         let identities = Dictionary(uniqueKeysWithValues: current.map { ($0, sourceIdentities(pid: $0)) })
         var considered = InputExclusionPolicy.activePIDs(identities, excluded: excluded)
+        protectedPIDs = current
+        protectedIdentities = identities.values.reduce(into: Set<String>()) { $0.formUnion($1) }
+        participatingPIDs = considered
+        localDemandPIDs = current
         if !captureEnabled {
             let mutedIDs = Set(microphones.filter { muted.contains($0.selector) }
                 .compactMap { VirtualMicrophone.deviceID(uid: $0.uid) })
             let mutedPIDs = DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedIDs)
             considered.subtract(mutedPIDs)
+            participatingPIDs = considered
+            localDemandPIDs.subtract(mutedPIDs)
             let localRecording = !current.subtracting(mutedPIDs).isEmpty
             if considered != previous || localRecording != previousLocalRecording || lastError != nil {
                 previous = considered

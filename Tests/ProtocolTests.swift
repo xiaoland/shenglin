@@ -3,6 +3,27 @@ import ShenglinCore
 import XCTest
 
 final class ProtocolTests: XCTestCase {
+    func testConcurrentInputApplicationsKeepTheirOwnOutputWhileBackgroundUsesOneGain() {
+        let protected: Set<String> = ["bundle:voice.a", "bundle:voice.b"]
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:voice.a"], protected: protected, browser: false, requested: 0.2), 1)
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["path:/helper", "bundle:voice.b"], protected: protected, browser: false, requested: 0.2), 1)
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:music"], protected: protected, browser: false, requested: 0.2), 0.2)
+        // A leaves while B remains: protection is recomputed without requiring a quiet=false transition.
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:voice.a"], protected: ["bundle:voice.b"], browser: false, requested: 0.2), 0.2)
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:music"], protected: protected, browser: false, requested: nil), 1)
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:browser"], protected: [], browser: true, requested: 0), 1)
+        XCTAssertEqual(VolumePolicy.outputGain(identities: [], protected: [], browser: false, requested: 0), 1)
+        XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:music"], protected: [], browser: false, requested: .nan), 1)
+    }
+
+    func testIPadRemoteDuckingYieldsToLocalInputUnknownAndManualTakeover() {
+        XCTAssertTrue(VolumePolicy.remoteDuckingAllowed(hasDemand: true, localRecording: false, manual: false))
+        XCTAssertFalse(VolumePolicy.remoteDuckingAllowed(hasDemand: true, localRecording: true, manual: false))
+        XCTAssertFalse(VolumePolicy.remoteDuckingAllowed(hasDemand: true, localRecording: nil, manual: false))
+        XCTAssertFalse(VolumePolicy.remoteDuckingAllowed(hasDemand: true, localRecording: false, manual: true))
+        XCTAssertFalse(VolumePolicy.remoteDuckingAllowed(hasDemand: false, localRecording: false, manual: false))
+    }
+
     func testLocalAndRemoteQuietDemandKeepsTheLowerOutputTarget() {
         XCTAssertNil(VolumePolicy.quietTarget(local: nil, remote: nil))
         XCTAssertEqual(VolumePolicy.quietTarget(local: 0.25, remote: nil), 0.25)
