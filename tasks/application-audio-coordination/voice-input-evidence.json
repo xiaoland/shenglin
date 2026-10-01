@@ -1,0 +1,101 @@
+{
+  "date": "2026-10-01",
+  "browser": "Helium 0.15.7.1",
+  "extensionVersion": "0.2.1",
+  "provenance": "从扩展弹窗的完整可见选中文本转录；以 ChatGPT Voice 控件和浏览器麦克风状态交叉核对。未读取音频内容。",
+  "firstCall": {
+    "documentId": "147865D6427FBF34430E58CABF28422C",
+    "events": [
+      {
+        "time": 1790854158320,
+        "calls": 0,
+        "failures": 0,
+        "tracked": 0,
+        "live": 0,
+        "enabled": 0,
+        "unmuted": 0
+      },
+      {
+        "time": 1790854368946,
+        "calls": 1,
+        "failures": 0,
+        "tracked": 0,
+        "live": 0,
+        "enabled": 0,
+        "unmuted": 0
+      },
+      {
+        "time": 1790854369498,
+        "calls": 1,
+        "failures": 0,
+        "tracked": 1,
+        "live": 1,
+        "enabled": 1,
+        "unmuted": 1
+      },
+      {
+        "time": 1790854468328,
+        "calls": 1,
+        "failures": 0,
+        "tracked": 1,
+        "live": 1,
+        "enabled": 0,
+        "unmuted": 1
+      },
+      {
+        "time": 1790854499574,
+        "calls": 1,
+        "failures": 0,
+        "tracked": 1,
+        "live": 1,
+        "enabled": 1,
+        "unmuted": 1
+      },
+      {
+        "time": 1790854536394,
+        "calls": 1,
+        "failures": 0,
+        "tracked": 1,
+        "live": 0,
+        "enabled": 0,
+        "unmuted": 0
+      }
+    ],
+    "observation": "observed-tracks",
+    "protectedAtActiveMutedUnmutedEnded": true
+  },
+  "lateObserver": {
+    "documentId": "147865D6427FBF34430E58CABF28422C",
+    "observation": "unknown",
+    "protected": true,
+    "events": [
+      {
+        "time": 1790854621253,
+        "calls": 0,
+        "failures": 0,
+        "tracked": 0,
+        "live": 0,
+        "enabled": 0,
+        "unmuted": 0
+      }
+    ]
+  },
+  "afterReload": {
+    "documentId": "E349640B62EC5323C762C38F76456664",
+    "observation": "unknown",
+    "protected": false
+  },
+  "uiChecks": [
+    "用户开启第一轮 Voice；显示 Turn off microphone、End Voice，浏览器显示麦克风正在录音。",
+    "静音后按钮变为 Turn on microphone；解除静音后变回 Turn off microphone。",
+    "第一轮结束后显示 Start Voice。",
+    "第二轮先停止观察，再开启 Voice；确认 Turn off microphone、End Voice 后重新启用观察。",
+    "第二轮读取过程中原生 UI 控制短暂中断；已先通过浏览器页面结束通话，再从保留的弹窗选中文本取回记录。",
+    "刷新后新的 documentId 没有继承保护；测试页已关闭，两轮 Voice 均已结束。"
+  ],
+  "limits": [
+    "保护值是实验中明确设置的页面参与标记，不是自动识别到的完整通话生命周期。",
+    "此次只验证该页面实现与浏览器版本；没有证明所有网页、iframe、缓存函数或未来 ChatGPT 版本都能观察。",
+    "独立增益实验使用合成音，此轮真实 Voice 没有接入正式 Mac 策略或执行背景衰减。"
+  ]
+}

@@ -1,6 +1,6 @@
 # 网页音频端点与增益实验
 
-本实验验证两个网页能否由当前 Mac Process Tap 分别选择，以及扩展能否在浏览器内执行逐页增益。0.2.1 增加用户启用后的 ChatGPT 输入轨道状态观察，尚待真实 Voice 验证；它不是正式浏览器接入，没有连接 Native Messaging 或参与跨设备协同。
+本实验验证两个网页能否由当前 Mac Process Tap 分别选择，以及扩展能否在浏览器内执行逐页增益。0.2.1 增加用户启用后的 ChatGPT 输入轨道状态观察，已完成下述真实 Voice 验证；它不是正式浏览器接入，没有连接 Native Messaging 或参与跨设备协同。
 
 在仓库根目录执行：
 
@@ -59,3 +59,5 @@ python3 experiments/BrowserAudioProbe/build-meter-app.py 浏览器音频PID 120
 观察只允许 https://chatgpt.com 或本地实验页，观察记录由扩展在目标 tab 的顶层文档隔离环境中读取，返回结果带 document ID；没有新增全站 host 权限。此实验不对 ChatGPT 音频执行 tabCapture，原有调音按钮仍仅允许本地合成音页。对真实 Voice 的验证需要用户操作实际麦克风按钮，模拟轨道测试不能代替。
 
 0.2.0 曾把观察记录放在 service worker 的 Map 中；后台闲置退出会丢失记录，该版本不能据此判断网页漏报。0.2.1 已移到文档隔离环境，并覆盖重复启用及结束后的记录保持。[Chrome 官方生命周期说明](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle) 明确指出后台全局变量会在退出后丢失。
+
+2026-10-01 已在 Helium 的真实 ChatGPT Voice 上完成验证：页面加载后启用扩展，再启动 Voice，观察到一次调用和一条活动音频轨道；静音时 live 保持 1、enabled 变为 0，解除后 enabled 恢复 1，结束 Voice 后 live 变为 0。显式页面保护一直保留。通话已开启后才启用观察则是 unknown、tracked=0、protected=true；完整刷新后 documentId 改变，unknown、protected=false。两轮 Voice 均已结束，实验页已关闭。完整可见 JSON 转录、UI 交叉核对和实验边界位于 `tasks/application-audio-coordination/voice-input-evidence.json`。此结果支持首版使用 activeTab 后注入，不构成任意网页输入可完整观察或自动识别通话生命周期的保证。
