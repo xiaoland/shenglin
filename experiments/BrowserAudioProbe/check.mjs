@@ -51,3 +51,17 @@ track.readyState = 'ended'; poll();
 assert.equal(events.at(-1).value.live, 0);
 assert.equal(events.at(-1).value.tracked, 1);
 console.log('通过：启用不调用 getUserMedia；能分别观察有效、静音和已结束轨道。真实 ChatGPT 是否调用包装入口仍需实测。');
+
+let receive;
+const isolatedWindow = {addEventListener: (_, fn) => { receive = fn; }, removeEventListener() {}};
+vm.runInNewContext(await fs.readFile(new URL('extension/input-bridge.js', import.meta.url), 'utf8'), {window: isolatedWindow});
+receive({source: isolatedWindow, data: {type: 'shenglin-input-probe', value: events.at(-1).value}});
+assert.equal(isolatedWindow.__shenglinInputProbeState.events.length, 1);
+assert.equal(isolatedWindow.__shenglinInputProbeState.protected, true);
+// 新 service worker 不拥有这份记录；对同一文档重复启用不能清空历史。
+vm.runInNewContext(await fs.readFile(new URL('extension/input-bridge.js', import.meta.url), 'utf8'), {window: isolatedWindow});
+assert.equal(isolatedWindow.__shenglinInputProbeState.events.length, 1);
+receive({source: isolatedWindow, data: {type: 'shenglin-input-probe', value: {stopped: true}}});
+assert.equal(isolatedWindow.__shenglinInputProbeState.protected, false);
+assert.equal(isolatedWindow.__shenglinInputProbeState.events.length, 1);
+console.log('通过：记录属于文档，不依赖后台存活；停止保留实验历史并撤销保护标记。');
