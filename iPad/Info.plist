@@ -6,8 +6,8 @@
     <key>CFBundleName</key><string>声邻</string>
     <key>CFBundleDisplayName</key><string>声邻</string>
     <key>CFBundlePackageType</key><string>APPL</string>
-    <key>CFBundleShortVersionString</key><string>0.1.0</string>
-    <key>CFBundleVersion</key><string>4</string>
+    <key>CFBundleShortVersionString</key><string>0.2.0</string>
+    <key>CFBundleVersion</key><string>5</string>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>通过蓝牙与已配对设备协调录音状态和媒体音量。</string>
     <key>NSLocalNetworkUsageDescription</key><string>在同一局域网内发现已配对设备，并协调录音状态和媒体音量。</string>
