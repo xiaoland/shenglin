@@ -35,6 +35,8 @@ final class AudioForensics {
     private var warnings = [String: String]()
     private var previousMetrics = [String: [UInt64]]()
     private var previousClients = [String: [UInt64: [UInt64]]]()
+    private var coverage = [String: (firstBucket: Int, latestWrite: Date)]()
+    private var coverageScanned = false
     private var lastPrune = Date.distantPast
     private var lastPerformance = [String: Date]()
     private var lastDriverPerformance = [String: Date]()
@@ -75,6 +77,8 @@ final class AudioForensics {
             self.lastPerformance.removeAll()
             self.lastDriverPerformance.removeAll()
             self.lastPrune = .distantPast
+            self.coverage.removeAll()
+            self.coverageScanned = false
             if self.storageVolumeID != nil {
                 let recovered = self.warnings.filter { $0.value.hasPrefix("诊断写盘失败：") }.map(\.key)
                 for selector in recovered {
@@ -95,18 +99,15 @@ final class AudioForensics {
 
     func status(for selector: String) -> ForensicStatus {
         queue.sync {
-            let folder = deviceDirectory(selector).appendingPathComponent("rolling", isDirectory: true)
-            let files = ((try? FileManager.default.contentsOfDirectory(at: folder,
-                includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles)) ?? [])
-                .filter { $0.pathExtension == "bin" }
-            let buckets = files.compactMap { Int($0.lastPathComponent.split(separator: "-").first ?? "") }
-            let newest = files.compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
-            let coverage = newest.map { Date().timeIntervalSince($0) < 5 } == true
-                ? max(0, Int(Date().timeIntervalSince1970) - (buckets.min() ?? 0) * 60) : 0
+            if !coverageScanned { prune() }
+            let now = Date()
+            let retained = coverage[deviceDirectory(selector).lastPathComponent]
+            let seconds = retained.map { now.timeIntervalSince($0.latestWrite) < 5
+                ? max(0, Int(now.timeIntervalSince1970) - $0.firstBucket * 60) : 0 } ?? 0
             dropLock.lock()
             let pending = pendingSourceDrops[selector] ?? 0
             dropLock.unlock()
-            return ForensicStatus(coverageSeconds: coverage,
+            return ForensicStatus(coverageSeconds: seconds,
                 droppedSourceBlocks: (lostSource[selector] ?? 0) + pending,
                 droppedDriverBlocks: lostDriver[selector] ?? 0,
                 writeErrors: writeErrors[selector] ?? 0,
@@ -374,6 +375,10 @@ final class AudioForensics {
                 handles[key] = handle
             }
             try handle.write(contentsOf: data)
+            if !data.isEmpty {
+                let name = deviceDirectory(selector).lastPathComponent
+                coverage[name] = (min(coverage[name]?.firstBucket ?? bucket, bucket), Date())
+            }
         } catch { recordError(selector, error) }
     }
 
@@ -428,12 +433,14 @@ final class AudioForensics {
     }
 
     private func prune() {
-        guard Date().timeIntervalSince(lastPrune) >= 60 else { return }
+        guard !coverageScanned || Date().timeIntervalSince(lastPrune) >= 60 else { return }
         lastPrune = Date()
+        coverageScanned = true
+        coverage.removeAll()
         let manager = FileManager.default
         guard let walk = manager.enumerator(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
             options: [.skipsHiddenFiles]) else { return }
-        var files = [(URL, Int64, Date)]()
+        var files = [(url: URL, bytes: Int64, age: Date, modified: Date)]()
         var total: Int64 = 0
         for case let url as URL in walk {
             guard ["bin", "jsonl", "json"].contains(url.pathExtension) else { continue }
@@ -443,20 +450,35 @@ final class AudioForensics {
             if url.lastPathComponent != "manifest.json" {
                 let bucket = Int(url.lastPathComponent.split(separator: "-").first ?? "")
                 files.append((url, size, bucket.map { Date(timeIntervalSince1970: TimeInterval($0 * 60)) }
-                    ?? values.contentModificationDate ?? .distantPast))
+                    ?? values.contentModificationDate ?? .distantPast,
+                    values.contentModificationDate ?? .distantPast))
             }
         }
         let maximum = Int64(limitGB) * 1_000_000_000
-        guard total > maximum else { return }
-        for (url, bytes, _) in files.sorted(by: { $0.2 < $1.2 }) where total > maximum {
-            if url.path.contains("/rolling/"),
-               url.lastPathComponent.hasPrefix("\(Int(Date().timeIntervalSince1970 / 60))-") { continue }
-            do {
-                try manager.removeItem(at: url)
-                total -= bytes
-            } catch {
-                for selector in known.keys { recordError(selector, error) }
+        var removed = Set<URL>()
+        if total > maximum {
+            for file in files.sorted(by: { $0.age < $1.age }) where total > maximum {
+                if file.url.path.contains("/rolling/"),
+                   file.url.lastPathComponent.hasPrefix("\(Int(Date().timeIntervalSince1970 / 60))-") { continue }
+                do {
+                    try manager.removeItem(at: file.url)
+                    total -= file.bytes
+                    removed.insert(file.url)
+                } catch {
+                    for selector in known.keys { recordError(selector, error) }
+                }
             }
+        }
+        // The retention walk already reads these attributes. Keep status independent of
+        // the amount of retained evidence, and reconcile deleted files on each walk.
+        for file in files where file.url.pathExtension == "bin" && file.bytes > 0 && !removed.contains(file.url) {
+            let rolling = file.url.deletingLastPathComponent()
+            guard rolling.lastPathComponent == "rolling",
+                  let bucket = Int(file.url.lastPathComponent.split(separator: "-").first ?? "") else { continue }
+            let name = rolling.deletingLastPathComponent().lastPathComponent
+            let previous = coverage[name]
+            coverage[name] = (min(previous?.firstBucket ?? bucket, bucket),
+                max(previous?.latestWrite ?? .distantPast, file.modified))
         }
         if total > maximum {
             for selector in known.keys { warnings[selector] = "诊断存储已达上限；请导出或更换存储位置" }

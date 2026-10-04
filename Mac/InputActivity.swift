@@ -27,9 +27,9 @@ func activeInputDevices() -> [pid_t: Set<AudioObjectID>]? {
     guard status == noErr else { return nil }
     var running = [pid_t: Set<AudioObjectID>]()
     for object in objects {
-        guard let pid = audioProperty(object, kAudioProcessPropertyPID),
-              let active = audioProperty(object, kAudioProcessPropertyIsRunningInput) else { return nil }
+        guard let active = audioProperty(object, kAudioProcessPropertyIsRunningInput) else { return nil }
         guard active == 1 else { continue }
+        guard let pid = audioProperty(object, kAudioProcessPropertyPID) else { return nil }
         do {
             var devicesAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
                                                             mScope: kAudioObjectPropertyScopeInput,

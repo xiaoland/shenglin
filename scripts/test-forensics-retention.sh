@@ -63,6 +63,28 @@ _ = recorder.location
 precondition(!FileManager.default.fileExists(atPath: old.path))
 precondition(!FileManager.default.fileExists(atPath: newer.path))
 precondition(FileManager.default.fileExists(atPath: newest.path), "newest evidence must survive cap pruning")
+precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - (now - 5) * 60)) <= 1,
+             "coverage must start at the oldest surviving audio minute")
+try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -10)], ofItemAtPath: newest.path)
+recorder.setLimitGB(1)
+_ = recorder.location
+precondition(recorder.status(for: "test").coverageSeconds == 0,
+             "audio older than five seconds must report inactive coverage")
+recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 1, sampleTime: 0, samples: [0])
+_ = recorder.location
+precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - (now - 5) * 60)) <= 1,
+             "successful audio writes must immediately restore coverage")
+Thread.sleep(forTimeInterval: 5.1)
+precondition(recorder.status(for: "test").coverageSeconds == 0,
+             "cached coverage must expire when recording pauses")
+recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 2, sampleTime: 1, samples: [0])
+_ = recorder.location
+try FileManager.default.removeItem(at: newest)
+recorder.setLimitGB(1)
+_ = recorder.location
+precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - now * 60)) <= 1,
+             "retention reconciliation must forget externally deleted audio")
+let eventBucket = Int(Date().timeIntervalSince1970 / 60)
 recorder.mark("test")
 let device = DedicatedMicrophone(selector: "test", uid: "test", sourceUID: nil,
                                  outputSampleRate: 48_000, outputChannels: 1)
@@ -72,7 +94,7 @@ recorder.performance([device], capture: CaptureDiagnostics(sourceSampleRate: 48_
 recorder.event("test", "large-event", ["payload": String(repeating: "x", count: 1_100_000)])
 recorder.event("test", "after-large-event")
 _ = recorder.location
-let events = rolling.appendingPathComponent("\(now)-0-events.jsonl")
+let events = rolling.appendingPathComponent("\(eventBucket)-0-events.jsonl")
 let content = try String(contentsOf: events, encoding: .utf8)
 precondition(content.contains("incident-marked"), "manual mark must be recorded")
 precondition(content.contains("capture-performance") && content.contains("\"tappedFrames\":123"),
@@ -92,23 +114,65 @@ try FileManager.default.moveItem(at: selected, to: disconnected)
 recorder.setLocation(alias)
 _ = recorder.location
 recorder.event("test", "after-disconnect")
+recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 3, sampleTime: 2, samples: [0])
 _ = recorder.location
 precondition(!FileManager.default.fileExists(atPath: selected.path),
              "disconnected storage must not be recreated on another volume")
 precondition(recorder.status(for: "test").writeErrors > 0,
              "disconnected storage must raise a visible write error")
+precondition(recorder.status(for: "test").coverageSeconds == 0,
+             "failed audio writes must not create coverage")
 var exportError: Error?
 recorder.export(to: root.appendingPathComponent("unexpected.zip")) { exportError = $0 }
 _ = recorder.location
 precondition(exportError != nil, "disconnected storage must not export a substitute directory")
 try FileManager.default.moveItem(at: disconnected, to: selected)
 recorder.setLocation(selected)
+let reselectedBucket = Int(Date().timeIntervalSince1970 / 60)
 recorder.event("test", "after-reselect")
 _ = recorder.location
-precondition(FileManager.default.fileExists(atPath: selected.appendingPathComponent("test/rolling/\(now)-0-events.jsonl").path),
+precondition(FileManager.default.fileExists(atPath: selected.appendingPathComponent("test/rolling/\(reselectedBucket)-0-events.jsonl").path),
              "reselected storage must resume recording")
 precondition(recorder.status(for: "test").warning == nil,
              "a successful reselect must clear the active storage warning")
+// Use an isolated archive to compare the old directory-based status algorithm
+// with repeated reads of the production cache, without touching user evidence.
+let archive = root.appendingPathComponent("status-benchmark", isDirectory: true)
+let archiveRolling = archive.appendingPathComponent("test/rolling", isDirectory: true)
+try FileManager.default.createDirectory(at: archiveRolling, withIntermediateDirectories: true)
+for index in 0..<10_000 {
+    try Data([0]).write(to: archiveRolling.appendingPathComponent("\(now - index)-0-upstream.bin"))
+}
+try FileManager.default.setAttributes([.modificationDate: Date()],
+    ofItemAtPath: archiveRolling.appendingPathComponent("\(now)-0-upstream.bin").path)
+recorder.setLocation(archive)
+_ = recorder.location
+let coldStart = DispatchTime.now().uptimeNanoseconds
+let discoveredCoverage = recorder.status(for: "test").coverageSeconds
+let coldMS = Double(DispatchTime.now().uptimeNanoseconds - coldStart) / 1_000_000
+precondition(discoveredCoverage >= 9_999 * 60,
+             "first status after directory selection must discover existing audio")
+func measure(_ iterations: Int, _ body: () throws -> Void) rethrows -> Double {
+    let start = DispatchTime.now().uptimeNanoseconds
+    for _ in 0..<iterations { try body() }
+    return Double(DispatchTime.now().uptimeNanoseconds - start) / Double(iterations) / 1_000_000
+}
+let iterations = 20
+let scanMS = try measure(iterations) {
+    let files = try FileManager.default.contentsOfDirectory(at: archiveRolling,
+        includingPropertiesForKeys: [.contentModificationDateKey], options: .skipsHiddenFiles)
+        .filter { $0.pathExtension == "bin" }
+    _ = files.compactMap { Int($0.lastPathComponent.split(separator: "-").first ?? "") }.min()
+    _ = files.compactMap { try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate }.max()
+}
+let cachedMS = measure(iterations) { _ = recorder.status(for: "test") }
+print(String(format: "forensics status (10000 files; %d reads each): old scan %.3f ms/read; warm cached %.3f ms/read; cold discovery %.3f ms", iterations, scanMS, cachedMS, coldMS))
+let empty = root.appendingPathComponent("empty", isDirectory: true)
+try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+recorder.setLocation(empty)
+_ = recorder.location
+precondition(recorder.status(for: "test").coverageSeconds == 0,
+             "directory changes must not retain coverage from the previous archive")
 print("forensics retention: passed")
 SWIFT
 swiftc "$repo/Mac/AudioForensics.swift" "$work/stubs.swift" "$work/main.swift" -o "$work/test-forensics"
