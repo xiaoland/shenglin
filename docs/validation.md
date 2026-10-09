@@ -223,3 +223,11 @@ iPad 语音备忘录录音期间，Mac 收到已认证的“iPad 正在使用本
 2026-10-09 网页扩展改进：复现正式 Native host 在 Mac 主界面未运行时因遗留控制 socket 返回 `Connection refused` 而退出。有效帧现在返回中文操作提示并保活；无效身份、超长帧、不完整帧与无效 JSON 仍拒绝。隔离 IPC 回归覆盖离线到恢复、连接身份绑定、服务端错误保留与 stdout 纯协议帧；正式安装的 launcher 已验证在 App 启动后同一进程恢复，返回五秒租约及原声增益。
 
 扩展沿用 Mac App 图标，不新增权限或依赖。用户连续指出内容过多后，默认界面改为声邻标识、连接圆点和“不参与 / 通话 / 背景”单组角色选择，删除网页标题、域名、独立状态明细与说明入口；只在连接失败、输入未知或背景需要重新授权时显示操作提示。Node 检查覆盖冷启动连接探测、无效增益拒绝、断线释放、重新连接不自动捕获、逐页边界与弹窗可见状态；Mac Release、开发签名和严格深层签名检查通过。本地 Chromium 渲染为替身状态预览，不等同正式扩展联调。自动化工具策略禁止访问扩展管理页，未自动重测真实 Voice、网页捕获或扬声器听感。用户随后报告已完成测试并授权提交。
+
+2026-10-09 浏览器扩展 WXT + Vue 迁移：
+
+扩展按 WXT 入口约定迁移，Vue 弹窗保留已验收的 240 像素三态界面。Node.js 24.15.0 下 `npm ci --prefix BrowserExtension` 成功；`npm --prefix BrowserExtension test` 的 8 项实际挂载测试、生产 bundle 协调回归和 manifest 约束检查通过。`scripts/test-application-output.sh` 的正式 Swift 缓冲/浏览器状态检查及上述扩展检查通过；`scripts/test-browser-native-host.py` 在现有签名安装上通过固定身份、帧边界、IPC 断开恢复与服务端错误保留。对比原源码确认样式、后台授权和音频处理逻辑保持一致，仅改变入口包装及 service worker 文件名。
+
+无签名 Release `xcodebuild` 成功，App 资源中的 `BrowserExtension` 与 WXT 生产输出逐文件相同，没有源码或 npm 依赖。删除生产输出、在 App 扩展资源中放入旧文件后再次构建通过，输出自动重建且旧文件清除；验证后注销并清除这份构建 App，未替换 `/Applications/Shenglin.app`。开发命令成功启动本地服务并生成 `chrome-mv3-dev`，随后停止。未重新进行真实 Helium 捕获或 ChatGPT Voice 通话验收；自动化中的浏览器和音频对象是替身。
+
+同日按用户要求切换到 pnpm 11.20.0，使用 `pnpm-lock.yaml` 和 `packageManager` 固定包管理器版本，当前开发及构建命令不再调用 npm。隔离旧依赖目录后，`pnpm --dir BrowserExtension install --frozen-lockfile` 成功；`scripts/test-application-output.sh` 的 Swift 检查、8 项 Vue 测试、生产 bundle 协调回归与 manifest 检查全部通过，`scripts/build-browser-extension.sh` 使用 pnpm 构建成功。本次未重复 Xcode 构建或真实浏览器音频验收。

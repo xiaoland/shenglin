@@ -14,7 +14,7 @@ import uuid
 
 root = Path(__file__).resolve().parents[1]
 app = root / 'dist/Shenglin.app/Contents/MacOS/声邻'
-manifest = json.loads((root / 'BrowserExtension/manifest.json').read_text())
+manifest = json.loads((root / 'BrowserExtension/.output/chrome-mv3/manifest.json').read_text())
 digest = hashlib.sha256(base64.b64decode(manifest['key'])).hexdigest()[:32]
 identity = ''.join(chr(ord('a') + int(c, 16)) for c in digest)
 assert f'extensionID = "{identity}"' in (root / 'Mac/BrowserAdapter.swift').read_text()

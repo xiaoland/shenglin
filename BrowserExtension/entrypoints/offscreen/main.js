@@ -51,7 +51,7 @@ setInterval(() => {
 }, 250);
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.target !== 'audio' || sender.id !== chrome.runtime.id ||
-      sender.tab || (sender.url !== undefined && sender.url !== chrome.runtime.getURL('worker.js'))) return;
+      sender.tab || (sender.url !== undefined && sender.url !== chrome.runtime.getURL('background.js'))) return;
   execute(message).then(reply, error => reply({error: error.message}));
   return true;
 });

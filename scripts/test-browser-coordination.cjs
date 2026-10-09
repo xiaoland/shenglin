@@ -1,9 +1,9 @@
-// Executes the shipped observer and replay logic in a VM; no microphone or browser is opened.
+// Executes the WXT production bundles in a VM; no microphone or browser is opened.
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const path = require('node:path');
-const root = path.join(__dirname, '..', 'BrowserExtension');
+const root = path.join(__dirname, '..', 'BrowserExtension', '.output', 'chrome-mv3');
 async function observer() {
   const listeners = new Map(), timers = [];
   let nextStream;
@@ -45,10 +45,17 @@ async function replay() {
   const chrome = {runtime: {id: 'test', getURL: file => 'chrome-extension://test/' + file,
     onMessage: {addListener(fn) { listener = fn; }}}};
   const context = vm.createContext({Map, AudioContext, navigator: {mediaDevices: {getUserMedia: async () => stream}},
-    Date: {now: () => now}, chrome, setInterval(fn) { checkLease = fn; }});
-  vm.runInContext(fs.readFileSync(path.join(root, 'offscreen.js'), 'utf8'), context);
+    Date: {now: () => now}, chrome, document: {createElement: () => ({relList: {supports: () => true}})}, setInterval(fn) { checkLease = fn; }});
+  const script = fs.readFileSync(path.join(root, 'offscreen.html'), 'utf8').match(/src="([^"]+\.js)"/)[1];
+  async function loadModule(file) {
+    const module = new vm.SourceTextModule(fs.readFileSync(file, 'utf8'), {context, identifier: file});
+    await module.link((specifier, parent) => loadModule(path.resolve(path.dirname(parent.identifier), specifier)));
+    return module;
+  }
+  const module = await loadModule(path.join(root, script.replace(/^\//, '')));
+  await module.evaluate();
   const send = message => new Promise(resolve => listener({...message, target: 'audio'},
-    {id: 'test', url: chrome.runtime.getURL('worker.js')}, resolve));
+    {id: 'test', url: chrome.runtime.getURL('background.js')}, resolve));
   assert.equal((await send({command: 'capture', tabId: 7, streamId: 'grant'})).active, true);
   await send({command: 'targets', gain: 0.2}); assert.equal(currentGain, 0.2);
   assert.ok((await send({command: 'targets', gain: NaN})).error);
@@ -94,7 +101,7 @@ async function worker() {
   };
   const context = vm.createContext({chrome, Map, Set, URL, Date, Number, Error, Promise,
     setInterval(fn) { timer = fn; return 1; }, clearInterval() {}, setTimeout, clearTimeout});
-  vm.runInContext(fs.readFileSync(path.join(root, 'worker.js'), 'utf8'), context);
+  vm.runInContext(fs.readFileSync(path.join(root, 'background.js'), 'utf8'), context);
   const send = message => new Promise(resolve => handler({...message, target: 'worker'},
     {id: 'test', url: chrome.runtime.getURL('popup.html')}, resolve));
   const acknowledge = () => onNativeMessage({ok: true, browser: {gain: 0.2, leaseSeconds: 5}});
