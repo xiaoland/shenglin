@@ -1,9 +1,10 @@
 const pages = new Map();
-let port, pendingReply = false, lastReply = 0, lastSent = 0, heartbeat, error = '';
+let port, pendingReply = false, lastReply = 0, lastSent = 0, heartbeat, nativeError = '', gain;
+let connection = 'idle', idleTimer;
 let pending = Promise.resolve();
 function disconnectNative() {
   const current = port;
-  port = undefined; pendingReply = false;
+  port = undefined; pendingReply = false; lastReply = 0; gain = undefined; connection = 'idle';
   current?.disconnect();
 }
 async function audio(message) {
@@ -18,20 +19,23 @@ async function audio(message) {
 function connect() {
   if (port) return;
   const current = chrome.runtime.connectNative('local.shenglin.browser');
-  port = current;
+  port = current; connection = 'connecting'; nativeError = '';
   current.onMessage.addListener(message => {
     if (port !== current) return;
     pendingReply = false;
-    if (!message.ok || !message.browser || message.browser.leaseSeconds !== 5) {
-      error = message.message || '本机策略不可用';
+    if (!message.ok || !message.browser || message.browser.leaseSeconds !== 5 ||
+        !Number.isFinite(message.browser.gain) || message.browser.gain < 0 || message.browser.gain > 1) {
+      nativeError = message.message || '本机策略不可用';
+      connection = 'unavailable'; gain = undefined;
       audio({command: 'release-all'}).catch(() => {}); return;
     }
-    lastReply = Date.now(); error = '';
-    audio({command: 'targets', gain: message.browser.gain}).catch(e => { error = e.message; });
+    lastReply = Date.now(); nativeError = ''; connection = 'connected'; gain = message.browser.gain;
+    audio({command: 'targets', gain: message.browser.gain}).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
   });
   current.onDisconnect.addListener(() => {
     if (port !== current) return;
-    error = chrome.runtime.lastError?.message || '声邻连接已断开';
+    nativeError = chrome.runtime.lastError?.message || '声邻连接已断开';
+    connection = 'unavailable'; gain = undefined;
     port = undefined; pendingReply = false;
     audio({command: 'release-all'}).catch(() => {});
   });
@@ -68,7 +72,8 @@ async function update() {
   }
   connect();
   if (pendingReply && Date.now() - lastSent > 5000) {
-    disconnectNative(); await audio({command: 'release-all'}); return;
+    disconnectNative(); nativeError = '声邻响应超时，请检查 Mac App 是否正在运行。';
+    connection = 'unavailable'; await audio({command: 'release-all'}); return;
   }
   if (!pendingReply && port) {
     pendingReply = true; lastSent = Date.now();
@@ -82,14 +87,31 @@ async function remove(tabId) {
 async function execute(message) {
   if (!Number.isInteger(message.tabId)) throw Error('标签页无效');
   const tabId = message.tabId;
-  if (message.command === 'status') return {page: pages.get(tabId), error};
+  if (['status', 'retry'].includes(message.command)) {
+    if (message.command === 'retry') disconnectNative();
+    if (!port) {
+      connect();
+      if (!pages.size) {
+        pendingReply = true; lastSent = Date.now();
+        port.postMessage({connection: '', pages: []});
+      } else await update();
+    } else if (!pages.size && (!pendingReply || Date.now() - lastSent > 5000)) {
+      pendingReply = true; lastSent = Date.now();
+      port.postMessage({connection: '', pages: []});
+    }
+    const page = pages.get(tabId);
+    if (page?.role === 'background') page.controllable = !!(await audio({command: 'status', tabId})).active;
+    clearTimeout(idleTimer);
+    if (!pages.size) idleTimer = setTimeout(() => { if (!pages.size) disconnectNative(); }, 5000);
+    return status(tabId);
+  }
   if (message.command === 'release') {
     await remove(tabId);
     try {
       await chrome.scripting.executeScript({target: {tabId}, world: 'MAIN',
         func: () => window.postMessage({type: 'shenglin-input-stop'}, location.origin)});
     } catch (_) {}
-    await update(); return {message: '此网页已结束参与'};
+    await update(); return {...status(tabId), message: '此网页已结束参与'};
   }
   if (!['conversation', 'background'].includes(message.command)) throw Error('操作无效');
   if (!pages.has(tabId) && pages.size >= 64) throw Error('最多接入 64 个网页，请先结束一个网页的参与');
@@ -111,30 +133,36 @@ async function execute(message) {
     const capture = await audio({command: 'capture', tabId, streamId});
     if (!capture.active) throw Error(capture.error || '网页捕获失败');
   }
+  clearTimeout(idleTimer);
   pages.set(tabId, {documentId, origin: url.origin, role: message.command, input: message.command === 'conversation' ? 'unknown' : 'idle'});
-  if (!heartbeat) heartbeat = setInterval(() => { pending = pending.then(update).catch(e => { error = e.message; }); }, 1000);
+  if (!heartbeat) heartbeat = setInterval(() => { pending = pending.then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; }); }, 1000);
   await update();
-  return {page: pages.get(tabId), message: message.command === 'conversation' ?
-    '已保留此页输出。请随后开启 Voice；已有通话需结束后重新开启。' : '已接入背景网页，按 Mac 策略调音。', error};
+  return {...status(tabId), message: message.command === 'conversation' ?
+    '已授权通话网页。请随后开启 Voice；已有通话需结束后重新开启。' : '已授权背景网页；连接声邻后按 Mac 策略调音。'};
+}
+function status(tabId) {
+  const fresh = lastReply && Date.now() - lastReply < 5000;
+  return {page: pages.get(tabId), connection: connection === 'connected' && !fresh ? 'connecting' : connection,
+    nativeError, gain: connection === 'connected' && fresh ? gain : undefined};
 }
 chrome.runtime.onMessage.addListener((message, sender, reply) => {
   if (message.target !== 'worker' || sender.id !== chrome.runtime.id || sender.url !== chrome.runtime.getURL('popup.html')) return;
-  pending = pending.then(() => execute(message)).then(reply, e => reply({error: e.message}));
+  pending = pending.then(() => execute(message)).then(reply, e => reply({...status(message.tabId), error: e.message}));
   return true;
 });
-chrome.tabs.onRemoved.addListener(tabId => { pending = pending.then(() => remove(tabId)).then(update).catch(e => { error = e.message; }); });
+chrome.tabs.onRemoved.addListener(tabId => { pending = pending.then(() => remove(tabId)).then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; }); });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   // Loading may also happen during same-document transitions; release capture immediately, then verify documentId.
   const page = pages.get(tabId);
   if (change.url && page && new URL(change.url).origin !== page.origin) {
-    pending = pending.then(() => remove(tabId)).then(update).catch(e => { error = e.message; });
+    pending = pending.then(() => remove(tabId)).then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
     return;
   }
   if (change.status === 'loading') {
     if (page) { page.loading = true; page.navigationExpected = true; }
-    pending = pending.then(() => audio({command: 'release', tabId})).then(update).catch(e => { error = e.message; });
+    pending = pending.then(() => audio({command: 'release', tabId})).then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
   } else if (change.status === 'complete' && page) {
     page.loading = false;
-    pending = pending.then(update).catch(e => { error = e.message; });
+    pending = pending.then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
   }
 });

@@ -365,7 +365,7 @@ private struct SettingsPanel: View {
             }
             Section("浏览器协同") {
                 Button("设置浏览器扩展…", action: model.installBrowserAdapter)
-                Text("每个网页分别调用扩展。通话页先选择“保留通话输出”，再开启 Voice；背景页选择“背景网页，允许调音”。刷新后需要重新参与。")
+                Text("每个网页分别调用扩展。通话页先选择“通话”，再开启 Voice；背景页选择“背景”。刷新后需要重新参与。")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

@@ -93,15 +93,35 @@ async function worker() {
     tabCapture: {getMediaStreamId: async () => 'user-grant'}, offscreen: {createDocument: async () => {}}
   };
   const context = vm.createContext({chrome, Map, Set, URL, Date, Number, Error, Promise,
-    setInterval(fn) { timer = fn; return 1; }, clearInterval() {}});
+    setInterval(fn) { timer = fn; return 1; }, clearInterval() {}, setTimeout, clearTimeout});
   vm.runInContext(fs.readFileSync(path.join(root, 'worker.js'), 'utf8'), context);
   const send = message => new Promise(resolve => handler({...message, target: 'worker'},
     {id: 'test', url: chrome.runtime.getURL('popup.html')}, resolve));
   const acknowledge = () => onNativeMessage({ok: true, browser: {gain: 0.2, leaseSeconds: 5}});
   async function drain() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
+  assert.equal((await send({command: 'status', tabId: 7})).connection, 'connecting');
+  assert.equal(frames.at(-1).pages.length, 0); // Cold popup probes the App without authorizing a page.
+  onNativeMessage({ok: false, message: '请启动声邻 App'});
+  const offline = await send({command: 'status', tabId: 7});
+  assert.equal(offline.connection, 'unavailable');
+  assert.equal(offline.nativeError, '请启动声邻 App');
+  assert.equal(offline.page, undefined);
+  acknowledge();
+  assert.equal((await send({command: 'status', tabId: 7})).connection, 'connected'); acknowledge();
   await send({command: 'conversation', tabId: 7});
   assert.equal(frames.at(-1).pages[0].input, 'active'); acknowledge();
   await send({command: 'background', tabId: 8}); assert.equal(captured.has(8), true); acknowledge();
+  const background = await send({command: 'status', tabId: 8});
+  assert.equal(background.page.controllable, true);
+  assert.equal(background.gain, 0.2);
+  onNativeMessage({ok: true, browser: {gain: NaN, leaseSeconds: 5}}); await drain();
+  const invalidGain = await send({command: 'status', tabId: 8});
+  assert.equal(invalidGain.connection, 'unavailable');
+  assert.equal(invalidGain.gain, undefined);
+  assert.equal(invalidGain.page.controllable, false);
+  acknowledge(); // Reconnection does not silently recapture the background.
+  assert.equal((await send({command: 'status', tabId: 8})).page.controllable, false);
+  await send({command: 'background', tabId: 8}); acknowledge();
   pages.get(7).input = 'idle'; timer(); await drain();
   assert.equal(frames.at(-1).pages.find(page => page.id === 'doc-a').input, 'idle'); acknowledge();
   // Same document SPA navigation keeps conversation participation.
@@ -111,6 +131,13 @@ async function worker() {
   pages.delete(7); onUpdated(7, {url: 'https://elsewhere.example/'}); await drain();
   assert.ok(!frames.at(-1).pages.some(page => page.id === 'doc-a')); acknowledge();
   onNativeDisconnect(); await drain(); assert.equal(captured.size, 0);
+  const disconnected = await send({command: 'status', tabId: 8});
+  assert.equal(disconnected.page.controllable, false);
+  assert.equal(disconnected.gain, undefined);
+  acknowledge();
+  const beforeRetry = connections;
+  await send({command: 'retry', tabId: 8});
+  assert.equal(connections, beforeRetry + 1); acknowledge();
   onRemoved(8); await drain();
   pages.set(7, {url: 'https://chatgpt.com/', documentId: 'new-doc', input: 'idle'});
   await send({command: 'conversation', tabId: 7});

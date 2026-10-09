@@ -67,10 +67,18 @@ enum BrowserNativeHost {
                 guard length > 0, length <= 32_768, let data = try readExactly(Int(length), from: input) else { exit(2) }
                 var snapshot = try JSONDecoder().decode(BrowserSnapshot.self, from: data)
                 snapshot.connection = connection
-                let response = try ControlIPC.exchange(ControlRequest(command: "browser.state", browser: snapshot))
-                let browserResponse = ControlResponse(ok: response.ok && response.browser != nil,
-                    message: response.browser == nil ? "请启动支持网页协同的声邻版本" : response.message,
-                    status: nil, browser: response.browser)
+                let browserResponse: ControlResponse
+                do {
+                    let response = try ControlIPC.exchange(ControlRequest(command: "browser.state", browser: snapshot))
+                    browserResponse = ControlResponse(ok: response.ok && response.browser != nil,
+                        message: response.browser == nil ? response.message ?? "请启动支持网页协同的声邻版本" : response.message,
+                        status: nil, browser: response.browser)
+                } catch {
+                    // Keep the browser connection alive so the next snapshot can recover after the App starts.
+                    browserResponse = ControlResponse(ok: false,
+                        message: "无法连接声邻 App，请从应用程序打开声邻；连接恢复后会自动重试。\(error.localizedDescription)",
+                        status: nil, browser: nil)
+                }
                 let payload = try JSONEncoder().encode(browserResponse)
                 guard payload.count <= 32_768 else { exit(2) }
                 var size = UInt32(payload.count).littleEndian
