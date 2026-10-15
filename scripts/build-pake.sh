@@ -4,17 +4,8 @@ set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 revision=e98a6564575520260ef95b2389e5d63a24917093
 platform=${1:-both}
-case "$platform" in macos|ios|both) ;; *) echo '用法：build-pake.sh macos|ios|both' >&2; exit 2 ;; esac
+case "$platform" in macos|ios|both|source) ;; *) echo '用法：build-pake.sh macos|ios|both|source' >&2; exit 2 ;; esac
 cd "$repo"
-if ! command -v cmake >/dev/null 2>&1; then
-    if [ ! -x local/pake-tools/bin/cmake ]; then
-        python3 -m venv local/pake-tools
-        local/pake-tools/bin/pip install 'cmake>=3.22,<5'
-    fi
-    cmake=$repo/local/pake-tools/bin/cmake
-else
-    cmake=$(command -v cmake)
-fi
 if [ "$(cat local/boringssl/.shenglin-revision 2>/dev/null || :)" != "$revision" ]; then
     mkdir -p local
     curl -fL --retry 3 "https://github.com/google/boringssl/archive/$revision.tar.gz" -o local/boringssl.tar.gz
@@ -23,6 +14,16 @@ if [ "$(cat local/boringssl/.shenglin-revision 2>/dev/null || :)" != "$revision"
     mkdir -p local/boringssl
     tar -xzf local/boringssl.tar.gz -C local/boringssl --strip-components=1
     printf '%s\n' "$revision" > local/boringssl/.shenglin-revision
+fi
+if [ "$platform" = source ]; then exit 0; fi
+if ! command -v cmake >/dev/null 2>&1; then
+    if [ ! -x local/pake-tools/bin/cmake ]; then
+        python3 -m venv local/pake-tools
+        local/pake-tools/bin/pip install 'cmake>=3.22,<5'
+    fi
+    cmake=$repo/local/pake-tools/bin/cmake
+else
+    cmake=$(command -v cmake)
 fi
 build() {
     target=$1

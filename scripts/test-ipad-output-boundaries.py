@@ -109,6 +109,9 @@ with tempfile.TemporaryDirectory(prefix='shenglin-ipad-output-') as directory:
     target = Path(directory)
     swift = target / 'Check.swift'
     swift.write_text(source)
-    subprocess.run(['swiftc', '-parse-as-library', str(root / 'Shared/Protocol.swift'),
+    subprocess.run([str(root / 'scripts/build-rust-core.sh'), 'macos'], check=True)
+    subprocess.run(['swiftc', '-I', str(root / 'local/rust-bindings/swift'),
+                    str(root / 'local/rust-bindings/swift/ShenglinRust.swift'),
+                    str(root / 'local/rust-target/aarch64-apple-darwin/release/libshenglin_core.a'), '-lc++', '-parse-as-library', str(root / 'Shared/Protocol.swift'),
                     str(root / 'Shared/PeerState.swift'), str(swift), '-o', str(target / 'check')], check=True)
     subprocess.run([str(target / 'check')], check=True)

@@ -1,15 +1,10 @@
-import CryptoKit
 import Foundation
-import Security
-#if canImport(NativePAKE)
-import NativePAKE
+#if canImport(ShenglinRust)
+import ShenglinRust
 #endif
 
 public struct PairingFrame: Codable {
     public enum Kind: String, Codable { case info, start, offer, confirm, finish, reject }
-    private enum CodingKeys: String, CodingKey {
-        case version = "v", kind = "k", session = "s", message = "p", name = "d", proof = "f", pairingMode = "m"
-    }
     public let version: Int
     public let kind: Kind
     public let session: Data
@@ -17,10 +12,12 @@ public struct PairingFrame: Codable {
     public let name: String?
     public let proof: Data?
     public let pairingMode: Bool?
+    public let platform: PeerPlatform?
 
     public init(kind: Kind, session: Data, message: Data? = nil, name: String? = nil,
-                proof: Data? = nil, pairingMode: Bool? = nil) {
-        version = 3
+                proof: Data? = nil, pairingMode: Bool? = nil, platform: PeerPlatform? = nil, version: Int = 3) {
+        self.version = version
+        self.platform = platform
         self.kind = kind
         self.session = session
         self.message = message
@@ -28,6 +25,11 @@ public struct PairingFrame: Codable {
         self.proof = proof
         self.pairingMode = pairingMode
     }
+    public init(from decoder: Decoder) throws {
+        self.init(try decodeRustWire(decoder, using: decodePairing))
+    }
+    public func encode(to encoder: Encoder) throws { try encodeRustWire(encodePairing(value: rust), to: encoder) }
+
 }
 
 public enum PeerName {
@@ -37,7 +39,12 @@ public enum PeerName {
     }
 }
 
-public enum PeerPlatform: String, Codable { case mac, ipad }
+public enum PeerPlatform: String, Codable {
+    case mac, ipad, android
+    public var displayName: String { switch self { case .mac: "Mac"; case .ipad: "iPad"; case .android: "Android" } }
+}
+
+public enum PeerTransport: String, Codable { case wifiDirect }
 
 public enum PeerRole: String, Codable {
     case initiator, responder
@@ -51,15 +58,17 @@ public struct PairedPeer: Codable {
     public let platform: PeerPlatform
     public let localRole: PeerRole
     public var peripheralID: UUID?
+    public let transport: PeerTransport?
 
     public init(key: Data, name: String, platform: PeerPlatform, localRole: PeerRole,
-                peripheralID: UUID? = nil) throws {
+                peripheralID: UUID? = nil, transport: PeerTransport? = nil) throws {
         guard key.count == 32 else { throw PairingError.invalidMessage }
         self.key = key
-        self.name = PeerName.display(name, fallback: platform == .mac ? "Mac" : "iPad")
+        self.name = PeerName.display(name, fallback: platform.displayName)
         self.platform = platform
         self.localRole = localRole
         self.peripheralID = peripheralID
+        self.transport = transport
     }
 }
 
@@ -68,19 +77,21 @@ public struct PeerNameClaim: Codable {
     public let signature: String
 
     public init(name: String, key: Data) {
-        let clean = PeerName.display(String(String.UnicodeScalarView(name.unicodeScalars.filter {
-            !CharacterSet.controlCharacters.contains($0)
-        })), fallback: "设备")
-        var value = String(clean.prefix(64))
-        while value.utf8.count > 128 { value.removeLast() }
-        self.name = value
-        signature = Authentication.sign("peer-name|3|\(value)", key: key)
+        let claim = signName(name: name, key: key)
+        self.name = claim.name
+        signature = claim.signature
+    }
+
+    public init(from decoder: Decoder) throws {
+        let claim = try decodeRustWire(decoder, using: decodeName)
+        name = claim.name; signature = claim.signature
+    }
+    public func encode(to encoder: Encoder) throws {
+        try encodeRustWire(encodeName(value: RustNameClaim(name: name, signature: signature)), to: encoder)
     }
 
     public func valid(key: Data) -> Bool {
-        !name.isEmpty && name == name.trimmingCharacters(in: .whitespacesAndNewlines) &&
-        name.utf8.count <= 128 && !name.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) &&
-        Authentication.matches(signature, expected: Authentication.sign("peer-name|3|\(name)", key: key))
+        validName(claim: RustNameClaim(name: name, signature: signature), key: key)
     }
 }
 
@@ -99,214 +110,73 @@ public enum PairingError: Error, Equatable, LocalizedError {
     }
 }
 
-private final class SPAKE2 {
-    private var state: OpaquePointer?
-    let message: Data
-
-    init(code: String, role: Int32) throws {
-        guard code.utf8.count == 6, code.utf8.allSatisfy({ $0 >= 48 && $0 <= 57 }) else {
-            throw PairingError.wrongCode
+private func pairingCall<T>(_ operation: () throws -> T) throws -> T {
+    do { return try operation() }
+    catch let error as CoreError {
+        switch error {
+        case .InvalidMessage: throw PairingError.invalidMessage
+        case .WrongSession: throw PairingError.wrongSession
+        case .WrongCode: throw PairingError.wrongCode
+        case .Expired: throw PairingError.expired
+        case .WrongStep: throw PairingError.wrongStep
+        case .CryptoFailed: throw PairingError.cryptoFailed
         }
-        var output = Data(count: 32)
-        let codeBytes = Data(code.utf8)
-        state = codeBytes.withUnsafeBytes { secret in
-            output.withUnsafeMutableBytes { message in
-                na_spake_start(role, secret.bindMemory(to: UInt8.self).baseAddress,
-                               secret.count, message.bindMemory(to: UInt8.self).baseAddress)
-            }
-        }
-        guard state != nil else { throw PairingError.cryptoFailed }
-        message = output
     }
-
-    func finish(peer: Data) throws -> Data {
-        guard peer.count == 32, let state else { throw PairingError.invalidMessage }
-        var key = Data(count: 64)
-        let success = peer.withUnsafeBytes { bytes in
-            key.withUnsafeMutableBytes { output in
-                na_spake_finish(state, bytes.bindMemory(to: UInt8.self).baseAddress,
-                                output.bindMemory(to: UInt8.self).baseAddress)
-            }
-        }
-        na_spake_free(state)
-        self.state = nil
-        guard success == 1 else { throw PairingError.invalidMessage }
-        return key
-    }
-
-    deinit { if let state { na_spake_free(state) } }
 }
 
-private struct PairingKeys {
-    let control: Data
-    let proof: SymmetricKey
-    let transcriptHash: Data
-}
-
-private enum PairingCrypto {
-    static func random16() throws -> Data {
-        var data = Data(count: 16)
-        let status = data.withUnsafeMutableBytes { SecRandomCopyBytes(kSecRandomDefault, 16, $0.baseAddress!) }
-        guard status == errSecSuccess else { throw PairingError.cryptoFailed }
-        return data
+private extension PairingFrame {
+    var rust: RustPairingFrame {
+        RustPairingFrame(version: Int32(exactly: version) ?? -1, kind: kind.rawValue, session: session,
+                         message: message, name: name, proof: proof, pairingMode: pairingMode,
+                         platform: platform?.rawValue)
     }
-
-    static func name(_ text: String, fallback: String) -> String {
-        let clean = String(String.UnicodeScalarView(text.unicodeScalars.filter {
-            !CharacterSet.controlCharacters.contains($0) && $0 != "\\" && $0 != "\""
-        }))
-        var filtered = String(clean.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
-        while filtered.utf8.count > 24 { filtered.removeLast() }
-        return filtered.isEmpty ? fallback : filtered
-    }
-
-    static func validName(_ text: String?) -> String? {
-        guard let text, !text.isEmpty, text.utf8.count <= 96,
-              name(text, fallback: "") == text else { return nil }
-        return text
-    }
-
-    private static func append(_ field: Data, to data: inout Data) {
-        var length = UInt32(field.count).bigEndian
-        withUnsafeBytes(of: &length) { data.append(contentsOf: $0) }
-        data.append(field)
-    }
-
-    static func derive(secret: Data, session: Data, initiatorName: String, responderName: String,
-                       initiatorMessage: Data, responderMessage: Data) -> PairingKeys {
-        var transcript = Data("Shenglin-SPAKE2-v3".utf8)
-        for field in [session, Data(initiatorName.utf8), Data(responderName.utf8), initiatorMessage, responderMessage] {
-            append(field, to: &transcript)
-        }
-        let hash = Data(SHA256.hash(data: transcript))
-        let material = SymmetricKey(data: secret)
-        func key(_ purpose: String) -> SymmetricKey {
-            HKDF<SHA256>.deriveKey(inputKeyMaterial: material, salt: hash,
-                                   info: Data("Shenglin-SPAKE2-v3/\(purpose)".utf8), outputByteCount: 32)
-        }
-        return PairingKeys(control: key("control").withUnsafeBytes { Data($0) },
-                           proof: key("proof"), transcriptHash: hash)
-    }
-
-    static func proof(_ role: String, keys: PairingKeys) -> Data {
-        Data(HMAC<SHA256>.authenticationCode(for: Data(role.utf8) + keys.transcriptHash, using: keys.proof))
-    }
-
-    static func matches(_ a: Data, _ b: Data) -> Bool {
-        guard a.count == b.count else { return false }
-        var difference: UInt8 = 0
-        for index in a.indices { difference |= a[index] ^ b[index] }
-        return difference == 0
+    init(_ frame: RustPairingFrame) {
+        self.init(kind: Kind(rawValue: frame.kind)!, session: frame.session, message: frame.message,
+                  name: frame.name, proof: frame.proof, pairingMode: frame.pairingMode,
+                  platform: frame.platform.flatMap(PeerPlatform.init(rawValue:)), version: Int(frame.version))
     }
 }
 
 public enum PairingCode {
-    public static func generate() throws -> String {
-        var value: UInt32 = 0
-        // Rejection sampling keeps all six-digit codes equally likely.
-        repeat {
-            let status = withUnsafeMutableBytes(of: &value) {
-                SecRandomCopyBytes(kSecRandomDefault, $0.count, $0.baseAddress!)
-            }
-            guard status == errSecSuccess else { throw PairingError.cryptoFailed }
-        } while value >= 4_294_000_000
-        return String(format: "%06d", value % 1_000_000)
-    }
+    public static func generate() throws -> String { try pairingCall { try pairingCode() } }
 }
 
 public final class PairingInitiator {
-    private enum Step { case started, ready, confirmed, finished }
-    private let pake: SPAKE2
-    private let initiatorName: String
-    private let deadline: Date
-    private var step: Step = .started
-    private var keys: PairingKeys?
-    public private(set) var peerName: String?
-    public let session: Data
+    private let core: RustPairingInitiator
+    public var peerPlatform: PeerPlatform? { core.peerPlatform().flatMap(PeerPlatform.init(rawValue:)) }
+    public var peerName: String? { core.peerName() }
+    public var session: Data { core.session() }
 
-    public init(code: String, initiatorName: String, now: Date = Date()) throws {
-        self.initiatorName = PairingCrypto.name(initiatorName, fallback: "Mac")
-        pake = try SPAKE2(code: code, role: 0)
-        session = try PairingCrypto.random16()
-        deadline = now.addingTimeInterval(90)
+    public init(code: String, initiatorName: String, platform: PeerPlatform? = nil, now: Date = Date()) throws {
+        core = try pairingCall { try RustPairingInitiator(code: code, name: initiatorName,
+                                                        platform: platform?.rawValue, now: now.timeIntervalSince1970) }
     }
 
-    public var startFrame: PairingFrame {
-        PairingFrame(kind: .start, session: session, message: pake.message, name: initiatorName)
-    }
-
-    private func check(_ frame: PairingFrame, kind: PairingFrame.Kind, now: Date) throws {
-        guard now < deadline else { throw PairingError.expired }
-        guard frame.version == 3, frame.kind == kind else { throw PairingError.invalidMessage }
-        guard frame.session == session else { throw PairingError.wrongSession }
-    }
+    public var startFrame: PairingFrame { PairingFrame(core.startFrame()) }
 
     public func receiveOffer(_ frame: PairingFrame, now: Date = Date()) throws -> PairingFrame {
-        guard step == .started else { throw PairingError.wrongStep }
-        try check(frame, kind: .offer, now: now)
-        guard let message = frame.message, message.count == 32,
-              let name = PairingCrypto.validName(frame.name) else { throw PairingError.invalidMessage }
-        let secret = try pake.finish(peer: message)
-        keys = PairingCrypto.derive(secret: secret, session: session, initiatorName: initiatorName,
-                                    responderName: name, initiatorMessage: pake.message, responderMessage: message)
-        peerName = name
-        step = .ready
-        return try confirm(now: now)
-    }
-
-    private func confirm(now: Date) throws -> PairingFrame {
-        guard now < deadline else { throw PairingError.expired }
-        guard step == .ready, let keys else { throw PairingError.wrongStep }
-        step = .confirmed
-        return PairingFrame(kind: .confirm, session: session,
-                            proof: PairingCrypto.proof("initiator-confirm", keys: keys))
+        try pairingCall { PairingFrame(try core.receiveOffer(frame: frame.rust, now: now.timeIntervalSince1970)) }
     }
 
     public func receiveFinish(_ frame: PairingFrame, now: Date = Date()) throws -> Data {
-        guard step == .confirmed, let keys else { throw PairingError.wrongStep }
-        try check(frame, kind: .finish, now: now)
-        guard let proof = frame.proof,
-              PairingCrypto.matches(proof, PairingCrypto.proof("responder-confirm", keys: keys))
-        else { throw PairingError.wrongCode }
-        step = .finished
-        return keys.control
+        try pairingCall { try core.receiveFinish(frame: frame.rust, now: now.timeIntervalSince1970) }
     }
 }
 
 public final class PairingResponder {
-    private enum Step { case offered, finished }
-    private let keys: PairingKeys
-    private let deadline: Date
-    private var step: Step = .offered
-    public let session: Data
-    public let offerFrame: PairingFrame
-    public var confirmedKey: Data? { step == .finished ? keys.control : nil }
+    private let core: RustPairingResponder
+    public var peerPlatform: PeerPlatform? { core.peerPlatform().flatMap(PeerPlatform.init(rawValue:)) }
+    public var session: Data { core.session() }
+    public var offerFrame: PairingFrame { PairingFrame(core.offerFrame()) }
+    public var confirmedKey: Data? { core.confirmedKey() }
 
     public init(start: PairingFrame, code: String, responderName: String,
-                fallbackName: String = "iPad", now: Date = Date()) throws {
-        guard start.version == 3, start.kind == .start, start.session.count == 16,
-              let message = start.message, message.count == 32,
-              let initiatorName = PairingCrypto.validName(start.name) else { throw PairingError.invalidMessage }
-        session = start.session
-        deadline = now.addingTimeInterval(90)
-        let normalizedPadName = PairingCrypto.name(responderName, fallback: fallbackName)
-        let pake = try SPAKE2(code: code, role: 1)
-        let secret = try pake.finish(peer: message)
-        keys = PairingCrypto.derive(secret: secret, session: session, initiatorName: initiatorName,
-                                    responderName: normalizedPadName, initiatorMessage: message, responderMessage: pake.message)
-        offerFrame = PairingFrame(kind: .offer, session: session, message: pake.message, name: normalizedPadName)
+                fallbackName: String = "iPad", platform: PeerPlatform? = nil, now: Date = Date()) throws {
+        core = try pairingCall { try RustPairingResponder(start: start.rust, code: code, name: responderName,
+            fallbackName: fallbackName, platform: platform?.rawValue, now: now.timeIntervalSince1970) }
     }
 
     public func receiveConfirm(_ frame: PairingFrame, now: Date = Date()) throws -> PairingFrame {
-        guard step == .offered else { throw PairingError.wrongStep }
-        guard now < deadline else { throw PairingError.expired }
-        guard frame.version == 3, frame.kind == .confirm else { throw PairingError.invalidMessage }
-        guard frame.session == session else { throw PairingError.wrongSession }
-        guard let proof = frame.proof,
-              PairingCrypto.matches(proof, PairingCrypto.proof("initiator-confirm", keys: keys))
-        else { throw PairingError.wrongCode }
-        step = .finished
-        return PairingFrame(kind: .finish, session: session,
-                            proof: PairingCrypto.proof("responder-confirm", keys: keys))
+        try pairingCall { PairingFrame(try core.receiveConfirm(frame: frame.rust, now: now.timeIntervalSince1970)) }
     }
 }

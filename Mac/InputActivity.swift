@@ -13,7 +13,7 @@ func audioProperty(_ object: AudioObjectID, _ selector: AudioObjectPropertySelec
     return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &result) == noErr ? result : nil
 }
 
-func activeInputDevices() -> [pid_t: Set<AudioObjectID>]? {
+func activeInputDevices(ignoringPIDs: Set<pid_t> = []) -> [pid_t: Set<AudioObjectID>]? {
     var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyProcessObjectList,
                                              mScope: kAudioObjectPropertyScopeGlobal,
                                              mElement: kAudioObjectPropertyElementMain)
@@ -26,10 +26,17 @@ func activeInputDevices() -> [pid_t: Set<AudioObjectID>]? {
     }
     guard status == noErr else { return nil }
     var running = [pid_t: Set<AudioObjectID>]()
+    let ownPID = getpid()
+    let ownExecutable = executablePath(pid: ownPID)
     for object in objects {
         guard let active = audioProperty(object, kAudioProcessPropertyIsRunningInput) else { return nil }
         guard active == 1 else { continue }
-        guard let pid = audioProperty(object, kAudioProcessPropertyPID) else { return nil }
+        guard let rawPID = audioProperty(object, kAudioProcessPropertyPID) else { return nil }
+        let pid = pid_t(rawPID)
+        // Our output tap reports running input with no input devices. Ignore internal audio I/O
+        // before querying those devices, including the GUI when this observer runs in its agent.
+        if pid == ownPID || ignoringPIDs.contains(pid) ||
+            (ownExecutable.map { executablePath(pid: pid) == $0 } ?? false) { continue }
         do {
             var devicesAddress = AudioObjectPropertyAddress(mSelector: kAudioProcessPropertyDevices,
                                                             mScope: kAudioObjectPropertyScopeInput,
@@ -42,7 +49,7 @@ func activeInputDevices() -> [pid_t: Set<AudioObjectID>]? {
                 AudioObjectGetPropertyData(object, &devicesAddress, 0, nil, &devicesSize, buffer.baseAddress!)
             }
             guard devicesStatus == noErr else { return nil }
-            running[pid_t(pid), default: []].formUnion(devices)
+            running[pid, default: []].formUnion(devices)
         }
     }
     return running
@@ -140,12 +147,11 @@ final class InputActivity {
     }
 
     func poll() {
-        guard var inputs = activeInputDevices() else {
+        let ignored = Set(ignoredPID().map { [$0] } ?? [])
+        guard let inputs = activeInputDevices(ignoringPIDs: ignored) else {
             unavailable("Core Audio 输入状态查询失败")
             return
         }
-        inputs.removeValue(forKey: getpid())
-        if let ignored = ignoredPID() { inputs.removeValue(forKey: ignored) }
         let current = Set(inputs.keys)
         let excluded: Set<String>
         let muted: Set<String>

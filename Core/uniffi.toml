@@ -1,0 +1,9 @@
+[bindings.swift]
+module_name = "ShenglinRust"
+ffi_module_name = "ShenglinRustFFI"
+[bindings.kotlin]
+package_name = "uniffi.shenglin_core"
+cdylib_name = "shenglin_core"
+android = true
+# JNA cleaner supports both Android API 26 and host JVM tests.
+disable_java_cleaner = true

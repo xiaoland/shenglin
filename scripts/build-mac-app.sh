@@ -7,7 +7,7 @@ if [ ! -d "$repo/.git" ]; then
     exit 1
 fi
 cd "$repo"
-scripts/build-pake.sh macos
+scripts/build-rust-core.sh macos
 xcodebuild -project MacGUI/ShenglinMac.xcodeproj -scheme ShenglinMac \
     -configuration Release -sdk macosx -destination 'generic/platform=macOS' \
     -derivedDataPath local/MacDerived CODE_SIGNING_ALLOWED=NO build

@@ -27,6 +27,8 @@ var sizeFailures = Set<Property>()
 var readFailures = Set<Property>()
 var reads = [Property]()
 var sizes = [Property]()
+var executablePaths = [pid_t: String]()
+func executablePath(pid: pid_t) -> String? { executablePaths[pid] }
 
 func AudioObjectGetPropertyDataSize(_ object: AudioObjectID,
     _ address: UnsafePointer<AudioObjectPropertyAddress>, _ qualifierSize: UInt32,
@@ -57,6 +59,7 @@ func AudioObjectGetPropertyData(_ object: AudioObjectID,
 }
 
 func reset() {
+    executablePaths = [getpid(): "/Applications/声邻.app/Contents/MacOS/声邻"]
     properties = [list: [inactive, active],
         Property(inactive, kAudioProcessPropertyIsRunningInput): [0],
         Property(active, kAudioProcessPropertyIsRunningInput): [1],
@@ -110,7 +113,31 @@ reset()
 properties[list] = []
 precondition(activeInputDevices() == [:])
 precondition(reads.isEmpty)
-print("通过：空闲进程跳过 PID/设备查询、活跃设备合并及筛选、Core Audio 查询失败边界。")
+// GUI and microphone agent share an executable. Their tap-only input must never reach device queries.
+reset()
+properties[list] = [active, second]
+properties[Property(second, kAudioProcessPropertyIsRunningInput)] = [1]
+properties[Property(second, kAudioProcessPropertyPID)] = [43]
+properties[Property(second, kAudioProcessPropertyDevices)] = []
+executablePaths[43] = executablePaths[getpid()]
+precondition(activeInputDevices() == [42: [201, 202]])
+precondition(!sizes.contains(Property(second, kAudioProcessPropertyDevices)))
+precondition(!reads.contains(Property(second, kAudioProcessPropertyDevices)))
+// Exact caller-provided PIDs and the observer itself are excluded at the same boundary.
+reset()
+precondition(activeInputDevices(ignoringPIDs: [42]) == [:])
+precondition(sizes == [list])
+reset()
+properties[Property(active, kAudioProcessPropertyPID)] = [UInt32(getpid())]
+properties[Property(active, kAudioProcessPropertyDevices)] = []
+precondition(activeInputDevices() == [:])
+precondition(sizes == [list])
+// Missing executable metadata must not cause nil == nil to classify an external process as internal.
+reset()
+executablePaths = [:]
+properties[Property(active, kAudioProcessPropertyDevices)] = []
+precondition(activeInputDevices() == nil)
+print("通过：空闲进程跳过 PID/设备查询、活跃设备合并、内部 tap 提前排除、外部失败仍报告未知。")
 SWIFT
 swiftc "$work/queries.swift" "$work/main.swift" -o "$work/test-input-activity"
 "$work/test-input-activity"

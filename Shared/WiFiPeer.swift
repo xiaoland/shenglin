@@ -1,27 +1,72 @@
 import Foundation
 import Network
+#if canImport(ShenglinRust)
+import ShenglinRust
+#endif
 
 public enum WiFiProof {
     public static func sign(role: String, nonce: String, key: Data) -> String {
-        Authentication.sign("wifi-proof|\(role)|\(nonce)", key: key)
+        wifiProofSign(role: role, nonce: nonce, key: key)
     }
 
     public static func valid(_ signature: String, role: String, nonce: String, key: Data) -> Bool {
-        Data(base64Encoded: nonce)?.count == 16 &&
-        Authentication.matches(signature, expected: sign(role: role, nonce: nonce, key: key))
+        wifiProofValid(signature: signature, role: role, nonce: nonce, key: key)
+    }
+}
+
+public enum NetworkMedium: String, Codable, Sendable {
+    case wifi
+    case ethernet
+}
+
+public enum NetworkMediumProof {
+    public static func sign(role: String, nonce: String, medium: NetworkMedium, key: Data) -> String {
+        try! networkMediumProofSign(role: role, nonce: nonce, medium: medium.rawValue, key: key)
+    }
+
+    public static func valid(_ signature: String, role: String, nonce: String,
+                             medium: NetworkMedium, key: Data) -> Bool {
+        networkMediumProofValid(signature: signature, role: role, nonce: nonce, medium: medium.rawValue, key: key)
     }
 }
 
 /// One paired Mac/iPad link. Bonjour finds candidates; the pairing key proves identity.
 @MainActor final class WiFiPeer {
-    private struct Frame: Codable {
+    struct Frame: Codable {
         enum Kind: String, Codable { case challenge, proof, ready, update, ack, name }
         let kind: Kind
         var nonce: String? = nil
         var signature: String? = nil
+        var medium: String? = nil
+        var mediumSignature: String? = nil
         var update: PeerQuietUpdate? = nil
         var ack: PeerStateAck? = nil
         var name: PeerNameClaim? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case kind, nonce, signature, medium, mediumSignature, update, ack, name
+        }
+
+        init(kind: Kind, nonce: String? = nil, signature: String? = nil,
+             medium: String? = nil, mediumSignature: String? = nil,
+             update: PeerQuietUpdate? = nil, ack: PeerStateAck? = nil, name: PeerNameClaim? = nil) {
+            self.kind = kind; self.nonce = nonce; self.signature = signature
+            self.medium = medium; self.mediumSignature = mediumSignature
+            self.update = update; self.ack = ack; self.name = name
+        }
+
+        init(from decoder: Decoder) throws {
+            let values = try decoder.container(keyedBy: CodingKeys.self)
+            kind = try values.decode(Kind.self, forKey: .kind)
+            nonce = try values.decodeIfPresent(String.self, forKey: .nonce)
+            signature = try values.decodeIfPresent(String.self, forKey: .signature)
+            // Optional evidence must not invalidate an otherwise valid identity proof.
+            medium = try? values.decodeIfPresent(String.self, forKey: .medium)
+            mediumSignature = try? values.decodeIfPresent(String.self, forKey: .mediumSignature)
+            update = try values.decodeIfPresent(PeerQuietUpdate.self, forKey: .update)
+            ack = try values.decodeIfPresent(PeerStateAck.self, forKey: .ack)
+            name = try values.decodeIfPresent(PeerNameClaim.self, forKey: .name)
+        }
     }
 
     private static let service = "_shenglin._tcp"
@@ -36,6 +81,11 @@ public enum WiFiProof {
     private let receiveUpdate: (PeerQuietUpdate) -> (String, Int?)
     private let receiveAck: (PeerStateAck) -> Void
     private let verifiedChanged: (Bool) -> Void
+    private let wifiEvidenceChanged: (Bool) -> Void
+    private var networkScope: NetworkScope
+    private var localMedium: NetworkMedium?
+    private var remoteMedium: NetworkMedium?
+    private var wifiEvidence = false
     private let onIssue: (String?) -> Void
     private var listener: NWListener?
     private var browser: NWBrowser?
@@ -59,26 +109,29 @@ public enum WiFiProof {
          receiveUpdate: @escaping (PeerQuietUpdate) -> (String, Int?),
          receiveAck: @escaping (PeerStateAck) -> Void = { _ in },
          verifiedChanged: @escaping (Bool) -> Void,
+         networkScope: NetworkScope = .wifi,
+         wifiEvidenceChanged: @escaping (Bool) -> Void = { _ in },
          onIssue: @escaping (String?) -> Void = { _ in }) {
         self.localOrigin = localOrigin
         self.remoteOrigin = remoteOrigin
         self.listens = listens
         self.key = key
-        let serviceID = Data(base64Encoded: Authentication.sign("wifi-service", key: key))!.prefix(8)
-        self.serviceName = "Shenglin-" + serviceID.map { String(format: "%02x", $0) }.joined()
+        self.serviceName = rustServiceName(key)
         self.localUpdate = localUpdate
         self.localName = localName
         self.receiveName = receiveName
         self.receiveUpdate = receiveUpdate
         self.receiveAck = receiveAck
         self.verifiedChanged = verifiedChanged
+        self.networkScope = networkScope
+        self.wifiEvidenceChanged = wifiEvidenceChanged
         self.onIssue = onIssue
     }
 
     func start() {
         stopped = false
         let parameters = NWParameters.tcp
-        parameters.requiredInterfaceType = .wifi
+        parameters.prohibitedInterfaceTypes = [.cellular, .other, .loopback]
         parameters.includePeerToPeer = false
         if listens {
             do {
@@ -109,11 +162,14 @@ public enum WiFiProof {
             browser.browseResultsChangedHandler = { [weak self] results, _ in
                 Task { @MainActor [weak self] in
                     guard let self, !self.stopped else { return }
-                    self.endpoints = results.compactMap { result in
-                        guard case .service(let name, _, _, _) = result.endpoint,
-                              name == self.serviceName else { return nil }
-                        return result.endpoint
+                    self.endpoints = results.flatMap { result -> [NWEndpoint] in
+                        guard case .service(let name, let type, let domain, _) = result.endpoint,
+                              name == self.serviceName else { return [] }
+                        return result.interfaces.filter { $0.type == .wifi || $0.type == .wiredEthernet }.map {
+                            .service(name: name, type: type, domain: domain, interface: $0)
+                        }
                     }
+                    self.preferWiFiEndpoints()
                     self.connectNext()
                 }
             }
@@ -138,6 +194,39 @@ public enum WiFiProof {
                 } else { self.sendCurrentState() }
             }
         }
+    }
+
+    func setNetworkScope(_ scope: NetworkScope) {
+        networkScope = scope
+        preferWiFiEndpoints()
+        // Keep the authenticated LAN channel for identity and metadata even if it is outside the chosen space.
+        if scope == .wifi, localMedium != .wifi,
+           endpoints.contains(where: { interfaceType(of: $0) == .wifi }) { connection?.cancel() }
+    }
+
+    private func interfaceType(of endpoint: NWEndpoint) -> NWInterface.InterfaceType? {
+        if case .service(_, _, _, let interface) = endpoint { return interface?.type }
+        return nil
+    }
+
+    private func preferWiFiEndpoints() {
+        guard networkScope == .wifi else { return }
+        endpoints.sort { interfaceType(of: $0) == .wifi && interfaceType(of: $1) != .wifi }
+        nextEndpoint = 0
+    }
+
+    private func medium(on connection: NWConnection) -> NetworkMedium? {
+        guard let path = connection.currentPath else { return nil }
+        if path.usesInterfaceType(.wifi) { return .wifi }
+        if path.usesInterfaceType(.wiredEthernet) { return .ethernet }
+        return nil
+    }
+
+    private func refreshWiFiEvidence() {
+        let value = rustWiFiEvidence(verified, localMedium?.rawValue, remoteMedium?.rawValue, remoteMedium != nil)
+        guard value != wifiEvidence else { return }
+        wifiEvidence = value
+        wifiEvidenceChanged(value)
     }
 
     func stop() {
@@ -176,8 +265,10 @@ public enum WiFiProof {
         let endpoint = endpoints[nextEndpoint % endpoints.count]
         nextEndpoint += 1
         let parameters = NWParameters.tcp
-        parameters.requiredInterfaceType = .wifi
+        parameters.prohibitedInterfaceTypes = [.cellular, .other, .loopback]
         parameters.includePeerToPeer = false
+        // Unscoped Bonjour resolution can follow the default VPN route despite excluded interface types.
+        if case .service(_, _, _, let interface) = endpoint { parameters.requiredInterface = interface }
         attach(NWConnection(to: endpoint, using: parameters))
     }
 
@@ -186,6 +277,8 @@ public enum WiFiProof {
         buffer.removeAll()
         nonce = nil
         remoteProven = false
+        localMedium = nil
+        remoteMedium = nil
         pendingRevisions.removeAll()
         lastSentName = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self, weak connection] in
@@ -197,12 +290,24 @@ public enum WiFiProof {
                 guard let self, let connection, self.connection === connection else { return }
                 switch state {
                 case .ready:
+                    self.localMedium = self.medium(on: connection)
                     self.nonce = Data((0..<16).map { _ in UInt8.random(in: .min ... .max) }).base64EncodedString()
                     self.send(Frame(kind: .challenge, nonce: self.nonce), on: connection)
                     self.read(connection)
                 case .failed, .cancelled:
                     self.detach(connection)
                 default: break
+                }
+            }
+        }
+        connection.pathUpdateHandler = { [weak self, weak connection] _ in
+            Task { @MainActor [weak self, weak connection] in
+                guard let self, let connection, self.connection === connection,
+                      self.nonce != nil || self.remoteProven || self.verified else { return }
+                // A signed medium describes this connection, never a later route after migration.
+                if self.medium(on: connection) != self.localMedium {
+                    self.setVerified(false)
+                    connection.cancel()
                 }
             }
         }
@@ -215,6 +320,8 @@ public enum WiFiProof {
         buffer.removeAll()
         nonce = nil
         remoteProven = false
+        localMedium = nil
+        remoteMedium = nil
         pendingRevisions.removeAll()
         lastSentName = nil
         setVerified(false)
@@ -227,6 +334,7 @@ public enum WiFiProof {
         guard verified != value else { return }
         verified = value
         if value { lastAckAt = Date() }
+        refreshWiFiEvidence()
         verifiedChanged(value)
     }
 
@@ -253,11 +361,19 @@ public enum WiFiProof {
         case .challenge:
             guard let nonce = frame.nonce, Data(base64Encoded: nonce)?.count == 16 else { return false }
             send(Frame(kind: .proof, nonce: nonce,
-                       signature: WiFiProof.sign(role: localOrigin, nonce: nonce, key: key)),
+                       signature: WiFiProof.sign(role: localOrigin, nonce: nonce, key: key),
+                       medium: localMedium?.rawValue,
+                       mediumSignature: localMedium.map { NetworkMediumProof.sign(role: localOrigin, nonce: nonce, medium: $0, key: key) }),
                  on: connection)
         case .proof:
             guard let nonce, frame.nonce == nonce, let signature = frame.signature,
                   WiFiProof.valid(signature, role: remoteOrigin, nonce: nonce, key: key) else { return false }
+            remoteMedium = nil
+            if let raw = frame.medium, let medium = NetworkMedium(rawValue: raw),
+               let signature = frame.mediumSignature,
+               NetworkMediumProof.valid(signature, role: remoteOrigin, nonce: nonce, medium: medium, key: key) {
+                remoteMedium = medium
+            }
             self.nonce = nil
             remoteProven = true
             send(Frame(kind: .ready), on: connection)
@@ -293,3 +409,7 @@ public enum WiFiProof {
         })
     }
 }
+
+private func rustServiceName(_ key: Data) -> String { serviceName(key: key) }
+
+private let rustWiFiEvidence = wifiEvidence

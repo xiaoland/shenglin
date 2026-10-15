@@ -3,7 +3,7 @@ set -eu
 
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 cd "$repo"
-scripts/build-pake.sh ios
+scripts/build-rust-core.sh ios
 xcodebuild -project iPad/ShenglinPad.xcodeproj -scheme ShenglinPad \
     -configuration Debug -sdk iphoneos -destination 'generic/platform=iOS' \
     -derivedDataPath local/iPadReleaseDerived CODE_SIGNING_ALLOWED=NO build

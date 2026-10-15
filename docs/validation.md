@@ -220,9 +220,16 @@ iPad 语音备忘录录音期间，Mac 收到已认证的“iPad 正在使用本
 
 用户随后授权发布 0.2 beta.1。两端 App 版本更新为 `0.2.0 (5)`，随包扩展版本为 `0.2.0`，发布标签使用 `v0.2.0-beta.1`。共享逻辑 20 项测试、正式缓冲与网页协同边界、iPad 失败恢复边界、Mac 展示边界以及签名程序的 Native Messaging 帧检查通过。重新构建两端产物后，Mac DMG 经只读挂载核对 App 与驱动签名、Audio Input 权限、arm64 架构、版本及与原构建的二进制一致性；扩展文件逐项与源码一致。iPad IPA 经核对版本、标准 `Payload/` 结构及压缩完整性，不含开发签名或设备配置文件。两个安装包的 SHA-256 写入发布附件 `SHA256SUMS.txt`。本次沿用开发签名与无签名 IPA 的分发方式，没有重新宣称第三方 iPad 签名工具或其他硬件路由已实测。
 
+
+2026-10-02 对正在运行的 Mac `0.1.0 (4)` 包排查录音附近的断连：14:34:18.582 的系统蓝牙日志显示，iPad 对状态特征 `0x003b` 的写入返回 ATT 14（unlikelyError），同一毫秒 Mac App 请求取消连接。动态读取的请求、返回时间与 iPad 状态版本时间推算出 Mac 领先约 0.7–0.9 秒；共享有效期校验原来要求期限不超过接收方当前时间加 20 秒，因此整数秒边界可误拒绝合法状态。该时差解释与日志吻合，但未取得被拒写入的完整消息体。
+
+共享校验现允许未来有效期额外容忍 5 秒，仍拒绝已经过期、签名或来源错误的状态；账本将新安静请求期限封顶到接收方当前时间加 20 秒，未知状态与旧版本重放不续期。新增回归测试覆盖整数秒偏差、容差边界、过期拒绝、接收端期限封顶、重放和较早期限不延长；21 项共享逻辑测试通过。Mac Release 与 iPad Debug 开发签名构建和签名验证通过，修复版于 15:09 部署到 `/Applications/Shenglin.app` 和原配对 iPad，两端均为 `0.2.0 (5)`。Mac 安装二进制与签名构建 SHA-256 一致，后台麦克风服务已重新启动，原配对保留。15:10:19–15:10:49 的连续状态读取保持蓝牙认证及允许协同，签名回执约每 5 秒递增，错误为空；部署后的观察窗口未出现原状态写入错误或 App 主动取消连接。该窗口没有活动录音输入，尚不能代替用户原录音场景的复测。旧 Mac 包保留在本机忽略版本控制的 `local/clock-skew-deploy/PreviousShenglin.bundle`。
+
+
 2026-10-09 网页扩展改进：复现正式 Native host 在 Mac 主界面未运行时因遗留控制 socket 返回 `Connection refused` 而退出。有效帧现在返回中文操作提示并保活；无效身份、超长帧、不完整帧与无效 JSON 仍拒绝。隔离 IPC 回归覆盖离线到恢复、连接身份绑定、服务端错误保留与 stdout 纯协议帧；正式安装的 launcher 已验证在 App 启动后同一进程恢复，返回五秒租约及原声增益。
 
 扩展沿用 Mac App 图标，不新增权限或依赖。用户连续指出内容过多后，默认界面改为声邻标识、连接圆点和“不参与 / 通话 / 背景”单组角色选择，删除网页标题、域名、独立状态明细与说明入口；只在连接失败、输入未知或背景需要重新授权时显示操作提示。Node 检查覆盖冷启动连接探测、无效增益拒绝、断线释放、重新连接不自动捕获、逐页边界与弹窗可见状态；Mac Release、开发签名和严格深层签名检查通过。本地 Chromium 渲染为替身状态预览，不等同正式扩展联调。自动化工具策略禁止访问扩展管理页，未自动重测真实 Voice、网页捕获或扬声器听感。用户随后报告已完成测试并授权提交。
+
 
 2026-10-09 浏览器扩展 WXT + Vue 迁移：
 
@@ -231,3 +238,94 @@ iPad 语音备忘录录音期间，Mac 收到已认证的“iPad 正在使用本
 无签名 Release `xcodebuild` 成功，App 资源中的 `BrowserExtension` 与 WXT 生产输出逐文件相同，没有源码或 npm 依赖。删除生产输出、在 App 扩展资源中放入旧文件后再次构建通过，输出自动重建且旧文件清除；验证后注销并清除这份构建 App，未替换 `/Applications/Shenglin.app`。开发命令成功启动本地服务并生成 `chrome-mv3-dev`，随后停止。未重新进行真实 Helium 捕获或 ChatGPT Voice 通话验收；自动化中的浏览器和音频对象是替身。
 
 同日按用户要求切换到 pnpm 11.20.0，使用 `pnpm-lock.yaml` 和 `packageManager` 固定包管理器版本，当前开发及构建命令不再调用 npm。隔离旧依赖目录后，`pnpm --dir BrowserExtension install --frozen-lockfile` 成功；`scripts/test-application-output.sh` 的 Swift 检查、8 项 Vue 测试、生产 bundle 协调回归与 manifest 检查全部通过，`scripts/build-browser-extension.sh` 使用 pnpm 构建成功。本次未重复 Xcode 构建或真实浏览器音频验收。
+
+## Android 接入检查（2026-10-15）
+
+**验收范围：** 下列初期探针只覆盖各自边界。用户随后报告自发现、缺少 iPad 提示及音量抖动，原先的完整流程结论已撤回；修复及真实三端复验见本节末尾，不以探针替代实际 App。
+
+Android 与新版 Mac/iPad 使用直接局域网配对，不依赖固定中转。网络证据支持 Wi-Fi 或网线；蓝牙与局域网仍按用户选择的 OR/AND 条件组合。以下为源码与调试 APK 验证，尚未发布正式签名 APK。
+
+- Swift 25 项测试通过，包含 v4 九种平台组合、平台字段篡改与降级拒绝、旧配对记录兼容。Mac Release、iPad Debug 无签名构建，以及展示、输出和 GATT 长读写边界检查通过。
+- `python3 scripts/test-android-interop.py` 编译真实 Swift 与 Java/JNI，Android↔Mac、Android↔iPad 两个发起方向及 Android↔Android 均完成 SPAKE2 密钥确认，状态/回执签名与网络挑战一致。CoreSelfTest 包含租约、重放、未知不续期、手动接管恢复、空间条件组合和 300 次取消竞争；BleProtocolTest 检查角色、长读写边界与新鲜签名 ACK。它们不代表完整无线和 Apple App 验收。
+- Android APK、测试 APK、17 项单元测试和 lint 通过。覆盖本机输入保护、外部音量/路由变化、恢复失败重试、生命周期代次、空间宽限/reset和未知状态。最终构建日志在 `local/AndroidValidation/gradle-final.log`。
+- API34 arm64 模拟器与 Huawei JKM-AL00a、Android9/API28 真机均运行 RuntimeChecks，验证 Keystore、AtomicFile 恢复、真实 JNI、匿名录音查询和前台服务。模拟器数据已移至 Work SSD；手机媒体实际降量及恢复通过，Home 后服务仍为 foreground。
+
+华为系统录音机开始/停止时，声邻分别观察到录音与空闲；未申请录音权限、未打开自己的麦克风。真机与 Swift 隔离局域网 peer 在两个配对方向均完成认证：quiet 使媒体音量 8→3，idle 恢复 8；手动调到 6 后续期保持 6；本机录音时发送 signed quiet=true，并保护本机音量，停止录音后发送 false。日志为 `local/AndroidValidation/lan-probe-state.log`、`reverse-probe-state.log` 和对应音量文件。Mac 有线与手机无线可互通；初始 Wi-Fi-only 拒绝和主线程 socket 写入导致的断连已修复。测试端重启暴露的 NSD 缓存端点问题改为配对时重新解析。
+
+华为报告不支持多重广播，但实际单广播成功，与 Mac central 隔离探针完成双向签名状态/ACK。在 AND 模式下，双认证 quiet 使音量 8→3；停止 LAN 后 BLE 保持认证，约 20 秒宽限结束后回执 outsideSpace，音量恢复 8。切换 OR 后，仅 BLE 即可 quiet 8→3、idle→8；真实录音开始/结束也在 BLE 上传递 true/false。证据为 `local/AndroidValidation/ble-probe-state.log` 与 `ble-*.txt`。首次连接出现一次 ATT 14，随后重连和持续测试成功，首次错误原因尚未定位。
+
+Android central→Mac 上模拟 iPad 的 peripheral 也通过：局域网认证后协商 MTU 517、签名证明有效；停用 LAN 后，纯 BLE quiet 使音量 8→3，idle 恢复 8。日志在 `local/AndroidValidation/central-probe.log`、`central-device.log` 和 `central-ble-*.txt`。该轮还验证了 Shared 将 Bonjour 服务解析及连接绑定到发现的物理接口，避免默认 VPN 接口接管解析。隔离工具的 App bundle 未广播问题通过同一二进制的命令行运行方式避开，不修改正式监听器。
+
+最终 APK 已安装，RuntimeChecks 再次通过，临时配对与测试录音均已清理，媒体音量恢复 3/15、自动协同开启。全部本机证据索引在 `local/AndroidValidation/validation-notes.txt`。以上证据不代表真实 iPad 新版 BLE 互操作、Android 双真机、三端同时协同、任意录音应用、锁屏/OEM 回收后的可靠性；Mac↔Mac 仍没有 BLE 能力。隔离探针使用真实协议及无线链路，但不运行完整 Apple 音频应用。
+
+### 独立 Wi-Fi 条件恢复（2026-10-15）
+
+网络范围现在独立选择 Wi-Fi 或局域网，再与蓝牙按 OR/AND 组合；缺少 `networkScope` 时默认 Wi-Fi。双方实际连接介质通过 nonce/角色绑定签名确认，Wi-Fi↔网线、缺失或无效介质证明不取得 Wi-Fi 资格，原 LAN 身份认证仍兼容。
+
+Swift 28 项、Android 18 项单元测试、Mac/iPad 构建、Android APK/AndroidTest/lint 与 API28 instrumentation 通过。跨语言五方向握手同时核对 Wi-Fi/Ethernet 证明，覆盖篡改、错误角色、跨 nonce 重放和旧帧缺字段。真机升级前确实没有新设置；实际 UI 默认 Wi-Fi，两个配置项独立保存。
+
+Mac 以太网与 Huawei Wi-Fi 的真实连接（探针未启用 BLE）中，默认 Wi-Fi scope 收到 quiet 时回执 outsideSpace，媒体维持 8；切 LAN 后回执 applied、音量 8→3；切回 Wi-Fi 立即恢复 8，后续请求保持 outsideSpace，没有继承旧 LAN 宽限。证据在 `local/AndroidValidation/scope-default-wifi-quiet.txt`、`scope-lan-quiet.txt`、`scope-switch-wifi-immediate.txt`，构建与设备检查见 `gradle-network-scope.log`、`network-scope-instrumentation.log`。
+
+本轮未将 Mac 接入 Wi-Fi，因此双端 Wi-Fi 的正向资格以协议和条件测试覆盖，尚未作该拓扑的真机复验。此条件不读取或比较 SSID；旧版本缺少介质证明时需更新才能提供 Wi-Fi 资格。
+
+两种网络范围均已验证强制停止后重开仍保持选择。最终 APK 已安装，手机显式选择先前已认可的 LAN+OR、自动协同开启，临时关系已删除、媒体音量恢复 3/15；更新后的界面见 `local/AndroidValidation/final-main.png`。
+
+### 真实 App 配对缺陷修复与补验（2026-10-15）
+
+手机显示本机码后会把自己的 Bonjour 发布列为可配对设备，原列表只依据发现回调加入候选，没有排除自身。修复在解析后比较本次或刚撤销发布的本地地址和端口，并将本机端点快照带入异步解析，阻止取消后的迟到回调重新插入自身。没有按名称过滤：两台真机同名时，手机仍能发现远端 iPad。配对状态改由 transport 持有，返回重进保留有效码，成功、失败、取消与过期分别显示。现有单测增至 20 项，构建与 lint 通过。
+
+缺少 iPad 发现的部署原因已确认：设备原安装包只声明 `_shenglin._tcp`，没有新配对服务。真实 iPad Air 11 M4 已在保留数据的前提下覆盖签名新版；Mac 也已更新唯一安装 `/Applications/Shenglin.app`。iPad 新增单台取消配对，删除失败保留关系，成功仅撤销指定来源；Mac 按已保存 peripheralID 排除已经配对的 BLE 候选，保留同名不同设备。
+
+实际 Android 与 iPad App 完成错码拒绝、正确码重试、双方激活。iPad VoiceMemos 真实录音使 Huawei 音量 8→3，停止恢复 8；Huawei 系统录音使 iPad 32%→5%，停止恢复 32%。iPad UI 取消本次 Android 关系后，原 Mac 仍在列表并可协同。图标复用既有 SVG 的图形与配色，已在手机桌面确认。证据包括 `local/AndroidValidation/pairing-self-fixed.png`、`pairing-cancelled.png`、`real-same-name-discovery.png`、`launcher-logo.png` 及 `iPad/` 的真机 XCTest 截图和日志。其后的反向配对与 Mac 实际流程见下文。
+
+**补验中发现的严重回归（后续修复见下）：** 用户报告Mac QQ音乐约1秒反复静音/恢复。Android系统音量事件也确认19:58:13–23间反复3↔8；此前Mac录音场景只读取起止采样，漏检中间抖动，不能视为稳定通过。当时暂停主动测试并保存 volume-oscillation-* 证据，后续改用连续音量事件及输入状态验证。
+
+音量抖动的根因已用隔离硬件闭环：退出协同GUI后，仅用正式输出relay对低幅合成音源作4秒gain=1重放，原输入扫描连续报告relay进程runningInput但input devices为空，进而全局unknown；释放后恢复正常（tap-input-query.log，39次失败）。修复提前排除本产品内部同可执行文件进程，并让业务known判断读取同次poll的lastObservation；空闲进程仍不读取PID，外部异常仍返回unknown。输入边界、快照及展示回归和Mac Release构建通过。修后同隔离查询60样本0unknown。
+
+修复版正式安装后的真实Mac输入30秒，连续60秒392个状态样本没有inputError，参与输入仅0→1→0；诊断显示QQ音乐已调低并在结束后恢复，GUI系统IO仅一次启动、一次停止，没有原来的反复重建。证据mac-fixed-continuous-status.jsonl及mac-fixed-continuous-unified.log。该轮手机400样本和追加100样本全8且无调音事件：Mac重启后Android蓝牙未恢复，当前空间条件不满足，因此不能算跨端音量复验通过；该重连故障的后续修复见下文。
+
+
+BLE 重连问题已修复并实测：Mac 不再把 Android 历史 peripheral UUID 当作身份，重连时发现候选并以已有密钥验证签名 ACK，成功后才更新缓存；候选有超时和失败冷却。Mac 重启后重新认证 Android，原 iPad 关系保持。再次以真实 Mac 输入持续 30 秒，手机 534 个样本仅 8→3→8；系统音量事件恰两次（20:21:44.211 降量、20:22:14.358 恢复），持有 30.147 秒，恢复后 35 秒仍稳定。主段和尾段采样之间有 11.49 秒调度间隔，由系统事件环覆盖，不能称采样无间断。证据为 `mac-fixed-connected-continuous/`。
+
+该轮 Mac 522 个样本参与输入仅 0→1→0；6 个样本暂时读不到后台心跳，launchctl 确认服务从未退出，没有 Core Audio 输入查询错误。短暂心跳不可用的具体原因未定位，诊断文案改为“暂时无法读取后台麦克风服务状态”，不再错误断言服务未运行。未放宽超时或掩盖未知状态。
+
+
+最终真实 App 补验完成 Android 与 iPad 双向发起配对，Android 发起 Mac 配对时先错误码拒绝、再正确码激活。Mac 和 iPad 单台取消关系均实际确认未影响原 Mac–iPad 关系，最终重新建立三端每对一条关系。Huawei 系统录音持续约 40.6 秒（20:37:34.090–20:38:14.692）；Mac 界面从“应用输出保持原状”到“已调低：QQ音乐”再恢复，80 秒 522 个状态样本无输入错误，GUI 音频 IO 仅一个启动周期与结束停止，没有循环重建。停止日志同一释放过程有两条 Stopped，不能误算成两轮协同。证据为 `phone-recording-mac-status.jsonl`、`phone-recording-mac-unified.log` 及手机实际录音界面。
+
+最后还修正了 Mac 开码残留旧错误，以及已取消会话排队的超时回调污染新状态；Bonjour 以独立实例标识排除本机候选，同名远端和旧版无标识设备保留。配对生命周期回归、Mac/iPad 构建通过。
+
+上述证据不覆盖长期锁屏、OEM 回收、Android 双真机或任意录音应用，也未实测双方都走 Wi-Fi 的网络拓扑。短暂后台心跳不可读仍是已知诊断边界；未发布正式分发版。
+
+最终 Mac 唯一安装已覆盖并重启，两台 peer 自动重新认证；实际 UI 验证新码无旧错误、返回查找无本机候选。Android 自动协同与前台服务开启、LAN+OR 设置保留，媒体恢复 3/15；iPad 音量只读确认为32%。本轮测试录音按名称清理，既有录音保留。
+
+最终 iPad 同签名覆盖安装后，实际 UI 确认 Mac 与 JKM-AL00a 均可协同、自动协同开启、本机未录音。临时 runner 已退出并仅卸载其独立 bundle，正式 App 和关系保留；证据 `iPad/final-installed-ui.txt`、`final-install.json`、`final-runner-uninstall.json`。
+
+## Rust / Kotlin / Compose 迁移与三端实机验收（2026-10-15）
+
+共同协议、签名、配对状态机、租约与空间条件迁至 Rust，通过 UniFFI 接入 Swift 和 Kotlin；Android 生产源码改为 Kotlin，界面采用 Compose Material 3 的首页、设备与设置三页。平台输入观察、实际音量执行、传输及系统密钥存储仍由原生端负责。既有 Wi-Fi / LAN 和蓝牙 OR / AND 设置保留。
+
+迁移前保存了实际 Swift/Java 实现和已安装应用。Rust 8 项兼容测试使用旧 Swift 导出的固定向量，Swift 29 项测试通过；完整 `scripts/test-android-interop.py --legacy-dir local/RustMigration/baseline/interop` 入口重新构建后，16 组新旧 Swift/Kotlin/Java、v3/v4 与平台组合通过，日志为 `local/RustMigration/final-all-interop.log`。Android 23 项单测、lint、APK/AndroidTest 和 hostInterop 通过。APK 保留原四种 ABI；32 位 ABI 仅完成交叉编译和打包检查，没有对应实机。
+
+独立检查发现两处接入回归：Rust InvalidMessage 未映射旧 Android JSONException，可能使非法 BLE 帧越过回调错误边界；另一个是 targetMilli 从 i64 直接缩窄，超范围值可回绕成原已签目标。现分别恢复预期异常合同、缩窄前检查范围，并用真实 UniFFI 绑定覆盖缺字段、错误类型、修改已签目标为 4294967396 的状态和 ACK。UniFFI Kotlin 绑定禁用 Java Cleaner，采用兼容最低 API 26 的 JNA Cleaner。
+
+Mac、iPad 和 Huawei Android 均保留数据覆盖安装，三端旧关系无需重新配对恢复。混合版本阶段，新 Rust Mac 与旧 Android 的真实 30 秒输入，手机连续 467 个样本仅有 8→3→8，系统调音事件相隔 29.933 秒；Mac 同期输入为 0→1→0，GUI 输出只有一个启动与释放周期。3 个后台心跳暂不可读诊断仍存在，不能声称已解决该既有边界。上述混合版本证据不替代最终全新版三端验收。
+
+最终全新版三端的实际方向检查如下。Mac 使用真实 AUHAL Reader 持续输入，Android 使用系统录音器，iPad 使用 VoiceMemos；没有用协议模拟帧替代录音观察。
+
+| 发起端 | Android 媒体音量 | iPad 实际音量 | Mac QQ 音乐输出 |
+| --- | --- | --- | --- |
+| Mac 输入 30 秒 | 534 个连续样本仅 8→3→8，系统仅两次调音，相隔 30.246 秒 | 17 个实际 UI 样本仅 32%→5%→32% | 实际诊断显示降量与恢复，GUI 仅一个输出 IO 周期 |
+| Android 系统录音约 31 秒 | 本机录音保护，停止后为 8 | 19 个实际 UI 样本仅 32%→5%→32% | 降量与恢复，GUI 仅一个输出 IO 周期 |
+| iPad VoiceMemos 实际 33 秒 | 534 个样本仅 8→3→8，系统仅两次调音，相隔 33.450 秒 | 本机录音结束后恢复原 32% | 降量与恢复，GUI 仅一个输出 IO 周期 |
+
+三轮 Mac 分别采得 556、555、551 个状态样本，均无输入错误；Mac 发起轮只有 0→1→0，其余两轮保持本机输入 0。手机以约 150 ms 间隔采样，并核对 AudioService 的全部调音事件；iPad UI 采样约 4–5 秒一次，不能据此排除该间隔内的瞬时变化。Mac 输出系统日志同时检查完整启动/释放周期，未复现原来每秒静音/恢复的问题。原始证据在 `local/RustMigration/final-*-origin-*`、`*-ipad.jsonl` 和 `local/AndroidValidation/rust-all-*-to-phone/`。
+
+新版手机保持同一进程运行时，正常退出并重开 Mac 后，手机 21:36:05 恢复广播、21:36:12 以原配对密钥认证成功，Mac 实际 UI 恢复两台可协同，无需重启手机。这验证了 Kotlin 断开事件触发的广告恢复；没有增加定时重启。先前旧手机广告不可见的具体系统原因仍未被证明。
+
+手动接管实机复验中，Mac 持续输入使手机 8→3，随后通过系统媒体音量手动设为 6。80 秒 534 个样本仅 8→3→6，后续续期不再压低，Reader 结束后约 19 秒仍保持 6；AudioService 中声邻只有首次降量调用，没有恢复旧值。证据为 `local/AndroidValidation/rust-manual-takeover/`及 `local/RustMigration/final-manual-reader.log`。
+
+Compose 实际配对检查完成：手机显示本机码时没有自身候选，取消后验证码消失；双方只撤销 Android–iPad 这一条关系，原 Mac 关系保留。手机发现真实 iPad，错误码明确拒绝，正确码后双方激活；成功时没有残留输入键盘，最终每端各两条唯一关系。证据包括 `local/AndroidValidation/kotlin-own-code*`、`kotlin-wrong-code*`、`kotlin-pair-activated*` 和 `local/RustMigration/ipad-new-pairing-activated.txt`。
+
+最终手机媒体音量恢复 3/15，LAN+OR 配置、自动协同和前台服务保留；iPad 实际音量 32%、自动协同开启、本机未录音，两端均确认原 Mac 关系正常。仅清理本轮新录音，原录音保留；独立 iPad 测试 runner 已退出并卸载，正式 App 保留。所有临时采样及日志监听已停止。最终截图为 `local/AndroidValidation/kotlin-final-home.png`、`kotlin-final-devices.png`，iPad 状态证据为 `local/RustMigration/ipad-final-main.txt` 和 `ipad-final-details.txt`。
+
+本轮未覆盖长期锁屏与 OEM 回收、Android 双真机、双方均使用 Wi-Fi 的拓扑、32 位硬件运行或所有第三方录音应用。iPad 私有接口及既有后台心跳暂不可读仍是边界，未发布正式分发版。

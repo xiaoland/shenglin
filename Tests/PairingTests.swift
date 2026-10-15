@@ -101,4 +101,60 @@ final class PairingTests: XCTestCase {
             kind: .offer, session: mac.session,
             message: pad.offerFrame.message, name: "")))
     }
+    func testV4AuthenticatesEveryPlatformInEitherRole() throws {
+        for local in [PeerPlatform.mac, .ipad, .android] {
+            for remote in [PeerPlatform.mac, .ipad, .android] {
+                let initiator = try PairingInitiator(code: "123456", initiatorName: "First", platform: local)
+                let responder = try PairingResponder(start: initiator.startFrame, code: "123456",
+                                                      responderName: "Second", platform: remote)
+                XCTAssertEqual(initiator.startFrame.version, 4)
+                let confirm = try initiator.receiveOffer(responder.offerFrame)
+                let finish = try responder.receiveConfirm(confirm)
+                XCTAssertEqual(try initiator.receiveFinish(finish), responder.confirmedKey)
+                XCTAssertEqual(initiator.peerPlatform, remote)
+                XCTAssertEqual(responder.peerPlatform, local)
+            }
+        }
+    }
+
+    func testV4PlatformTamperingAndDowngradeAreRejected() throws {
+        let initiator = try PairingInitiator(code: "123456", initiatorName: "First", platform: .android)
+        let responder = try PairingResponder(start: initiator.startFrame, code: "123456",
+                                              responderName: "Second", platform: .ipad)
+        let offer = responder.offerFrame
+        let changed = PairingFrame(kind: .offer, session: offer.session, message: offer.message,
+                                   name: offer.name, platform: .mac, version: 4)
+        XCTAssertThrowsError(try responder.receiveConfirm(initiator.receiveOffer(changed)))
+        XCTAssertNil(responder.confirmedKey)
+        let legacy = try PairingInitiator(code: "123456", initiatorName: "Old")
+        XCTAssertThrowsError(try PairingResponder(start: legacy.startFrame, code: "123456",
+                                                 responderName: "New", platform: .android))
+        XCTAssertThrowsError(try PairingResponder(start: initiator.startFrame, code: "123456",
+                                                 responderName: "Old"))
+    }
+
+    func testLegacyPeerRecordsKeepTheirTransportAndNewRecordsKeepPlatforms() throws {
+        let legacy = try PairedPeer(key: Data(repeating: 1, count: 32), name: "Old", platform: .ipad,
+                                    localRole: .initiator)
+        let oldJSON = try JSONEncoder().encode(legacy)
+        XCTAssertNil(try JSONDecoder().decode(PairedPeer.self, from: oldJSON).transport)
+        let direct = try PairedPeer(key: Data(repeating: 2, count: 32), name: "", platform: .android,
+                                    localRole: .responder, transport: .wifiDirect)
+        let restored = try JSONDecoder().decode(PairedPeer.self, from: JSONEncoder().encode(direct))
+        XCTAssertEqual(restored.transport, .wifiDirect)
+        XCTAssertEqual(restored.platform, .android)
+        XCTAssertEqual(restored.name, "Android")
+    }
+
+    func testBLELongWritesPreserveOneBoundedFrame() throws {
+        let value = Data((0..<256).map(UInt8.init))
+        XCTAssertEqual(BLEAttributeWrite.assemble([(0, value.prefix(20)), (20, value.dropFirst(20))]), value)
+        XCTAssertNil(BLEAttributeWrite.assemble([]))
+        XCTAssertNil(BLEAttributeWrite.assemble([(1, value)]))
+        XCTAssertNil(BLEAttributeWrite.assemble([(0, value), (255, value)]))
+        XCTAssertNil(BLEAttributeWrite.assemble([(0, value), (257, value)]))
+        XCTAssertNotNil(BLEAttributeWrite.assemble([(0, value), (256, value)]))
+        XCTAssertNil(BLEAttributeWrite.assemble([(0, value), (256, value + Data([1]))]))
+    }
+
 }

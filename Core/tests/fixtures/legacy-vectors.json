@@ -1,0 +1,601 @@
+{
+  "ack" : {
+    "origin" : "responder",
+    "quiet" : true,
+    "result" : "protectedLocal",
+    "revision" : 18446744073709551615,
+    "signature" : "bhbde34K2jrsJ8gIRQpTlabEV2C+AOB/XVlDxjJris8=",
+    "targetMilli" : 200
+  },
+  "ethernetMediumProof" : "O0McMCqoAHwgni92J1YeD0jak41UK1/632fQH0ERTWw=",
+  "key" : "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=",
+  "ledgerTrace" : [
+    {
+      "accepted" : true,
+      "activeCount" : 1,
+      "ended" : false,
+      "event" : "start",
+      "manualAtEnd" : false,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 1,
+            "validUntil" : 2000000020
+          }
+        }
+      },
+      "started" : true
+    },
+    {
+      "accepted" : false,
+      "activeCount" : 1,
+      "ended" : false,
+      "event" : "duplicate",
+      "manualAtEnd" : false,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 1,
+            "validUntil" : 2000000020
+          }
+        }
+      },
+      "started" : false
+    },
+    {
+      "accepted" : true,
+      "activeCount" : 1,
+      "ended" : false,
+      "event" : "unknown",
+      "manualAtEnd" : false,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 2,
+            "validUntil" : 2000000020
+          }
+        }
+      },
+      "started" : false
+    },
+    {
+      "accepted" : false,
+      "activeCount" : 0,
+      "ended" : true,
+      "event" : "expire",
+      "manualAtEnd" : true,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 2
+          }
+        }
+      },
+      "started" : false
+    },
+    {
+      "accepted" : true,
+      "activeCount" : 1,
+      "ended" : false,
+      "event" : "highRevision",
+      "manualAtEnd" : false,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 18446744073709551615,
+            "validUntil" : 2000000041
+          }
+        }
+      },
+      "started" : true
+    },
+    {
+      "accepted" : false,
+      "activeCount" : 1,
+      "ended" : false,
+      "event" : "oldRevision",
+      "manualAtEnd" : false,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 18446744073709551615,
+            "validUntil" : 2000000041
+          }
+        }
+      },
+      "started" : false
+    },
+    {
+      "accepted" : false,
+      "activeCount" : 0,
+      "ended" : true,
+      "event" : "removePeer",
+      "manualAtEnd" : false,
+      "snapshot" : {
+        "manualTakeover" : false,
+        "records" : {
+          "a" : {
+            "revision" : 18446744073709551615
+          }
+        }
+      },
+      "started" : false
+    }
+  ],
+  "nameClaims" : [
+    {
+      "claim" : {
+        "name" : "设备",
+        "signature" : "Kzil52zkGEy69Mskn2jqudqP0pR5/nYOB0NPcP9P2mw="
+      },
+      "input" : "设备"
+    },
+    {
+      "claim" : {
+        "name" : "helloworld",
+        "signature" : "IqIbVGYb2qlAghqu21yblc6cFjRA4DmOjdDYEIHA/RQ="
+      },
+      "input" : "  hello\nworld  "
+    },
+    {
+      "claim" : {
+        "name" : "é",
+        "signature" : "IdTNr9WYXz3Lghkk8H81biMHllNnaUZAD2tazCwGHaw="
+      },
+      "input" : "é"
+    },
+    {
+      "claim" : {
+        "name" : "👨👩👧👦👨👩👧👦👨👩👧👦👨👩👧👦👨👩👧👦👨👩👧👦👨👩👧👦👨👩👧👦",
+        "signature" : "Mm+GMzgN6fYLu+4KDkdz6PXSCbV7sFSLB4gu5v6lL5g="
+      },
+      "input" : "👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦👨‍👩‍👧‍👦"
+    },
+    {
+      "claim" : {
+        "name" : "汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉",
+        "signature" : "cDjtpiSQgH8B6Jm8MnlAScw/707qtHqbZYHgs4XJ2WQ="
+      },
+      "input" : "汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉汉"
+    },
+    {
+      "claim" : {
+        "name" : "设备",
+        "signature" : "Kzil52zkGEy69Mskn2jqudqP0pR5/nYOB0NPcP9P2mw="
+      },
+      "input" : "​设备\u0001"
+    }
+  ],
+  "now" : 2000000000,
+  "provenance" : "2026-10-15迁移前Swift实现实际输出；合成key 00..1f",
+  "updates" : [
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 1,
+      "signature" : "oY20Hhqm55SRHUVTB+zTlBhou97MR5uRM9qompAx8ME=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "MOTYuMXUFMA+h1gv8+wDwX3Rq//MPGO9aF1g4s80I1c=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "4Rx3ZZJzDitH8Z8YUqexQN91Rx9Keiwy06rUXMzW5Jk=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 1,
+      "signature" : "eRFnp9Ywt7azhZeney0lJUg2KH2um2oh+GINkIrhEN4=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "om2ccuZgDtwifGpoN5INUqoIiVp+slBCpmDbTmFBpgo=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "IaVp0j+PIUEi37mEorzY2yxePd767/P0Mu3DrrPSDB8=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 1,
+      "signature" : "155Wz5FXV+iy1vaZzquPAMgu3oYalm/m94+wcBaYtVk=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "idt9R923Pzn5sE1CKvfCsRKHaJ7s0wKBpzuVa+I9afA=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "13rA/fBdlB1sb77jgk0xzXVE4dcJu06GAdH2qfZZOsQ=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 1,
+      "signature" : "rbkLyGsz8yO82VKtXeQiv5erpx2jk0zS4JdHoP+wfNk=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "l5q8eEToZEBVMc64rkQhfeoEz0V5kCdN4mi7wjSAy0A=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 1,
+      "signature" : "D7k8vGVYawXSRaAQr8Gs+wt3iuFK7ykOfWo6pY5cTkc=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 42,
+      "signature" : "pdIH78uuX4OcxQPlWOA0KvohGwhUatNUPBKnJJ4JKcI=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "6hB4IqduBqX4nJK0/gf0OhoE2TUK/LEU9KSvkGDMloU=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "NIGg3uYdAqgCUt4NaRfICVSkx8poHI3KLPbDzrH7pYo=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 42,
+      "signature" : "B2vZKijI7AHEr8Xgy2JTe9VcNL8S099GKsFmbr7lTLo=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "cZ64Kh4BSNzJRuikaGmW12DoIUwV9LBXZrTalOgba5I=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "T5d3SCynHKgEWqf3CHy5O26TuMeR+LyUfq11cIsUGK0=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 42,
+      "signature" : "F2tVTeucHre1dspq62L3XTwBFA7/kUf8sembXLs3N7s=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "Y38q7FD21lOwACUXRPa7oSpMInI0nuQ43KM/YI4EuoU=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "cISPFtp1XJ3AmSvAVbf/ROGYwaYaasLgwPn9wNhA4RQ=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 42,
+      "signature" : "uXeAwRLQGIfBJxSoqQ6xrmvADeo8AH9BaDauJ8gQra0=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "TyxOoboplcyUZfRAsPWk1DRGq4zPPuPRHJrE9UUm1Qc=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 42,
+      "signature" : "Bmf2pEBblKUAEChku8d6dOwvxXzpFTo0dzmZGX4i8E0=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 9223372036854775808,
+      "signature" : "7S8xTF7OA7PPDNRADWzRmH7pOTk8c7lmGKHqr76CMYM=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "9UotfQond675jWKisSwLnBsf56mDcOBbQxrahutJmIk=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "BvbH3emZn/cRSBbmd4AitcJ60EWSDAsW7xxMHHAbJHg=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 9223372036854775808,
+      "signature" : "X3DQdGwZZ7CuKgzRHDahSK02DIXfi9lUsvc/DyWBc28=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "bL7lxIfOH8ncqA/dPzOBmdR6egu3TuCl6SEzL7M+bwc=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "qn1zlk8fbjEEbV1uhRWQI1rx5NoNWOyxCReUyNT6UsE=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 9223372036854775808,
+      "signature" : "syFPinMUMw9m7eWnNFB/CSVlElt0YUxGJCAzWFBhkj0=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "kKiTjaEFlpoJ98eHaKPAXz4Z2irsP0WoVM5BCMyEkaI=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "PoEioyWmWGi6738My50d5hb2KektBrkWtdqhSb6HwQ4=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 9223372036854775808,
+      "signature" : "/aWxFAuwf302GPqSyQMbSq8XDBgjdf9o5DD1PcyyHuI=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "7w9M/YBuIXGfA3heGwEQkOtj3XZhr+9J1Cz97NiYPqc=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 9223372036854775808,
+      "signature" : "AyfhwFPETMCmGVkSdr9f4z2Wrv2ZSnmv/CJ8YOPUHdI=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 18446744073709551615,
+      "signature" : "biEaC2VPLAZmYQSa+GdrIsXPEwT9OVYh0Yxtss70JpI=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "3aglBJ2gDHfwbx7wmLLpdmoiipZoF6VdtYivGi9AtcY=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "/Hoi9Qpv7oZ8OowWmk0pfT9avpffoHqIP4tjf1IEnzc=",
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 18446744073709551615,
+      "signature" : "TFUVtO1DQ7k7Jl90ljEOpf8S708QGvmXrLEkKl3fbVA=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "M9I21rEGdZViVvILVPymg1FufE09jL0Nxq5+Y2uMo4Q=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "cybVU672yy07lAV0ph5tfOKxGRniPa/pyrPOUK31twQ=",
+      "targetMilli" : 0,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 18446744073709551615,
+      "signature" : "h5yjnfDNQb1Cn91RFCtX7r0VvdPeGe6N9wpoSFJG7yU=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "VAMPokj/ELW8mK+MqDhlUfzchyyAvjvlIylJVbujObA=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "dzl3WTOZ4UK9AF+YUWCW4Dy1VxtrGGAh66sogZoOacU=",
+      "targetMilli" : 200,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : true,
+      "revision" : 18446744073709551615,
+      "signature" : "6wMw6FT7/oS+INE/ngoIZSSg331dS7jZBs4JGBs6Xb0=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : true,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "MUaNDyRUzfHCFlS+WdQq1gBsHHCyCe5GizBSnq7foB8=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    },
+    {
+      "known" : false,
+      "origin" : "initiator",
+      "quiet" : false,
+      "revision" : 18446744073709551615,
+      "signature" : "6ACdvo1nymawuaAChCJNgLBieFKlYCOAOQfFCgBgz6U=",
+      "targetMilli" : 500,
+      "validUntil" : 2000000020
+    }
+  ],
+  "wifiMediumProof" : "21QryYwyG5hsMk93IklTa822M2q4MeyaDFP/ZC0XMII=",
+  "wifiProof" : "N9J0rXNDCypCs0GXEMIuYuntJL9PAyoXqKc9KFHrvpk="
+}

@@ -1,4 +1,6 @@
-import CryptoKit
+#if canImport(ShenglinRust)
+import ShenglinRust
+#endif
 import Foundation
 
 // These UUIDs are the BLE wire contract shared by the Mac and iPad targets.
@@ -14,17 +16,26 @@ public enum BLEIdentifiers {
     public static let pairingInfo = "BF903515-CC03-4056-A7D0-16E3267ABEB4"
 }
 
+public enum BLEAttributeWrite {
+    /// One ATT write transaction must contain a contiguous value no larger than the protocol frame limit.
+    public static func assemble(_ fragments: [(offset: Int, value: Data)]) -> Data? {
+        guard !fragments.isEmpty else { return nil }
+        var data = Data()
+        for fragment in fragments {
+            guard fragment.offset == data.count, data.count + fragment.value.count <= 512 else { return nil }
+            data.append(fragment.value)
+        }
+        return data
+    }
+}
+
 public enum Authentication {
     public static func sign(_ message: String, key: Data) -> String {
-        let mac = HMAC<SHA256>.authenticationCode(for: Data(message.utf8), using: SymmetricKey(data: key))
-        return Data(mac).base64EncodedString()
+        authenticationSign(message: message, key: key)
     }
 
     public static func matches(_ supplied: String, expected: String) -> Bool {
-        guard let a = Data(base64Encoded: supplied), let b = Data(base64Encoded: expected), a.count == b.count else { return false }
-        var difference: UInt8 = 0
-        for index in a.indices { difference |= a[index] ^ b[index] }
-        return difference == 0
+        authenticationMatches(supplied: supplied, expected: expected)
     }
 }
 
@@ -40,10 +51,13 @@ public struct QuietSnapshot: Codable {
     }
 }
 
+private let rustRemoteDuckingAllowed = remoteDuckingAllowed
+private let rustQuietTarget = quietTarget
+
 public enum VolumePolicy {
     // iPad yields its category-volume control whenever local input may need that output.
     public static func remoteDuckingAllowed(hasDemand: Bool, localRecording: Bool?, manual: Bool) -> Bool {
-        hasDemand && localRecording == false && !manual
+        rustRemoteDuckingAllowed(hasDemand, localRecording, manual)
     }
 
     public static func outputGain(identities: Set<String>, protected: Set<String>,
@@ -54,17 +68,16 @@ public enum VolumePolicy {
     }
 
     public static func quietTarget(local: Float?, remote: Float?) -> Float? {
-        [local, remote].compactMap { $0 }.min()
+        rustQuietTarget(local, remote)
     }
 
     public static func target(current: Float, configured: Float) -> Float? {
-        guard current.isFinite, configured.isFinite, (0...1).contains(current), (0...1).contains(configured) else { return nil }
-        return current > configured + 0.005 ? configured : nil
+        volumeTarget(current: current, configured: configured)
     }
 
     public static func restore(current: Float, route: String, snapshot: QuietSnapshot) -> Float? {
-        guard current.isFinite, route == snapshot.route, abs(current - snapshot.applied) <= 0.005 else { return nil }
-        return snapshot.original
+        volumeRestore(current: current, route: route, original: snapshot.original,
+                      applied: snapshot.applied, originalRoute: snapshot.route)
     }
 }
 
@@ -180,4 +193,43 @@ public enum DedicatedInputPolicy {
             !devices.isEmpty && devices.isSubset(of: mutedDevices) ? pid : nil
         })
     }
+}
+
+// Codable is the native transport/storage boundary; Rust owns each protocol schema.
+// Preserve integer precision while forwarding an enclosing Encoder/Decoder to the core JSON codec.
+private indirect enum RustWireJSON: Codable {
+    case object([String: RustWireJSON]), array([RustWireJSON]), string(String)
+    case unsigned(UInt64), signed(Int64), number(Double), bool(Bool), null
+    init(from decoder: Decoder) throws {
+        let value = try decoder.singleValueContainer()
+        if value.decodeNil() { self = .null }
+        else if let v = try? value.decode(Bool.self) { self = .bool(v) }
+        else if let v = try? value.decode(UInt64.self) { self = .unsigned(v) }
+        else if let v = try? value.decode(Int64.self) { self = .signed(v) }
+        else if let v = try? value.decode(Double.self) { self = .number(v) }
+        else if let v = try? value.decode(String.self) { self = .string(v) }
+        else if let v = try? value.decode([String: RustWireJSON].self) { self = .object(v) }
+        else { self = .array(try value.decode([RustWireJSON].self)) }
+    }
+    func encode(to encoder: Encoder) throws {
+        var value = encoder.singleValueContainer()
+        switch self {
+        case .object(let v): try value.encode(v)
+        case .array(let v): try value.encode(v)
+        case .string(let v): try value.encode(v)
+        case .unsigned(let v): try value.encode(v)
+        case .signed(let v): try value.encode(v)
+        case .number(let v): try value.encode(v)
+        case .bool(let v): try value.encode(v)
+        case .null: try value.encodeNil()
+        }
+    }
+}
+
+func decodeRustWire<T>(_ decoder: Decoder, using decode: (String) throws -> T) throws -> T {
+    let json = try JSONEncoder().encode(RustWireJSON(from: decoder))
+    return try decode(String(decoding: json, as: UTF8.self))
+}
+func encodeRustWire(_ json: String, to encoder: Encoder) throws {
+    try JSONDecoder().decode(RustWireJSON.self, from: Data(json.utf8)).encode(to: encoder)
 }

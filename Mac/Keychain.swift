@@ -34,9 +34,9 @@ enum MacCredentials {
     }
 
     static func addPeer(key: Data, name: String, platform: PeerPlatform, localRole: PeerRole,
-                        peripheralID: UUID? = nil) throws {
+                        peripheralID: UUID? = nil, transport: PeerTransport? = nil) throws {
         let peer = try PairedPeer(key: key, name: name, platform: platform,
-                                  localRole: localRole, peripheralID: peripheralID)
+                                  localRole: localRole, peripheralID: peripheralID, transport: transport)
         var records = try peers()
         if let index = records.firstIndex(where: { $0.key == key }) { records[index] = peer }
         else { records.append(peer) }
@@ -48,15 +48,15 @@ enum MacCredentials {
         let records = try JSONDecoder().decode([PendingMac].self, from: data)
         let savedKeys = Set(try peers().map(\.key))
         let active = records.filter { $0.expiresAt > Date() && !savedKeys.contains($0.peer.key) }
-        guard active.allSatisfy({ $0.peer.platform == .mac && $0.peer.key.count == 32 }) else {
+        guard active.allSatisfy({ $0.peer.key.count == 32 }) else {
             throw PairingError.invalidMessage
         }
         if active.count != records.count { try save(JSONEncoder().encode(active), account: pendingMacAccount) }
         return active.map(\.peer)
     }
 
-    static func stageMacPeer(key: Data, name: String, localRole: PeerRole) throws {
-        let peer = try PairedPeer(key: key, name: name, platform: .mac, localRole: localRole)
+    static func stageMacPeer(_ peer: PairedPeer) throws {
+        let key = peer.key
         let data = try read(pendingMacAccount)
         var records = try data.map { try JSONDecoder().decode([PendingMac].self, from: $0) } ?? []
         records.removeAll { $0.peer.key == key || $0.expiresAt <= Date() }
@@ -69,10 +69,15 @@ enum MacCredentials {
         var records = try JSONDecoder().decode([PendingMac].self, from: data)
         guard let record = records.first(where: { $0.peer.key == key && $0.expiresAt > Date() })
         else { throw PairingError.expired }
-        try addPeer(key: key, name: record.peer.name, platform: .mac,
-                    localRole: record.peer.localRole)
+        try addPeer(key: key, name: record.peer.name, platform: record.peer.platform,
+                    localRole: record.peer.localRole, transport: record.peer.transport)
         records.removeAll { $0.peer.key == key }
         try save(JSONEncoder().encode(records), account: pendingMacAccount)
+    }
+
+    static func removePeer(_ key: Data) throws {
+        let remaining = try peers().filter { $0.key != key }
+        try save(JSONEncoder().encode(remaining), account: peersAccount)
     }
 
     static func updatePadPeripheralID(_ key: Data, peripheralID: UUID) throws {
@@ -89,7 +94,7 @@ enum MacCredentials {
     static func updatePeerName(_ key: Data, name: String) throws {
         var peers = try peers()
         if let index = peers.firstIndex(where: { $0.key == key }) {
-            peers[index].name = PeerName.display(name, fallback: peers[index].platform == .mac ? "Mac" : "iPad")
+            peers[index].name = PeerName.display(name, fallback: peers[index].platform.displayName)
             try save(JSONEncoder().encode(peers), account: peersAccount)
             return
         }

@@ -23,6 +23,8 @@ private struct MainView: View {
     @ObservedObject var server: BLEServer
     @AppStorage("targetVolume") private var targetVolume = 0.0
     @State private var presentedSheet: PresentedSheet?
+    @State private var removingPeer: PairedPeerDisplay?
+    @State private var confirmPeerRemoval = false
 
     private var coordinationStatus: (title: String, symbol: String) {
         guard server.enabled else { return ("已暂停", "pause.circle") }
@@ -78,6 +80,10 @@ private struct MainView: View {
                         DisclosureGroup {
                             LabeledContent("连接", value: peer.link)
                             LabeledContent("空间条件", value: server.enabled ? peer.space : "已暂停")
+                            Button("取消配对", role: .destructive) {
+                                removingPeer = peer
+                                confirmPeerRemoval = true
+                            }
                         } label: {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(peer.name).foregroundStyle(.primary)
@@ -90,8 +96,18 @@ private struct MainView: View {
                     if !server.isPaired && !server.pairingPendingActivation {
                         Text("尚未添加设备").foregroundStyle(.secondary)
                     }
+                    if let error = server.peerRemovalError { Text(error).foregroundStyle(.red) }
                     Button("添加设备", systemImage: "plus") { presentedSheet = .pairing }
                 }
+            }
+            .confirmationDialog("取消与\(removingPeer?.name ?? "设备")的配对？", isPresented: $confirmPeerRemoval, titleVisibility: .visible) {
+                Button("取消配对", role: .destructive) {
+                    if let peer = removingPeer { server.removePeer(peer.id) }
+                    removingPeer = nil
+                }
+                Button("保留配对", role: .cancel) { removingPeer = nil }
+            } message: {
+                Text("仅移除此设备在本机的关系；其他已配对设备不受影响。")
             }
             .navigationTitle("声邻")
             .toolbar {
@@ -139,12 +155,16 @@ private struct SettingsView: View {
                     }
                 }
                 Section {
-                    Picker("空间条件", selection: Binding(get: { server.spaceMode }, set: server.setSpaceMode)) {
-                        Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
-                        Text("蓝牙且 Wi-Fi").tag(SpaceMode.nearbyAndWiFi)
+                    Picker("网络范围", selection: Binding(get: { server.networkScope }, set: server.setNetworkScope)) {
+                    Text("同一 Wi-Fi").tag(NetworkScope.wifi)
+                    Text("同一局域网").tag(NetworkScope.lan)
+                }
+                Picker("蓝牙组合", selection: Binding(get: { server.spaceMode }, set: server.setSpaceMode)) {
+                        Text("蓝牙或所选网络").tag(SpaceMode.nearbyOrWiFi)
+                        Text("蓝牙且所选网络").tag(SpaceMode.nearbyAndWiFi)
                     }
                 } footer: {
-                    Text("Wi-Fi 条件指已配对设备通过局域网认证互通，不代表一定在同一房间。")
+                    Text("同一 Wi-Fi 要求双方通过 Wi-Fi 认证互通；局域网也支持网线。网络互通不代表在同一房间。")
                 }
                 Section {
                     NavigationLink("运行详情") { DiagnosticsView(server: server) }
@@ -170,6 +190,7 @@ private struct PairingView: View {
     @ObservedObject var server: BLEServer
     @Environment(\.dismiss) private var dismiss
     @State private var completed = false
+    @State private var codeInput = ""
 
     var body: some View {
         NavigationStack {
@@ -192,6 +213,20 @@ private struct PairingView: View {
                         Text("在另一台设备的声邻中添加「\(server.deviceName)」，输入此验证码。2 分钟内有效。")
                     }
                 }
+                Section("连接方式") {
+                    Button("通过局域网显示验证码") { server.beginWiFiPairing() }
+                    Button("通过蓝牙与 Mac 配对") { server.beginPairing() }
+                    Button("查找设备并输入验证码") { server.browseWiFiPairing() }
+                    ForEach(server.nearbyPairingPeers) { peer in
+                        Button(peer.name) { server.chooseWiFiPeer(peer.id) }
+                    }
+                    if server.awaitingWiFiCode {
+                        TextField("对方的六位验证码", text: $codeInput)
+                            .keyboardType(.numberPad)
+                        Button("验证并添加") { server.submitWiFiCode(codeInput); codeInput = "" }
+                            .disabled(codeInput.count != 6)
+                    }
+                }.disabled(!server.enabled || server.pairingPendingActivation)
                 Section {
                     HStack {
                         if server.pairingPendingActivation { ProgressView() }
@@ -199,7 +234,7 @@ private struct PairingView: View {
                         Text(server.pairingStatus).foregroundStyle(.secondary)
                     }
                     if !server.pairingMode && !server.pairingPendingActivation && !completed {
-                        Button("重新显示配对码") { server.beginPairing() }
+                        Button("通过局域网重新显示验证码") { server.beginWiFiPairing() }
                             .disabled(!server.enabled)
                     }
                 } footer: {
@@ -214,7 +249,7 @@ private struct PairingView: View {
                 }
             }
             .onAppear {
-                if !server.pairingMode && !server.pairingPendingActivation { server.beginPairing() }
+                if !server.pairingMode && !server.pairingPendingActivation { server.beginWiFiPairing() }
             }
             .onChange(of: server.pairedCount) { previous, current in
                 if current > previous { completed = true }

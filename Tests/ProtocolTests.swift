@@ -1,5 +1,5 @@
 import Foundation
-import ShenglinCore
+@testable import ShenglinCore
 import XCTest
 
 final class ProtocolTests: XCTestCase {
@@ -55,6 +55,47 @@ final class ProtocolTests: XCTestCase {
         XCTAssertTrue(gate.allows(.nearbyOrWiFi, ble: true, wifi: false, at: 122))
         gate.reset()
         XCTAssertFalse(gate.allows(.nearbyAndWiFi, ble: true, wifi: false, at: 122))
+    }
+
+    func testNetworkScopeKeepsWiFiDistinctFromAuthenticatedLAN() {
+        XCTAssertEqual(NetworkScope(rawValue: "wifi"), .wifi)
+        XCTAssertEqual(NetworkScope(rawValue: "lan"), .lan)
+        XCTAssertFalse(NetworkScope.wifi.allows(lanVerified: true, wifiVerified: false))
+        XCTAssertTrue(NetworkScope.wifi.allows(lanVerified: true, wifiVerified: true))
+        XCTAssertTrue(NetworkScope.lan.allows(lanVerified: true, wifiVerified: false))
+        XCTAssertFalse(NetworkScope.lan.allows(lanVerified: false, wifiVerified: false))
+        var gate = SpaceGate()
+        XCTAssertTrue(gate.allows(.nearbyOrWiFi, ble: false, wifi: true, at: 100))
+        gate.reset() // Changing LAN to Wi-Fi must not retain the old network's grace period.
+        XCTAssertFalse(gate.allows(.nearbyOrWiFi, ble: false, wifi: false, at: 101))
+        XCTAssertTrue(gate.allows(.nearbyOrWiFi, ble: true, wifi: false, at: 101))
+        gate.reset()
+        XCTAssertFalse(gate.allows(.nearbyAndWiFi, ble: true, wifi: false, at: 101))
+    }
+
+    func testOptionalMediumEvidenceDoesNotInvalidateLegacyIdentityFrames() throws {
+        for evidence in ["", ",\"medium\":null", ",\"medium\":42,\"mediumSignature\":{}",
+                         ",\"medium\":\"unknown\",\"mediumSignature\":\"invalid\""] {
+            let data = Data(("{\"kind\":\"proof\",\"nonce\":\"challenge\",\"signature\":\"identity\"" + evidence + "}").utf8)
+            let frame = try JSONDecoder().decode(WiFiPeer.Frame.self, from: data)
+            XCTAssertEqual(frame.signature, "identity")
+            XCTAssertEqual(frame.nonce, "challenge")
+            XCTAssertNil(frame.medium.flatMap(NetworkMedium.init(rawValue:)))
+        }
+        XCTAssertThrowsError(try JSONDecoder().decode(WiFiPeer.Frame.self,
+            from: Data("{\"kind\":\"proof\",\"signature\":42}".utf8)))
+    }
+
+    func testNetworkMediumProofBindsMediumRoleNonceAndPairingKey() {
+        let key = Data(repeating: 3, count: 32)
+        let nonce = Data(repeating: 4, count: 16).base64EncodedString()
+        let proof = NetworkMediumProof.sign(role: "initiator", nonce: nonce, medium: .wifi, key: key)
+        XCTAssertTrue(NetworkMediumProof.valid(proof, role: "initiator", nonce: nonce, medium: .wifi, key: key))
+        XCTAssertFalse(NetworkMediumProof.valid(proof, role: "initiator", nonce: nonce, medium: .ethernet, key: key))
+        XCTAssertFalse(NetworkMediumProof.valid(proof, role: "responder", nonce: nonce, medium: .wifi, key: key))
+        XCTAssertFalse(NetworkMediumProof.valid(proof, role: "initiator", nonce: Data(repeating: 5, count: 16).base64EncodedString(), medium: .wifi, key: key))
+        XCTAssertFalse(NetworkMediumProof.valid(proof, role: "initiator", nonce: "", medium: .wifi, key: key))
+        XCTAssertFalse(NetworkMediumProof.valid(proof, role: "initiator", nonce: nonce, medium: .wifi, key: Data(repeating: 6, count: 32)))
     }
 
     func testWiFiProofBindsPairingKeyRoleAndFreshChallenge() {
@@ -147,6 +188,35 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(threeSources.activeCount(at: 141), 1)
         XCTAssertTrue(threeSources.accept(update(11, false, 155), from: "ipad-c",
                                           expectedOrigin: PeerRole.responder.rawValue, key: key, at: 141).ended)
+    }
+
+    func testPeerClockSkewDoesNotDisconnectOrExtendReceiverLease() {
+        let key = Data(repeating: 7, count: 32)
+        let origin = PeerRole.initiator.rawValue
+        func update(_ revision: UInt64, until: Int64) -> PeerQuietUpdate {
+            PeerQuietUpdate(origin: origin, revision: revision, quiet: true, validUntil: until, key: key)
+        }
+        let state = update(1, until: 120)
+        // Sender is ahead at an integer-second boundary, or behind the receiver.
+        for now: Int64 in [99, 95, 101] {
+            XCTAssertTrue(state.valid(key: key, expectedOrigin: origin, now: now))
+        }
+        XCTAssertFalse(state.valid(key: key, expectedOrigin: origin, now: 94))
+        XCTAssertFalse(state.valid(key: key, expectedOrigin: origin, now: 120))
+
+        var ledger = PeerDemandLedger()
+        XCTAssertTrue(ledger.accept(state, from: "mac", expectedOrigin: origin, key: key, at: 99).started)
+        XCTAssertEqual(ledger.records["mac"]?.validUntil, 119)
+        XCTAssertFalse(ledger.accept(state, from: "mac", expectedOrigin: origin, key: key, at: 100).accepted)
+        XCTAssertEqual(ledger.records["mac"]?.validUntil, 119)
+        XCTAssertFalse(ledger.expire(at: 118).ended)
+        XCTAssertTrue(ledger.expire(at: 119).ended)
+
+        XCTAssertTrue(ledger.accept(update(2, until: 145), from: "mac", expectedOrigin: origin, key: key, at: 120).started)
+        XCTAssertEqual(ledger.records["mac"]?.validUntil, 140)
+        XCTAssertTrue(ledger.expire(at: 140).ended)
+        XCTAssertTrue(ledger.accept(update(3, until: 160), from: "mac", expectedOrigin: origin, key: key, at: 141).started)
+        XCTAssertEqual(ledger.records["mac"]?.validUntil, 160)
     }
 
     func testUnknownPeerRecordingStateDoesNotRenewOrImmediatelyClearQuietLease() throws {
@@ -250,4 +320,31 @@ final class ProtocolTests: XCTestCase {
         try InputMuteStore.change("bundle:nz.owo.koe", add: false, at: muted)
         XCTAssertEqual(try InputMuteStore.load(at: muted), ["bundle:com.openai.codex"])
     }
+    func testRustAdapterPreservesValueCopiesAndStoredLedgerShape() throws {
+        let key = Data(repeating: 7, count: 32)
+        var original = PeerDemandLedger()
+        _ = original.accept(PeerQuietUpdate(origin: "initiator", revision: UInt64.max,
+            quiet: true, validUntil: 120, key: key), from: "peer", expectedOrigin: "initiator", key: key, at: 100)
+        var copy = original
+        _ = copy.stopResponding(at: 101)
+        XCTAssertEqual(original.activeCount(at: 101), 1)
+        XCTAssertEqual(copy.activeCount(at: 101), 0)
+        let encoded = try JSONEncoder().encode(original)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        XCTAssertEqual(Set(object.keys), ["records", "manualTakeover"])
+        let restored = try JSONDecoder().decode(PeerDemandLedger.self, from: encoded)
+        XCTAssertEqual(restored.records["peer"]?.revision, UInt64.max)
+        let update = PeerQuietUpdate(origin: "initiator", revision: UInt64.max,
+            quiet: true, validUntil: 120, key: key)
+        let decoded = try JSONDecoder().decode(PeerQuietUpdate.self, from: JSONEncoder().encode(update))
+        XCTAssertEqual(decoded.revision, UInt64.max)
+        XCTAssertTrue(decoded.valid(key: key, expectedOrigin: "initiator", now: 100))
+        var gate = SpaceGate()
+        XCTAssertTrue(gate.allows(.nearbyOrWiFi, ble: true, wifi: false, at: 100))
+        var gateCopy = gate
+        gateCopy.reset()
+        XCTAssertTrue(gate.allows(.nearbyOrWiFi, ble: false, wifi: false, at: 101))
+        XCTAssertFalse(gateCopy.allows(.nearbyOrWiFi, ble: false, wifi: false, at: 101))
+    }
+
 }

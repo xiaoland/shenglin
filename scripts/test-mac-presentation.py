@@ -7,10 +7,21 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 model = (root / 'MacGUI/AppModel.swift').read_text()
 views = (root / 'MacGUI/App.swift').read_text()
+pad_views = (root / 'iPad/App.swift').read_text()
+assert 'Button("通过局域网显示验证码") { server.beginWiFiPairing() }' in pad_views
+assert 'Button("通过蓝牙与 Mac 配对") { server.beginPairing() }' in pad_views
+for settings in (views, pad_views):
+    assert 'Text("同一 Wi-Fi").tag(NetworkScope.wifi)' in settings
+    assert 'Text("同一局域网").tag(NetworkScope.lan)' in settings
+    assert 'Text("蓝牙或所选网络").tag(SpaceMode.nearbyOrWiFi)' in settings
+    assert 'Text("蓝牙且所选网络").tag(SpaceMode.nearbyAndWiFi)' in settings
+
+
 
 def member(source, start, end):
     return source[source.index(start):source.index(end)]
 
+platform = member((root / 'Shared/PairingProtocol.swift').read_text(), 'public enum PeerPlatform:', 'public enum PeerTransport:')
 peers = member(model, 'struct MacPeerDisplay:', '@MainActor private final class PadPeerSession')
 status = member(model, '    var coordinationStatus:', '    var inputError:')
 close = member(model, '    func endDevicePairingPresentation()', '    func offerDevicePairingCode()')
@@ -20,8 +31,27 @@ volume = member(views, 'private struct VolumeTargetControl:', 'private struct Ma
 volume_range = member(volume, '    private var sliderRange:', '    var body:')
 output = member(model, '    @discardableResult private func updateOutputQuiet(', '    func installBrowserAdapter()')
 notice = member(output, '        switch result {', '        let protectedNames')
+nearby_filter = member(model, '            let pairedIDs = Set(self.padSessions', '        }, onStatus:')
+
 
 source = r'''import Foundation
+struct NearbyPad { let id: UUID; let name: String }
+struct SavedPeripheral { let peripheralID: UUID? }
+final class DiscoveryProbe {
+ var padSessions: [String: SavedPeripheral] = [:]
+ var savedMacPeers: [SavedPeripheral] = []
+ var nearbyPads: [NearbyPad] = []
+ func update(_ devices: [NearbyPad]) {
+'''+nearby_filter+r'''
+ }
+}
+let discovery = DiscoveryProbe()
+let oldPad = UUID(), directPad = UUID(), sameNameNewPad = UUID()
+discovery.padSessions = ["old": SavedPeripheral(peripheralID: oldPad)]
+discovery.savedMacPeers = [SavedPeripheral(peripheralID: directPad), SavedPeripheral(peripheralID: nil)]
+discovery.update([NearbyPad(id: oldPad, name: "iPad"), NearbyPad(id: directPad, name: "iPad"), NearbyPad(id: sameNameNewPad, name: "iPad")])
+assert(discovery.nearbyPads.map(\.id) == [sameNameNewPad])
+
 final class Session {
  var rejected = false
  var stopped = false
@@ -77,6 +107,12 @@ for result in ["selectiveApplied", "alreadyQuiet", "restored", "alreadyRestored"
 func peer(_ id: String, connected: Bool, allowed: Bool, pending: Bool = false) -> PeerDisplay {
  PeerDisplay(id: id, name: "设备", status: "", link: "", connected: connected, spaceAllowed: allowed, pending: pending)
 }
+let android = MacPeerDisplay(id: "android", name: "手机", authenticated: true, spaceAllowed: false, pending: false, platform: .android, requiresBLE: true, bleAuthenticated: false)
+assert(android.platform.displayName == "Android")
+assert(android.status.contains("等待蓝牙近距验证"))
+let nearbyAndroid = MacPeerDisplay(id: "android", name: "手机", authenticated: true, spaceAllowed: true, pending: false, platform: .android, requiresBLE: false, bleAuthenticated: true)
+assert(nearbyAndroid.connected && nearbyAndroid.link == "蓝牙与局域网已认证")
+assert(nearbyAndroid.status.contains("允许协同"))
 let state = Presentation()
 state.pendingKey = nil; state.pendingMacIDs = []
 assert(state.coordinationStatus == "本机协同已开启")
@@ -117,6 +153,6 @@ print("Mac 展示状态、验证码边界及配对弹窗关闭检查通过。")
 '''
 with tempfile.TemporaryDirectory(prefix='shenglin-mac-presentation-') as directory:
     path = Path(directory)
-    (path / 'main.swift').write_text('import Foundation\n' + peers + source)
+    (path / 'main.swift').write_text('import Foundation\n' + platform + peers + source)
     subprocess.run(['swiftc', str(path / 'main.swift'), '-o', str(path / 'check')], check=True)
     subprocess.run([str(path / 'check')], check=True)

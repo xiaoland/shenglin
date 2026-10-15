@@ -292,11 +292,19 @@ private struct MainPanel: View {
 private struct PeerRow: View {
     @ObservedObject var model: AppModel
     let peer: PeerDisplay
+    @State private var confirmingRemoval = false
 
     var body: some View {
         DisclosureGroup {
             LabeledContent("连接", value: peer.link)
             LabeledContent("空间条件", value: peer.spaceAllowed ? "已满足" : "未满足")
+            if !peer.pending {
+                Button("取消配对", role: .destructive) { confirmingRemoval = true }
+                    .confirmationDialog("取消与\(peer.name)的配对？", isPresented: $confirmingRemoval) {
+                        Button("取消配对", role: .destructive) { model.removePeer(peer.id) }
+                        Button("保留配对", role: .cancel) {}
+                    } message: { Text("此设备将停止协同，其他设备不受影响。") }
+            }
             if peer.pending {
                 Text("验证码已验证，连接确认后加入协同。").foregroundStyle(.secondary)
             }
@@ -354,12 +362,18 @@ private struct SettingsPanel: View {
         Form {
             Section("通用") {
                 Toggle("登录时启动", isOn: Binding(get: { model.loginEnabled }, set: model.setLoginEnabled))
-                Picker("空间条件", selection: Binding(get: { model.spaceMode }, set: model.setSpaceMode)) {
-                    Text("蓝牙或 Wi-Fi").tag(SpaceMode.nearbyOrWiFi)
-                    Text("蓝牙且 Wi-Fi").tag(SpaceMode.nearbyAndWiFi)
+                Picker("网络范围", selection: Binding(get: { model.networkScope }, set: model.setNetworkScope)) {
+                    Text("同一 Wi-Fi").tag(NetworkScope.wifi)
+                    Text("同一局域网").tag(NetworkScope.lan)
                 }
-                if model.macPeerCount > 0 && model.spaceMode == .nearbyAndWiFi {
-                    Text("局域网直连不提供蓝牙认证，无法满足“蓝牙且 Wi-Fi”。")
+                Picker("蓝牙组合", selection: Binding(get: { model.spaceMode }, set: model.setSpaceMode)) {
+                    Text("蓝牙或所选网络").tag(SpaceMode.nearbyOrWiFi)
+                    Text("蓝牙且所选网络").tag(SpaceMode.nearbyAndWiFi)
+                }
+                Text("同一 Wi-Fi 要求双方通过 Wi-Fi 认证互通；局域网也支持网线。严格模式还要求蓝牙近距认证。")
+                    .font(.caption).foregroundStyle(.secondary)
+                if model.macPeerDisplays.contains(where: { $0.platform == .mac }) && model.spaceMode == .nearbyAndWiFi {
+                    Text("Mac 之间尚无蓝牙认证，严格模式下不能协同。")
                         .font(.caption).foregroundStyle(.orange)
                 }
             }

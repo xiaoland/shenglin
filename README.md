@@ -6,6 +6,8 @@
 
 > **早期预览版。** 目前以 Apple Silicon Mac 和 iPad 真机为开发、测试目标。iPad 的录音检测与音量控制使用系统私有接口，系统更新可能改变行为；后台、锁屏和多设备协同仍需继续验证。
 
+Android 源码版位于 `Android/`，与更新后的 Mac、iPad 以及其他 Android 设备直接通过局域网配对和双向协同，不需要 Mac 中转。各端在“添加设备”中选择显示验证码，或发现对端并输入验证码。Android 被动观察系统录音活动，不采集音频；开启协同时显示常驻通知。网络条件可选“同一 Wi-Fi”或“同一局域网”，再选择与蓝牙按“或”或“且”组合；局域网允许 Wi-Fi 与网线混用，Wi-Fi 条件要求双方实际认证链路均走 Wi-Fi。构建、安装及实际验证范围见[开发与诊断](manuals/开发与诊断.md)和[验收记录](docs/validation.md)；现有 Release 下载不代表已包含这次源码改动。
+
 ## 下载与安装
 
 从 [Releases](https://github.com/xiaoland/shenglin/releases) 下载 macOS DMG 和 iPad 无签名 IPA。macOS 包使用开发签名、未经 Apple 公证，系统可能阻止运行；iPad 包需用自己的免费 Apple 账号签名安装，无需下载源码，但需定期续签。详情见[安装与分发](manuals/安装与分发.md)。

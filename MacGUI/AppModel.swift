@@ -11,9 +11,19 @@ struct MacPeerDisplay: Identifiable, Equatable {
     let authenticated: Bool
     let spaceAllowed: Bool
     let pending: Bool
+    let platform: PeerPlatform
+    let requiresBLE: Bool
+    let bleAuthenticated: Bool
+    var connected: Bool { authenticated || bleAuthenticated }
+    var link: String {
+        if authenticated && bleAuthenticated { return "蓝牙与局域网已认证" }
+        if bleAuthenticated { return "蓝牙已认证" }
+        return authenticated ? "局域网已认证" : "未连接"
+    }
     var status: String {
         if pending { return "\(name)：正在验证新配对" }
-        return "\(name)：\(authenticated ? "Wi-Fi 已认证" : "未连接") · \(spaceAllowed ? (authenticated ? "允许协同" : "短断连宽限") : "等待空间条件")"
+        if requiresBLE { return "\(name)：等待蓝牙近距验证" }
+        return "\(name)：\(link) · \(spaceAllowed ? (connected ? "允许协同" : "短断连宽限") : "等待空间条件")"
     }
 }
 
@@ -52,6 +62,7 @@ struct PeerDisplay: Identifiable, Equatable {
     var connectionState = BLEConnectionState.message("正在连接")
     var bleReachable = false
     var wifiVerified = false
+    var wifiEvidence = false
     var wifiIssue: String?
     var spaceGate = SpaceGate()
     var spaceAllowed = false
@@ -104,6 +115,7 @@ struct PeerDisplay: Identifiable, Equatable {
     @Published private(set) var outputNotice: String?
     @Published private(set) var protectedOutputStatus = "暂无受保护的原生输入应用"
     @Published private(set) var browserStatus = "尚未接入网页；浏览器录音请通过扩展参与"
+    @Published private(set) var networkScope: NetworkScope
     @Published private(set) var spaceMode: SpaceMode
     @Published private(set) var nearbyMacs = [NearbyMac]()
     @Published private(set) var macPairCode: String?
@@ -127,10 +139,13 @@ struct PeerDisplay: Identifiable, Equatable {
     private var macPairServer: MacPairServer?
     private var macPairClient: MacPairClient?
     private var macWifiPeers = [String: WiFiPeer]()
+    private var directBLEPeers = [String: BLEClient]()
+    private var directBLEVerified = Set<String>()
     private var savedMacPeers = [PairedPeer]()
     private var pendingMacIDs = Set<String>()
     private var lastPendingMacCheck = Date.distantPast
     private var macPeerVerified = Set<String>()
+    private var macPeerWiFiEvidence = Set<String>()
     private var macPeerGates = [String: SpaceGate]()
     private var macPeerAllowed = Set<String>()
     private var quitting = false
@@ -165,8 +180,8 @@ struct PeerDisplay: Identifiable, Equatable {
                         pending: pendingKey.map { sourceID(for: $0) } == $0.id)
         } + macPeerDisplays.map {
             PeerDisplay(id: $0.id, name: $0.name, status: $0.status,
-                        link: $0.authenticated ? "Wi-Fi 已认证" : "未连接",
-                        connected: $0.authenticated, spaceAllowed: $0.spaceAllowed, pending: $0.pending)
+                        link: "\($0.platform.displayName) · \($0.link)",
+                        connected: $0.connected, spaceAllowed: $0.spaceAllowed, pending: $0.pending)
         })
             .sorted { $0.name == $1.name ? $0.id < $1.id :
                 $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -181,7 +196,8 @@ struct PeerDisplay: Identifiable, Equatable {
     }
     var inputCount: Int { nativePIDs(input?.participatingPIDs ?? []).count + browser.pages.filter { $0.role == "conversation" && $0.input == "active" }.count }
     private var needsQuiet: Bool { inputCount > 0 }
-    private var inputKnown: Bool { needsQuiet || (inputState.error == nil && browser.known &&
+    // PIDs and validity must come from the same poll; inputState is an asynchronously delivered UI projection.
+    private var inputKnown: Bool { needsQuiet || (input?.lastObservation.error == nil && browser.known &&
         (input?.participatingPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true)) }
     var localInputActive: Bool { !nativePIDs(input?.localDemandPIDs ?? []).isEmpty || browser.needsQuiet }
     var coordinationStatus: String {
@@ -199,7 +215,7 @@ struct PeerDisplay: Identifiable, Equatable {
         guard ((try? MicrophoneStore.load()) ?? []).isEmpty == false else { return nil }
         if let status = MicrophoneAgentStatus.current() { return status.error }
         return MicrophoneAgentStatus.service.status == .enabled
-            ? "后台麦克风服务未运行" : "请在系统设置中允许声邻后台麦克风服务"
+            ? "暂时无法读取后台麦克风服务状态" : "请在系统设置中允许声邻后台麦克风服务"
     }
     var spaceStatus: String {
         let allowed = padPeerDisplays.filter(\.spaceAllowed).count + macPeerAllowed.count
@@ -220,6 +236,7 @@ struct PeerDisplay: Identifiable, Equatable {
     init() {
         enabled = preferences.object(forKey: "coordinationEnabled") as? Bool ?? true
         sharedShortcutEnabled = preferences.bool(forKey: "shareMicrophoneHotKeys")
+        networkScope = NetworkScope(rawValue: preferences.string(forKey: "networkScope") ?? "") ?? .wifi
         spaceMode = SpaceMode(rawValue: preferences.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
         macTarget = preferences.object(forKey: "remoteApplicationGain") as? Double ?? 0.25
         localDuckingEnabled = preferences.object(forKey: "localDuckingEnabled") as? Bool ?? true
@@ -301,7 +318,7 @@ struct PeerDisplay: Identifiable, Equatable {
                             errorMessage: String?, generation: Int) {
         guard generation == credentialLoadGeneration else { return }
         startMacPeers()
-        for peer in peers where peer.platform == .ipad { startPadPeer(peer) }
+        for peer in peers where peer.platform == .ipad && peer.transport == nil { startPadPeer(peer) }
         if let pending {
             pendingKey = pending.key
             pendingExpiresAt = pending.expiresAt
@@ -326,7 +343,7 @@ struct PeerDisplay: Identifiable, Equatable {
 
     private func refreshPadDisplays() {
         let displays: [PadPeerDisplay] = padSessions.values.map { session in
-            let link = session.bleReachable ? "蓝牙已认证" : session.wifiVerified ? "Wi-Fi 已认证" : session.connectionState.text
+            let link = session.bleReachable ? "蓝牙已认证" : session.wifiVerified ? "局域网已认证" : session.connectionState.text
             let space = session.spaceAllowed
                 ? (session.bleReachable || session.wifiVerified ? "允许协同" : "短断连宽限")
                 : "等待空间条件"
@@ -408,9 +425,12 @@ struct PeerDisplay: Identifiable, Equatable {
             }, verifiedChanged: { [unowned self, unowned session] verified in
                 session.wifiVerified = verified
                 self.refreshPadSpace(session)
+            }, networkScope: networkScope, wifiEvidenceChanged: { [unowned self, unowned session] verified in
+                session.wifiEvidence = verified
+                self.refreshPadSpace(session)
             }, onIssue: { [unowned self, unowned session] issue in
                 session.wifiIssue = issue
-                if let issue { self.errorMessage = "\(session.name) Wi-Fi：\(issue)" }
+                if let issue { self.errorMessage = "\(session.name) 局域网：\(issue)" }
             })
         session.wifiPeer?.start()
         publishLocalDemand()
@@ -424,6 +444,30 @@ struct PeerDisplay: Identifiable, Equatable {
             lastAction = "\(name) 设备名称已更新"
             refreshPadDisplays()
         } catch { errorMessage = "无法保存设备名称：\(error.localizedDescription)" }
+    }
+
+    func removePeer(_ id: String) {
+        guard !pendingMacIDs.contains(id), pendingKey.map({ sourceID(for: $0) }) != id,
+              let key = savedMacPeers.first(where: { sourceID(for: $0.key) == id })?.key ?? padSessions[id]?.key else { return }
+        do { try MacCredentials.removePeer(key) }
+        catch { errorMessage = "无法取消配对：\(error.localizedDescription)"; return }
+        // Persist first: a Keychain failure must leave the live relationship intact.
+        savedMacPeers.removeAll { $0.key == key }
+        removePadSession(for: key)
+        macWifiPeers.removeValue(forKey: id)?.stop()
+        directBLEPeers.removeValue(forKey: id)?.stop()
+        directBLEVerified.remove(id)
+        macPeerVerified.remove(id)
+        macPeerWiFiEvidence.remove(id)
+        macPeerGates.removeValue(forKey: id)
+        macPeerAllowed.remove(id)
+        let change = peerLedger.stopResponding(to: id, at: Int64(Date().timeIntervalSince1970))
+        persistPeerLedger()
+        if change.ended { updateOutputQuiet(manualAtEnd: change.manualAtEnd) }
+        macPeerCount = savedMacPeers.count - pendingMacIDs.count
+        directMacCount = macPeerVerified.count
+        refreshMacPeerSpaces()
+        lastAction = "已取消配对"
     }
 
     private func removePadSession(for key: Data) {
@@ -486,7 +530,7 @@ struct PeerDisplay: Identifiable, Equatable {
         do {
             let pending = try MacCredentials.pendingMacPeers()
             pendingMacIDs = Set(pending.map { sourceID(for: $0.key) })
-            peers = try MacCredentials.peers().filter { $0.platform == .mac } + pending
+            peers = try MacCredentials.peers().filter { $0.platform == .mac || $0.transport == .wifiDirect } + pending
         } catch {
             errorMessage = "无法读取配对：\(error.localizedDescription)"
             return
@@ -500,7 +544,7 @@ struct PeerDisplay: Identifiable, Equatable {
             let localOrigin = peer.localRole.rawValue
             let remoteOrigin = peer.localRole.remote.rawValue
             let link = WiFiPeer(localOrigin: localOrigin, remoteOrigin: remoteOrigin,
-                                listens: peer.localRole == .responder, key: peer.key, localUpdate: { [unowned self] in
+                                listens: peer.transport == .wifiDirect ? peer.localRole == .initiator : peer.localRole == .responder, key: peer.key, localUpdate: { [unowned self] in
                 PeerQuietUpdate(origin: localOrigin, revision: MacCredentials.nextSequence(),
                                 quiet: !self.quitting && self.enabled && self.needsQuiet &&
                                        self.macPeerAllowed.contains(source),
@@ -519,6 +563,7 @@ struct PeerDisplay: Identifiable, Equatable {
                 (self.receivePeerState(update, key: peer.key, expectedOrigin: remoteOrigin,
                                        allowed: self.macPeerAllowed.contains(source)), nil)
             }, verifiedChanged: { [unowned self] verified in
+                guard self.savedMacPeers.contains(where: { $0.key == peer.key }) else { return }
                 if verified {
                     self.macPeerVerified.insert(source)
                     if self.pendingMacIDs.contains(source) {
@@ -526,6 +571,7 @@ struct PeerDisplay: Identifiable, Equatable {
                             try MacCredentials.promoteMacPeer(peer.key)
                             self.pendingMacIDs.remove(source)
                             self.macPeerCount += 1
+                            self.startDirectBLEPeer(peer)
                         } catch { self.errorMessage = "无法保存已验证设备：\(error.localizedDescription)" }
                     }
                 }
@@ -534,13 +580,56 @@ struct PeerDisplay: Identifiable, Equatable {
                 self.refreshMacPeerSpaces()
                 self.recordConnection(verified ? "mac-peer-\(index)-verified" : "mac-peer-\(index)-disconnected")
                 if verified { self.macWifiPeers[source]?.sendCurrentState() }
+            }, networkScope: networkScope, wifiEvidenceChanged: { [unowned self] verified in
+                if verified { self.macPeerWiFiEvidence.insert(source) }
+                else { self.macPeerWiFiEvidence.remove(source) }
+                self.refreshMacPeerSpaces()
             }, onIssue: { [unowned self] issue in
                 if let issue { self.macPairStatus = "\(peer.name) 链路：\(issue)" }
             })
             macWifiPeers[source] = link
             link.start()
+            if !pendingMacIDs.contains(source) { startDirectBLEPeer(peer) }
         }
         refreshMacPeerSpaces()
+    }
+
+    private func startDirectBLEPeer(_ peer: PairedPeer) {
+        let source = sourceID(for: peer.key)
+        guard peer.transport == .wifiDirect, peer.platform != .mac, directBLEPeers[source] == nil else { return }
+        let client = BLEClient(key: peer.key, targetPeripheralID: peer.peripheralID,
+            rediscoverPeripheral: peer.platform == .android,
+            otherAuthenticatedPeripherals: { [weak self] in
+                guard let self else { return [] }
+                return Set(self.padSessions.values.compactMap { $0.client?.authenticatedPeripheralID } +
+                    self.directBLEPeers.filter { $0.key != source }.values.compactMap { $0.authenticatedPeripheralID })
+            }, localRole: peer.localRole,
+            onStatus: { [weak self] state in
+                Task { @MainActor [weak self] in
+                    guard let self, self.savedMacPeers.contains(where: { $0.key == peer.key }) else { return }
+                    if state.isReady { self.directBLEVerified.insert(source) }
+                    else { self.directBLEVerified.remove(source) }
+                    self.refreshMacPeerSpaces()
+                }
+            }, onPeerState: { [weak self] update, done in
+                Task { @MainActor [weak self] in
+                    guard let self else { done("stalePairing"); return }
+                    done(self.receivePeerState(update, key: peer.key, expectedOrigin: peer.localRole.remote.rawValue,
+                                               allowed: self.macPeerAllowed.contains(source)))
+                }
+            }, onAuthenticated: { [weak self] peripheralID in
+                Task { @MainActor [weak self] in
+                    guard let self, let index = self.savedMacPeers.firstIndex(where: { $0.key == peer.key }),
+                          self.savedMacPeers[index].peripheralID != peripheralID else { return }
+                    do {
+                        try MacCredentials.updatePadPeripheralID(peer.key, peripheralID: peripheralID)
+                        self.savedMacPeers[index].peripheralID = peripheralID
+                    } catch { self.errorMessage = "无法保存蓝牙设备标识：\(error.localizedDescription)" }
+                }
+            })
+        directBLEPeers[source] = client
+        client.setDesired(enabled && needsQuiet && macPeerAllowed.contains(source),
+                          known: !enabled || !macPeerAllowed.contains(source) || inputKnown)
     }
 
     private func expirePendingMacPeers() {
@@ -554,7 +643,10 @@ struct PeerDisplay: Identifiable, Equatable {
             for id in expired {
                 if saved.contains(id) { macPeerCount += 1; continue }
                 macWifiPeers.removeValue(forKey: id)?.stop()
+                directBLEPeers.removeValue(forKey: id)?.stop()
+                directBLEVerified.remove(id)
                 macPeerVerified.remove(id)
+                macPeerWiFiEvidence.remove(id)
                 macPeerGates.removeValue(forKey: id)
                 macPeerAllowed.remove(id)
             }
@@ -573,9 +665,8 @@ struct PeerDisplay: Identifiable, Equatable {
         var next = Set<String>()
         for source in macWifiPeers.keys {
             var gate = macPeerGates[source] ?? SpaceGate()
-            // Mac-to-Mac has no BLE proof; AND mode must remain closed.
             if !pendingMacIDs.contains(source),
-               gate.allows(spaceMode, ble: false, wifi: macPeerVerified.contains(source), at: now) {
+               gate.allows(spaceMode, ble: directBLEVerified.contains(source), wifi: networkScope.allows(lanVerified: macPeerVerified.contains(source), wifiVerified: macPeerWiFiEvidence.contains(source)), at: now) {
                 next.insert(source)
             }
             macPeerGates[source] = gate
@@ -587,7 +678,8 @@ struct PeerDisplay: Identifiable, Equatable {
             let id = sourceID(for: peer.key)
             return MacPeerDisplay(id: id, name: peer.name,
                 authenticated: macPeerVerified.contains(id), spaceAllowed: next.contains(id),
-                pending: pendingMacIDs.contains(id))
+                pending: pendingMacIDs.contains(id), platform: peer.platform, requiresBLE: spaceMode == .nearbyAndWiFi && !directBLEVerified.contains(id) && !next.contains(id),
+                bleAuthenticated: directBLEVerified.contains(id))
         }
         if displays != macPeerDisplays { macPeerDisplays = displays }
         guard changed else { return }
@@ -612,6 +704,10 @@ struct PeerDisplay: Identifiable, Equatable {
             session.wifiPeer?.sendCurrentState()
         }
         for peer in macWifiPeers.values { peer.sendCurrentState() }
+        for (source, client) in directBLEPeers {
+            client.setDesired(enabled && !quitting && needsQuiet && macPeerAllowed.contains(source),
+                              known: !enabled || quitting || !macPeerAllowed.contains(source) || inputKnown)
+        }
     }
 
     private func refreshSpace() {
@@ -620,7 +716,7 @@ struct PeerDisplay: Identifiable, Equatable {
 
     private func refreshPadSpace(_ session: PadPeerSession) {
         let allowed = session.spaceGate.allows(spaceMode, ble: session.bleReachable,
-                                               wifi: session.wifiVerified,
+                                               wifi: networkScope.allows(lanVerified: session.wifiVerified, wifiVerified: session.wifiEvidence),
                                                at: Int64(Date().timeIntervalSince1970))
         guard allowed != session.spaceAllowed else { refreshPadDisplays(); return }
         session.spaceAllowed = allowed
@@ -679,6 +775,20 @@ struct PeerDisplay: Identifiable, Equatable {
         }
     }
 
+    func setNetworkScope(_ scope: NetworkScope) {
+        networkScope = scope
+        preferences.set(scope.rawValue, forKey: "networkScope")
+        for session in padSessions.values {
+            session.spaceGate.reset()
+            session.wifiPeer?.setNetworkScope(scope)
+        }
+        macPeerGates.removeAll()
+        for peer in macWifiPeers.values { peer.setNetworkScope(scope) }
+        refreshSpace()
+        refreshMacPeerSpaces()
+        publishLocalDemand()
+    }
+
     func setSpaceMode(_ mode: SpaceMode) {
         spaceMode = mode
         preferences.set(mode.rawValue, forKey: "spaceMode")
@@ -719,7 +829,7 @@ struct PeerDisplay: Identifiable, Equatable {
         let starting = !outputQuiet && target != nil
         outputQuiet = target != nil
         let result = localOutput?.update(requested: target, protected: input?.protectedIdentities ?? [],
-                                         inputKnown: inputState.error == nil && (input?.protectedPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true),
+                                         inputKnown: input?.lastObservation.error == nil && (input?.protectedPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true),
                                          manualOverride: remote != nil && peerLedger.manualTakeover) ?? "outputUnsupported"
         outputStatus = localOutput?.status ?? "应用输出暂不可用"
         switch result {
@@ -1146,7 +1256,9 @@ struct PeerDisplay: Identifiable, Equatable {
         errorMessage = ""
         pairClient = PairClient(onDevices: { [weak self] devices in
             guard let self, self.pairingGeneration == generation else { return }
-            self.nearbyPads = devices
+            let pairedIDs = Set(self.padSessions.values.compactMap(\.peripheralID) +
+                                self.savedMacPeers.compactMap(\.peripheralID))
+            self.nearbyPads = devices.filter { !pairedIDs.contains($0.id) }
         }, onStatus: { [weak self] status in
             guard let self, self.pairingGeneration == generation else { return }
             self.pairingStatus = status
@@ -1252,39 +1364,40 @@ struct PeerDisplay: Identifiable, Equatable {
 
     func offerMacPairing() {
         cancelMacPairing()
+        errorMessage = ""
         do {
-            let server = try MacPairServer(onStatus: { [weak self] status in
+            let server = try MacPairServer(localName: localMacName, platform: .mac, onStatus: { [weak self] status in
                 self?.macPairStatus = status
-                if status == "Mac 配对已超时" { self?.macPairCode = nil; self?.macPairServer = nil }
-            }, onComplete: { [weak self] key, name in
-                try MacCredentials.stageMacPeer(key: key, name: name, localRole: .responder)
+                if status == "设备配对已超时" { self?.macPairCode = nil; self?.macPairServer = nil }
+            }, onComplete: { [weak self] peer in
+                try MacCredentials.stageMacPeer(peer)
                 self?.startMacPeers()
                 self?.macPairCode = nil
             })
             macPairServer = server
             macPairCode = server.code
-            macPairStatus = "在另一台 Mac 输入此验证码，有效期 2 分钟"
+            macPairStatus = "在另一台设备输入此验证码，有效期 2 分钟"
             try server.start()
         } catch {
             cancelMacPairing()
-            macPairStatus = "无法开始 Mac 配对：\(error.localizedDescription)"
+            macPairStatus = "无法开始设备配对：\(error.localizedDescription)"
         }
     }
 
     func browseMacPairing() {
         cancelMacPairing()
         macPairBrowsing = true
-        let browser = MacPairClient(onDevices: { [weak self] devices in
+        let browser = MacPairClient(localName: localMacName, platform: .mac, onDevices: { [weak self] devices in
             self?.nearbyMacs = devices
         }, onStatus: { [weak self] status in
             self?.macPairStatus = status
-            if status.hasPrefix("Mac 配对连接中断") { self?.macPairAwaitingCode = false }
-            if status == "Mac 配对已超时" { self?.cancelMacPairing() }
+            if status.hasPrefix("设备配对连接中断") { self?.macPairAwaitingCode = false }
+            if status == "设备配对已超时" { self?.cancelMacPairing() }
         }, onReadyForCode: { [weak self] in
             self?.macPairAwaitingCode = true
-            self?.macPairStatus = "请输入另一台 Mac 显示的验证码"
-        }, onComplete: { [weak self] key, name in
-            try MacCredentials.stageMacPeer(key: key, name: name, localRole: .initiator)
+            self?.macPairStatus = "请输入另一台设备显示的验证码"
+        }, onComplete: { [weak self] peer in
+            try MacCredentials.stageMacPeer(peer)
             self?.startMacPeers()
             self?.macPairBrowsing = false
             self?.macPairAwaitingCode = false
@@ -1348,8 +1461,8 @@ struct PeerDisplay: Identifiable, Equatable {
                                target: session.targetKnown ? session.target : nil)
         } + savedMacPeers.map { peer in
             let id = sourceID(for: peer.key)
-            return ControlStatus.Peer(id: id, name: peer.name, platform: .mac,
-                                      bluetoothVerified: false, wifiVerified: macPeerVerified.contains(id),
+            return ControlStatus.Peer(id: id, name: peer.name, platform: peer.platform,
+                                      bluetoothVerified: directBLEVerified.contains(id), wifiVerified: macPeerVerified.contains(id),
                                       spaceAllowed: macPeerAllowed.contains(id), target: nil)
         }
         return ControlStatus(connection: connection, paired: paired, enabled: enabled, inputCount: inputCount,
@@ -1467,12 +1580,14 @@ struct PeerDisplay: Identifiable, Equatable {
             session.wifiPeer?.sendCurrentState()
         }
         for peer in macWifiPeers.values { peer.sendCurrentState() }
+        for peer in directBLEPeers.values { peer.setDesired(false) }
         let change = peerLedger.stopResponding(at: Int64(Date().timeIntervalSince1970))
         persistPeerLedger()
         updateOutputQuiet(manualAtEnd: change.manualAtEnd)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
             self?.padSessions.values.forEach { $0.stop() }
             self?.macWifiPeers.values.forEach { $0.stop() }
+            self?.directBLEPeers.values.forEach { $0.stop() }
             NSApp.terminate(nil)
         }
     }

@@ -9,10 +9,12 @@ let package = Package(
     platforms: [.macOS(.v14)],
     products: [.executable(name: "shenglin", targets: ["ShenglinMac"])],
     targets: [
-        .target(name: "NativePAKE", path: "NativePAKE", publicHeadersPath: "include",
-                cSettings: [.unsafeFlags(["-I\(root)/local/boringssl/include"])],
-                linkerSettings: [.unsafeFlags(["\(root)/local/boringssl-macos/libcrypto.a", "-lc++"])]),
-        .target(name: "ShenglinCore", dependencies: ["NativePAKE"], path: "Shared"),
+        .systemLibrary(name: "ShenglinRustFFI", path: "local/rust-bindings/swift"),
+        .target(name: "ShenglinRust", dependencies: ["ShenglinRustFFI"], path: "local/rust-bindings/swift",
+                exclude: ["ShenglinRustFFI.h", "ShenglinRustFFI.modulemap", "module.modulemap"],
+                sources: ["ShenglinRust.swift"],
+                linkerSettings: [.unsafeFlags(["\(root)/local/rust-target/aarch64-apple-darwin/release/libshenglin_core.a", "-lc++"])]),
+        .target(name: "ShenglinCore", dependencies: ["ShenglinRust"], path: "Shared"),
         .executableTarget(name: "ShenglinMac", dependencies: ["ShenglinCore"], path: "Mac"),
         .testTarget(name: "ShenglinCoreTests", dependencies: ["ShenglinCore"], path: "Tests"),
     ]

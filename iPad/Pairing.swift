@@ -54,6 +54,12 @@ enum PairingStore {
         return peers
     }
 
+    static func removePeer(_ key: Data) throws -> [PairedPeer] {
+        let peers = try all().filter { $0.key != key }
+        try save(JSONEncoder().encode(peers), account: peersAccount)
+        return peers
+    }
+
     static func updateName(_ key: Data, name: String) throws {
         var peers = try all()
         guard let index = peers.firstIndex(where: { $0.key == key }) else { throw PairingError.invalidMessage }
@@ -92,6 +98,38 @@ enum PairingStore {
         try save(JSONEncoder().encode(peers), account: peersAccount)
         try? delete(pendingAccount)
         return pending.key
+    }
+
+    private static let wifiPendingAccount = "ShenglinPendingWiFiPeersV4"
+    private struct PendingWiFi: Codable { var peer: PairedPeer; let expiresAt: Date }
+
+    static func pendingWiFi() throws -> [PairedPeer] {
+        guard let data = try read(wifiPendingAccount) else { return [] }
+        let records = try JSONDecoder().decode([PendingWiFi].self, from: data)
+        let saved = Set(try all().map(\.key))
+        let active = records.filter { $0.expiresAt > Date() && !saved.contains($0.peer.key) }
+        guard active.allSatisfy({ $0.peer.key.count == 32 && $0.peer.transport == .wifiDirect }) else {
+            throw PairingError.invalidMessage
+        }
+        if active.count != records.count { try save(JSONEncoder().encode(active), account: wifiPendingAccount) }
+        return active.map(\.peer)
+    }
+
+    static func stageWiFi(_ peer: PairedPeer) throws {
+        guard peer.key.count == 32, peer.transport == .wifiDirect else { throw PairingError.invalidMessage }
+        let data = try read(wifiPendingAccount)
+        var records = try data.map { try JSONDecoder().decode([PendingWiFi].self, from: $0) } ?? []
+        records.removeAll { $0.peer.key == peer.key || $0.expiresAt <= Date() }
+        records.append(PendingWiFi(peer: peer, expiresAt: Date().addingTimeInterval(300)))
+        try save(JSONEncoder().encode(records), account: wifiPendingAccount)
+    }
+
+    static func promoteWiFi(_ key: Data) throws {
+        guard let peer = try pendingWiFi().first(where: { $0.key == key }) else { throw PairingError.expired }
+        var peers = try all()
+        peers.append(peer)
+        try save(JSONEncoder().encode(peers), account: peersAccount)
+        _ = try pendingWiFi()
     }
 
     static func clearPending() throws { try delete(pendingAccount) }
