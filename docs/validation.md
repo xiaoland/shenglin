@@ -354,3 +354,10 @@ Mac 首轮后台观察仍出现 7 个心跳暂不可读样本；后续 8 分钟�
 iPad 音量由独立 runner 只读系统 Audio/Video 音量，基线与正式界面的四舍五入显示一致；普通未激活 AVAudioSession 的音量读数不一致，未采用。锁定起点以系统安全状态和背光为准，Darwin 锁定通知有延迟。设备通过 USB 供电，以上结果不代表自然深度 Doze、整夜待机或所有厂商后台策略。原始证据与分端索引位于 `local/BackgroundValidation/`，包括 `INDEX.md`、`ipad-locked-summary.json` 和 `heartbeat-audit/`。
 
 收尾已停止所有采样、日志监听与录音排程，两台 Android 无活动录音。Huawei 媒体恢复 3/15；新机按次日恢复工作时的可信基线恢复 30/150，临时撤销的三项蓝牙权限已恢复。电池策略、空间设置与配对保持不变。iPad 独立 runner 已退出并卸载，正式 App 与原录音保留，最后实际音量为 0.31514084。Huawei 仍锁定，保留已确认的两条测试录音 `/sdcard/Sounds/20261015_222304.m4a`、`/sdcard/Sounds/20261015_222934.m4a`，没有为删除而再次请求解锁；新机的旧测试录音已通过录音器界面删除。
+
+
+## 0.2 beta.3 发布产物核验（2026-10-16）
+
+发布标签 `v0.2.0-beta.3` 指向 `553bc2843363a53a61c5a123cdfdc85313538c37`，已推送至 main 并创建[GitHub 预发布](https://github.com/xiaoland/shenglin/releases/tag/v0.2.0-beta.3)。Android 为发布签名、不可调试的 `0.2.0-beta.3 (2)` APK，仅包含 arm64-v8a 和 armeabi-v7a；签名、ZIP 对齐、Rust/JNA 原生库及动态依赖检查通过，缺签名配置会明确失败。Mac 与 iPad 为 `0.2.0 (7)`、arm64，来自已提交源码快照。Mac Release、驱动构建与测试、开发签名和 DMG 验证通过；iPad 沿原 Debug 配置生成无签名 IPA，归档中无开发签名、mobileprovision 或扫描到的设备标识。IPA 仍可能保留编译来源路径。DMG 的额外挂载复核被主机拒绝，未将其记为通过；创建镜像前的同一 staging 已完成严格签名验证。
+
+三个包及 `SHA256SUMS.txt` 已上传。GitHub 返回的四项资产大小和 SHA-256 均与本地一致；重新下载三个安装包后逐项校验通过，下载的校验文件也与本地逐字一致。证据位于 `local/release-beta3/`。此次没有替换设备上的应用，也没有重开用户已停止的实机验收。Android 发布签名不能直接覆盖当前调试签名安装，安装说明及 Release 已写明配对数据风险。

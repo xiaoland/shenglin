@@ -48,8 +48,14 @@ iPad以系统安全状态passcodeRequired=true及背光off确认09:45:39已锁�
 
 最终收尾：Android采样/排程/logcat均停止，两端无录音；Huawei3/15、新机30/150，三项临时撤销的蓝牙权限恢复。电池/scope/配对不变。Huawei锁屏下留存两条本轮测试录音，路径见验收记录，不再请求解锁。全部本轮必需清理已完成，剩余未测项按用户决定关闭；仅提交两处Android诊断、验收记录与本任务包，其他安装任务改动留在工作区。
 
-## 0.2 beta.3 发布（进行中）
+## 0.2 beta.3 发布（完成）
 
 用户授权 push & release，Android 交付 ARM APK。沿用预发布序列 v0.2.0-beta.3，Android 为0.2.0-beta.3 (2)，Apple为0.2.0 (7)。Android owner负责独立持久发布签名、仅arm64/armv7的release APK与产物检查；Apple owner负责隔离已提交源码的Mac开发签名DMG和iPad无签名IPA；root负责README/安装说明、源提交、推送和Release。签名材料不提交，已有不同签名开发安装不自动卸载。
 
 继续保留其他任务的未提交安装脚本与文档改动，不能带入tag或二进制。发布只做打包与签名/架构/隐私内容/校验值检查，不恢复已停止的硬件验收。发布完成条件为main正常快进推送、tag明确指向已提交源、三个安装包及SHA256SUMS上传并核对远端内容；HyperOS锁屏限制随Release说明。
+
+发布已完成：main已正常快进推送至发布准备提交553bc2843363a53a61c5a123cdfdc85313538c37，标签v0.2.0-beta.3明确指向该提交；Release已公开为预发布：https://github.com/xiaoland/shenglin/releases/tag/v0.2.0-beta.3 。Android独立签名ARM双ABI APK、Mac开发签名DMG、iPad无签名IPA与SHA256SUMS共4项资产全部上传；GitHub资产digest/大小与本地一致，重新下载后的三个包均通过SHA256SUMS且校验文件逐字一致。源码快照逐一比对已提交树，未带入其他任务的工作区改动。
+
+Android包0.2.0-beta.3(2)、不可调试、arm64/armv7、发布签名与调试签名不同，Rust/JNA等原生依赖及对齐检查通过；缺少签名配置时脚本和Gradle均明确失败。密钥与凭据位于local/android-release、文件0600/目录0700，未提交或上传，需维护者另行安全备份。Apple两包均0.2.0(7)/arm64；Mac Release与新构建driver签名/测试、DMG验证通过，iPad沿原Debug无签名配置，无签名或设备profile。额外DMG挂载复核被主机拒绝，采用同一签名staging与hdiutil verify证据；不声称完成下载后的安装。IPA可能含编译来源路径，不含扫描到的设备标识或签名账号配置。临时App已清理，无安装替换或新增实机验收。
+
+发布证据在local/release-beta3（published-release.json、downloaded.noindex、Apple报告、source-commit.txt）及local/android-release/verification.json。其后文档收尾提交不改变标签与安装包。无剩余发布动作。
