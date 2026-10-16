@@ -3,18 +3,41 @@ plugins {
     id 'org.jetbrains.kotlin.android'
     id 'org.jetbrains.kotlin.plugin.compose'
 }
+def releasePropertiesFile = providers.environmentVariable('SHENGLIN_ANDROID_SIGNING_PROPERTIES')
+    .map { file(it) }.getOrElse(new File(rootProject.projectDir.parentFile, 'local/android-release/signing.properties'))
+def releaseProperties = new Properties()
+if (releasePropertiesFile.isFile()) releasePropertiesFile.withInputStream { releaseProperties.load(it) }
+def releaseSigningReady = ['storeFile', 'storePassword', 'keyAlias', 'keyPassword'].every { releaseProperties[it] }
+
 android {
     namespace 'local.shenglin'
     compileSdk 36
     ndkVersion '30.0.14904198'
     defaultConfig {
         applicationId 'local.shenglin'
-        ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64' }
         minSdk 26
         targetSdk 36
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.2.0-beta.3'
         testInstrumentationRunner 'local.shenglin.RuntimeChecks'
+    }
+    signingConfigs {
+        release {
+            if (releaseSigningReady) {
+                storeFile file(releaseProperties['storeFile'])
+                storePassword releaseProperties['storePassword']
+                keyAlias releaseProperties['keyAlias']
+                keyPassword releaseProperties['keyPassword']
+            }
+        }
+    }
+    buildTypes {
+        debug { ndk { abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86', 'x86_64' } }
+        release {
+            ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' }
+            debuggable false
+            signingConfig signingConfigs.release
+        }
     }
     compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
     buildFeatures { buildConfig true; compose true }
@@ -66,4 +89,11 @@ tasks.register('prepareHostInterop') {
 }
 tasks.withType(Test).configureEach {
     systemProperty 'jna.library.path', new File(rustRoot, 'local/rust-target/aarch64-apple-darwin/release').path
+}
+
+// Never silently produce an unsigned release when local signing credentials are absent.
+tasks.matching { it.name == 'preReleaseBuild' }.configureEach {
+    doFirst {
+        if (!releaseSigningReady) throw new GradleException("Release signing requires storeFile/storePassword/keyAlias/keyPassword in ${releasePropertiesFile}")
+    }
 }

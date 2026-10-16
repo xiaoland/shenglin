@@ -47,3 +47,9 @@ iPad以系统安全状态passcodeRequired=true及背光off确认09:45:39已锁�
 用户最终要求“不必继续验证，收尾，认为算通过”。据此停止所有补验，不再请求解锁或修改设置。已完成项与HyperOS实测失败写入docs/validation.md；Huawei锁屏接收、各移动端作为锁屏录音源未完成，不伪记为通过。Android本轮只增加只读诊断，最终单元测试/构建/lint已通过；不再扩大代码范围。iPad独立runner已退出并卸载，正式App、原配对和原1条录音保留，最后只读音量0.31514084。
 
 最终收尾：Android采样/排程/logcat均停止，两端无录音；Huawei3/15、新机30/150，三项临时撤销的蓝牙权限恢复。电池/scope/配对不变。Huawei锁屏下留存两条本轮测试录音，路径见验收记录，不再请求解锁。全部本轮必需清理已完成，剩余未测项按用户决定关闭；仅提交两处Android诊断、验收记录与本任务包，其他安装任务改动留在工作区。
+
+## 0.2 beta.3 发布（进行中）
+
+用户授权 push & release，Android 交付 ARM APK。沿用预发布序列 v0.2.0-beta.3，Android 为0.2.0-beta.3 (2)，Apple为0.2.0 (7)。Android owner负责独立持久发布签名、仅arm64/armv7的release APK与产物检查；Apple owner负责隔离已提交源码的Mac开发签名DMG和iPad无签名IPA；root负责README/安装说明、源提交、推送和Release。签名材料不提交，已有不同签名开发安装不自动卸载。
+
+继续保留其他任务的未提交安装脚本与文档改动，不能带入tag或二进制。发布只做打包与签名/架构/隐私内容/校验值检查，不恢复已停止的硬件验收。发布完成条件为main正常快进推送、tag明确指向已提交源、三个安装包及SHA256SUMS上传并核对远端内容；HyperOS锁屏限制随Release说明。
