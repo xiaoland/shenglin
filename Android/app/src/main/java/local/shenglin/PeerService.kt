@@ -4,6 +4,8 @@ import android.app.*
 import android.content.*
 import android.media.AudioManager
 import android.os.*
+import java.io.FileDescriptor
+import java.io.PrintWriter
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import local.shenglin.transport.PeerTransport
@@ -40,8 +42,29 @@ class PeerService : Service() {
     private var reportedManual = false
     private val mutableState = MutableStateFlow(ServiceUiState())
     val state = mutableState.asStateFlow()
+    @Volatile private var lastTickElapsed = 0L
+    @Volatile private var tickCount = 0L
+    @Volatile private var maxTickGapMs = 0L
     private val tick = object : Runnable {
-        override fun run() { observer.sample(); reconcile(); handler.postDelayed(this, 1000) }
+        override fun run() {
+            val now = SystemClock.elapsedRealtime()
+            if (lastTickElapsed != 0L) maxTickGapMs = maxOf(maxTickGapMs, now - lastTickElapsed)
+            lastTickElapsed = now; tickCount++
+            observer.sample(); reconcile(); handler.postDelayed(this, 1000)
+        }
+    }
+    override fun dump(fd: FileDescriptor, writer: PrintWriter, args: Array<out String>?) {
+        // This read-only snapshot does not navigate the UI. Binder delivery may wake
+        // the process: avoid repeated dumps during lock-screen tests. Never include
+        // pairing codes, keys or user device names here.
+        val snapshot = state.value
+        writer.println("enabled=${snapshot.enabled} recording=${snapshot.recording} demand=$demand manual=$inheritedManual")
+        writer.println("volumeResult=${if (::volume.isInitialized) volume.result() else "uninitialized"} volumeStatus=${snapshot.volumeStatus}")
+        writer.println("tickCount=$tickCount maxTickGapMs=$maxTickGapMs tickAgeMs=${if (lastTickElapsed == 0L) -1 else SystemClock.elapsedRealtime() - lastTickElapsed}")
+        writer.println("transport=${transport?.diagnostics() ?: "unavailable"}")
+        snapshot.peers.forEachIndexed { index, peer ->
+            writer.println("peer[$index] platform=${peer.platform} lan=${peer.lanConnected} ble=${peer.bleConnected} spaceEligible=${peer.spaceEligible}")
+        }
     }
     override fun onCreate() {
         super.onCreate()

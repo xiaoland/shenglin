@@ -329,3 +329,28 @@ Compose 实际配对检查完成：手机显示本机码时没有自身候选，
 最终手机媒体音量恢复 3/15，LAN+OR 配置、自动协同和前台服务保留；iPad 实际音量 32%、自动协同开启、本机未录音，两端均确认原 Mac 关系正常。仅清理本轮新录音，原录音保留；独立 iPad 测试 runner 已退出并卸载，正式 App 保留。所有临时采样及日志监听已停止。最终截图为 `local/AndroidValidation/kotlin-final-home.png`、`kotlin-final-devices.png`，iPad 状态证据为 `local/RustMigration/ipad-final-main.txt` 和 `ipad-final-details.txt`。
 
 本轮未覆盖长期锁屏与 OEM 回收、Android 双真机、双方均使用 Wi-Fi 的拓扑、32 位硬件运行或所有第三方录音应用。iPad 私有接口及既有后台心跳暂不可读仍是边界，未发布正式分发版。
+
+
+## 双 Android、后台与锁屏补验（2026-10-15 至 16）
+
+本轮在迁移提交 `419a24c` 后补充 Huawei JKM-AL00a（Android 9）与 24069RA21C（Android 16）双实机。保留已有配对与空间条件，新增两台 Android 的配对；Mac 按用户要求只验后台，不锁定工作 Mac。用户于 10 月 16 日要求停止进一步验证并接受当前结果。这个验收决定不改变以下实测结果，也不将未完成项记为通过。
+
+| 场景 | 实测结果 |
+| --- | --- |
+| 新 Android 录音 → Huawei Home 后台 | 325 个样本及后续尾段确认媒体音量 8→3→8。 |
+| Huawei 录音 → 新 Android Home 后台 | 350 个样本确认媒体音量 40→30→40。 |
+| Huawei 录音 → Mac 后台 | Mac 无可见主窗口且非前台，进程保持不变，收到请求后仅一个输出 IO 起止周期。 |
+| Mac 录音 → iPad 后台 | Settings 在前台、声邻持续为 runningBackground；420 个样本确认 0.31514084→0.05→平滑恢复原值。 |
+| Mac 录音 → iPad 锁屏超过 5 分钟 | 系统安全状态要求密码、背光关闭；2288 个样本覆盖约 500 秒，只有一次降低和恢复，最终仍锁定且为原音量。 |
+| Huawei 录音 → 新 Android 锁屏超过 5 分钟，Wi-Fi 路径 | 失败，媒体音量始终为 40；同一源录音被 Mac 和 iPad 正常响应。 |
+| Huawei 锁屏接收、两台 Android 与 iPad 作为录音源时锁屏 | 未完成。Huawei 等待锁屏期间，新机录音源也自动锁屏，点击未产生真实录音；随后按用户要求停止，不计为通过。 |
+
+新 Android 的失败已定位到 HyperOS 的厂商冻结策略。隔离 BLE 后的重复诊断中，系统确认 connectedDevice 前台服务仍存在，但屏幕关闭约 5 秒后，GreezeManager 冻结声邻 UID 并销毁其 TCP socket；内核 `cgroup.events` 显示 `frozen=1`。AOSP 的 `isFrozen=false` 未反映该厂商机制。解锁后同一 PID 恢复，记录到最长执行间隔 312550 毫秒。实际电池设置为 `Battery saver (recommended)`；用户选择保持此设置并记录限制，因此没有测试 `No restrictions`，不能承诺修改该设置可解决问题，也没有增加未经验证的保活机制。
+
+Android 本次仅新增只读 Service/Transport 诊断：执行间隔、链路认证、上次空间判定与入站租约状态，不输出配对密钥、验证码或设备名，也不推进空间 gate 或修改账本。Binder 诊断调用可能唤醒进程，正式锁屏采样不反复调用它。最终诊断版的单元测试、APK 构建与 lint 通过。没有改变协议、配对、音量算法或电池策略。
+
+Mac 首轮后台观察仍出现 7 个心跳暂不可读样本；后续 8 分钟按生产 Swift 解码和时间条件读取 8916 次均有效，最大心跳年龄 1.867 秒，同窗口 3128 个 GUI 状态无输入错误。未定位这项既有瞬时诊断问题，没有放宽阈值。
+
+iPad 音量由独立 runner 只读系统 Audio/Video 音量，基线与正式界面的四舍五入显示一致；普通未激活 AVAudioSession 的音量读数不一致，未采用。锁定起点以系统安全状态和背光为准，Darwin 锁定通知有延迟。设备通过 USB 供电，以上结果不代表自然深度 Doze、整夜待机或所有厂商后台策略。原始证据与分端索引位于 `local/BackgroundValidation/`，包括 `INDEX.md`、`ipad-locked-summary.json` 和 `heartbeat-audit/`。
+
+收尾已停止所有采样、日志监听与录音排程，两台 Android 无活动录音。Huawei 媒体恢复 3/15；新机按次日恢复工作时的可信基线恢复 30/150，临时撤销的三项蓝牙权限已恢复。电池策略、空间设置与配对保持不变。iPad 独立 runner 已退出并卸载，正式 App 与原录音保留，最后实际音量为 0.31514084。Huawei 仍锁定，保留已确认的两条测试录音 `/sdcard/Sounds/20261015_222304.m4a`、`/sdcard/Sounds/20261015_222934.m4a`，没有为删除而再次请求解锁；新机的旧测试录音已通过录音器界面删除。

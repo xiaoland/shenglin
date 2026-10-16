@@ -15,6 +15,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import local.shenglin.SecureStore
+import local.shenglin.ble.BleProtocol
 import local.shenglin.ble.BlePeers
 import local.shenglin.core.Crypto
 import local.shenglin.core.Pairing
@@ -101,6 +102,8 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     private val verifiedWifi = HashSet<String>()
     private val verifiedBle = HashSet<String>()
     private val spaceGates = HashMap<String, PeerState.SpaceGate>()
+    private val lastSpaceEvaluation = HashMap<String, SpaceEvaluation>()
+    private val lastInboundUpdate = HashMap<String, InboundUpdate>()
     private val blePeers: BlePeers
 
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -135,6 +138,13 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     private var lastManualTakeover: Boolean? = null
     private var stopGeneration = 0L
     private var stopDrainTimeout: Runnable? = null
+
+    private data class SpaceEvaluation(val allowed: Boolean, val predicate: Boolean, val wallMillis: Long)
+    private data class InboundUpdate(
+        val path: String, val revision: Long, val known: Boolean, val quiet: Boolean,
+        val accepted: Boolean, val spaceAllowed: Boolean, val reason: String,
+        val wallMillis: Long, val elapsedMillis: Long,
+    )
 
     init {
         blePeers = BlePeers(this.context, object : BlePeers.Listener {
@@ -373,6 +383,7 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         val link = links.remove(id)
         link?.stop()
         verifiedLan.remove(id); verifiedWifi.remove(id); verifiedBle.remove(id); spaceGates.remove(id)
+        lastSpaceEvaluation.remove(id); lastInboundUpdate.remove(id)
         val activePairing = pairServer != null || pairSocket != null || pairInitiator != null
         if (TransportLifecycle.clearPairingSnapshotOnForget(pairingStatus, pairingPeerId, id, activePairing)) {
             pairingStatus = "idle"; pairingPeerId = null
@@ -391,6 +402,58 @@ class PeerTransport(context: Context, private val listener: Listener, private va
             val ble = record.id in verifiedBle
             Peer(record.id, record.name, record.platform, lan || ble, lan, ble, spaceEvidence(record.id))
         }.sortedBy { it.name.lowercase(Locale.ROOT) }
+    }
+
+    /** Read-only snapshot for service diagnostics; does not advance a SpaceGate or expose credentials. */
+    fun diagnostics(): String {
+        check(Looper.myLooper() == Looper.getMainLooper()) { "必须在主线程读取" }
+        val now = nowSeconds()
+        val records = ledger.records()
+        val rows = JSONArray()
+        peers.values.sortedBy { it.name.lowercase(Locale.ROOT) }.forEachIndexed { index, peer ->
+            val record = records[peer.id]
+            val evaluation = lastSpaceEvaluation[peer.id]
+            val inbound = lastInboundUpdate[peer.id]
+            rows.put(JSONObject()
+                .put("peerIndex", index)
+                .put("platform", peer.platform)
+                .put("localPairRole", peer.localRole)
+                .put("expectedRemoteRole", remoteRole(peer.localRole))
+                .put("bleCentral", BleProtocol.central(peer.platform, peer.localRole))
+                .put("lanAuthenticated", peer.id in verifiedLan)
+                .put("wifiAuthenticated", peer.id in verifiedWifi)
+                .put("bleAuthenticated", peer.id in verifiedBle)
+                .put("spacePredicate", spacePredicate(peer.id))
+                .put("lastGateAllowed", evaluation?.allowed)
+                .put("lastGatePredicate", evaluation?.predicate)
+                .put("lastGateWallMillis", evaluation?.wallMillis)
+                .put("leaseRevision", record?.revision)
+                .put("leaseValidUntil", record?.validUntil)
+                .put("leaseRemainingSeconds", record?.validUntil?.let { (it - now).coerceAtLeast(0) })
+                .put("lastInbound", inbound?.let { event -> JSONObject()
+                    .put("path", event.path)
+                    .put("revision", event.revision)
+                    .put("known", event.known)
+                    .put("quiet", event.quiet)
+                    .put("accepted", event.accepted)
+                    .put("spaceAllowed", event.spaceAllowed)
+                    .put("reason", event.reason)
+                    .put("wallMillis", event.wallMillis)
+                    .put("elapsedMillis", event.elapsedMillis)
+                })
+            )
+        }
+        return JSONObject()
+            .put("started", started)
+            .put("enabled", enabled)
+            .put("networkScope", networkScope)
+            .put("spaceMode", spaceMode)
+            .put("lanNetworkAvailable", lanNetwork != null)
+            .put("lanMedium", lanMedium)
+            .put("activeLeaseCount", ledger.activeCount(now))
+            .put("manualTakeover", ledger.manualTakeover())
+            .put("peers", rows)
+            .toString()
     }
 
     fun discovered(): List<Peer> {
@@ -818,7 +881,7 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     }
 
     private fun receiveUpdate(link: StateLink, update: PeerState.Update, socket: Socket, generation: Long) {
-        val ack = acceptRemoteUpdate(link.peer, update)
+        val ack = acceptRemoteUpdate(link.peer, update, "lan")
         try { link.send(socket, generation, "ack", JSONObject().put("kind", "ack").put("ack", Wire.json(ack))) }
         catch (error: Exception) { logFailure("ack-build", error); link.stop() }
     }
@@ -826,14 +889,24 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     private fun receiveBleUpdate(peerId: String, update: PeerState.Update): PeerState.Ack {
         val peer = peers[peerId]
         require(peer != null && !peer.pending) { "未知 BLE 配对设备" }
-        return acceptRemoteUpdate(peer, update)
+        return acceptRemoteUpdate(peer, update, "ble")
     }
 
-    private fun acceptRemoteUpdate(peer: PeerRecord, update: PeerState.Update): PeerState.Ack {
+    private fun acceptRemoteUpdate(peer: PeerRecord, update: PeerState.Update, path: String): PeerState.Ack {
         val now = nowSeconds()
         val allowed = spaceEvidence(peer.id)
         val accepted = if (allowed) update else PeerState.Update.signed(update.origin, update.revision, false, true, update.validUntil, null, peer.key)
         val change = ledger.accept(accepted, peer.id, remoteRole(peer.localRole), peer.key, now)
+        val reason = when {
+            !allowed -> "outsideSpace"
+            !change.accepted -> "ledgerRejected"
+            !update.known -> "remoteStateUnknown"
+            else -> "accepted"
+        }
+        lastInboundUpdate[peer.id] = InboundUpdate(
+            path, update.revision, update.known, update.quiet, change.accepted, allowed, reason,
+            System.currentTimeMillis(), SystemClock.elapsedRealtime(),
+        )
         if (change.accepted) persist()
         var result = if (!allowed) "outsideSpace" else if (update.known) { if (update.quiet) "applied" else "restored" } else "unknown"
         val volumeResult = dispatchDemand(true)
@@ -841,9 +914,14 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         return PeerState.Ack.signed(localRole(peer.localRole), update.revision, update.quiet, result, null, peer.key)
     }
 
-    private fun spaceEvidence(peerId: String): Boolean = TransportLifecycle.spaceAllowed(
-        spaceGates, peerId, requireBoth, peerId in verifiedBle, selectedNetworkProof(peerId), nowSeconds(),
-    )
+    private fun spaceEvidence(peerId: String): Boolean {
+        val predicate = spacePredicate(peerId)
+        val allowed = TransportLifecycle.spaceAllowed(
+            spaceGates, peerId, requireBoth, peerId in verifiedBle, selectedNetworkProof(peerId), nowSeconds(),
+        )
+        lastSpaceEvaluation[peerId] = SpaceEvaluation(allowed, predicate, System.currentTimeMillis())
+        return allowed
+    }
 
     private fun spacePredicate(peerId: String): Boolean = TransportLifecycle.spacePredicate(
         requireBoth, peerId in verifiedBle, selectedNetworkProof(peerId),
