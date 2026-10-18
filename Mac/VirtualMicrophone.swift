@@ -18,14 +18,17 @@ struct CaptureDiagnostics: Codable {
 }
 
 final class VirtualMicrophone {
-    private enum Counter { static let tapped = 0, busy = 1, conversion = 2, pushFailed = 3, pushed = 4 }
+    private enum Counter { static let tapped = 0, busy = 1, conversion = 2, pushFailed = 3, pushed = 4, queued = 5 }
     private static let audioPush: AudioObjectPropertySelector = 0x4e414d50 // NAMP
     private static let deviceMute: AudioObjectPropertySelector = 0x4e414d44 // NAMD
     private static let deviceList: AudioObjectPropertySelector = 0x4e414453 // NADS
-    private var engine = AVAudioEngine()
+    private var inputUnit: AudioUnit?
+    private var inputBuffer: AVAudioPCMBuffer?
+    private var converter: AVAudioConverter?
+    private var targetFormat: AVAudioFormat?
     private let queue = DispatchQueue(label: "Shenglin.VirtualMicrophone")
-    // One push may still be in Core Audio when the next tap arrives.
-    private let pending = DispatchSemaphore(value: 3)
+    // Preserve the three 100 ms tap buffers' backlog budget when AUHAL uses smaller callbacks.
+    private var pendingFrameLimit: Int64 = 0
     private let statusLock = NSLock()
     private var pushFailure: OSStatus?
     private var running = false
@@ -42,15 +45,15 @@ final class VirtualMicrophone {
     private let sourceUID: String?
     private let outputSampleRate: Int
     private let outputChannels: Int
-    private let counters = UnsafeMutablePointer<Int64>.allocate(capacity: 5)
+    private let counters = UnsafeMutablePointer<Int64>.allocate(capacity: 6)
 
     init(sourceUID: String? = nil, sampleRate: Int = 48000, channels: Int = 2) {
         self.sourceUID = sourceUID
         outputSampleRate = sampleRate
         outputChannels = channels
-        counters.initialize(repeating: 0, count: 5)
+        counters.initialize(repeating: 0, count: 6)
     }
-    deinit { counters.deinitialize(count: 5); counters.deallocate() }
+    deinit { releaseInput(); counters.deinitialize(count: 6); counters.deallocate() }
 
     private func add(_ value: Int64, to index: Int) {
         OSAtomicAdd64Barrier(value, counters.advanced(by: index))
@@ -149,7 +152,7 @@ final class VirtualMicrophone {
                 })
             }
             let currentDevice = try physicalInputDevice()
-            if running && (!engine.isRunning || sourceDeviceID != currentDevice) { stop() }
+            if running && (!isCapturing || sourceDeviceID != currentDevice) { stop() }
             if !running { try start(device: currentDevice) }
         }
         return DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedDevices)
@@ -206,38 +209,76 @@ final class VirtualMicrophone {
             throw NSError(domain: "Shenglin", code: 4,
                           userInfo: [NSLocalizedDescriptionKey: "声邻没有麦克风权限，请在系统设置的“隐私与安全性 → 麦克风”中允许访问"])
         }
-        engine = AVAudioEngine()
-        let input = engine.inputNode
-        if let unit = input.audioUnit {
+        var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
+            componentSubType: kAudioUnitSubType_HALOutput, componentManufacturer: kAudioUnitManufacturer_Apple,
+            componentFlags: 0, componentFlagsMask: 0)
+        guard let component = AudioComponentFindNext(nil, &description) else {
+            throw NSError(domain: "Shenglin", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "无法创建物理麦克风输入"])
+        }
+        var created: AudioUnit?
+        try Self.check(AudioComponentInstanceNew(component, &created), "无法创建物理麦克风输入")
+        guard let unit = created else {
+            throw NSError(domain: "Shenglin", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "物理麦克风输入未创建"])
+        }
+        inputUnit = unit
+        do {
+            // An input-only AUHAL keeps each selected source independent of the system output route.
+            var enabled: UInt32 = 1, disabled: UInt32 = 0
+            try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                kAudioUnitScope_Input, 1, &enabled, UInt32(MemoryLayout<UInt32>.size)), "无法启用物理麦克风")
+            try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_EnableIO,
+                kAudioUnitScope_Output, 0, &disabled, UInt32(MemoryLayout<UInt32>.size)), "无法关闭麦克风输出")
             var selected = device
             try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice,
                 kAudioUnitScope_Global, 0, &selected, UInt32(MemoryLayout<AudioObjectID>.size)), "无法选择物理麦克风")
-        }
-        let source = input.outputFormat(forBus: 0)
-        guard source.sampleRate > 0, source.channelCount > 0,
-              let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
-                                         sampleRate: Double(outputSampleRate), channels: source.channelCount,
-                                         interleaved: false) else {
-            throw NSError(domain: "Shenglin", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "物理麦克风格式不可用"])
-        }
-        let direct = source.sampleRate == Double(outputSampleRate) &&
-            source.commonFormat == .pcmFormatFloat32 && !source.isInterleaved
-        let converter = direct ? nil : AVAudioConverter(from: source, to: target)
-        guard direct || converter != nil else {
-            throw NSError(domain: "Shenglin", code: 2,
-                          userInfo: [NSLocalizedDescriptionKey: "物理麦克风格式无法转换"])
-        }
-        input.installTap(onBus: 0, bufferSize: 1024, format: source) { [weak self, converter] buffer, when in
-            self?.forward(buffer, when: when, converter: converter, target: target)
-        }
-        do {
+            var hardware = AudioStreamBasicDescription()
+            var size = UInt32(MemoryLayout<AudioStreamBasicDescription>.size)
+            try Self.check(AudioUnitGetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Input, 1, &hardware, &size), "无法读取物理麦克风格式")
+            guard hardware.mSampleRate > 0, hardware.mChannelsPerFrame > 0,
+                  let source = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                      sampleRate: hardware.mSampleRate, channels: hardware.mChannelsPerFrame, interleaved: false),
+                  let target = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                      sampleRate: Double(outputSampleRate), channels: source.channelCount, interleaved: false) else {
+                throw NSError(domain: "Shenglin", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "物理麦克风格式不可用"])
+            }
+            // AUHAL can change PCM layout, but sample-rate conversion belongs after capture.
+            var format = source.streamDescription.pointee
+            try Self.check(AudioUnitSetProperty(unit, kAudioUnitProperty_StreamFormat,
+                kAudioUnitScope_Output, 1, &format, size), "无法设置物理麦克风格式")
+            let direct = source.sampleRate == Double(outputSampleRate)
+            converter = direct ? nil : AVAudioConverter(from: source, to: target)
+            guard direct || converter != nil else {
+                throw NSError(domain: "Shenglin", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "物理麦克风格式无法转换"])
+            }
+            targetFormat = target
+            var callback = AURenderCallbackStruct(inputProc: { context, flags, time, _, frames, _ in
+                Unmanaged<VirtualMicrophone>.fromOpaque(context).takeUnretainedValue()
+                    .capture(flags: flags, time: time, frames: frames)
+            }, inputProcRefCon: Unmanaged.passUnretained(self).toOpaque())
+            try Self.check(AudioUnitSetProperty(unit, kAudioOutputUnitProperty_SetInputCallback,
+                kAudioUnitScope_Global, 0, &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)), "无法设置麦克风回调")
+            try Self.check(AudioUnitInitialize(unit), "无法初始化物理麦克风")
+            var maximumFrames: UInt32 = 0
+            size = UInt32(MemoryLayout<UInt32>.size)
+            try Self.check(AudioUnitGetProperty(unit, kAudioUnitProperty_MaximumFramesPerSlice,
+                kAudioUnitScope_Global, 0, &maximumFrames, &size), "无法读取麦克风缓冲大小")
+            guard maximumFrames > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: source, frameCapacity: maximumFrames) else {
+                throw NSError(domain: "Shenglin", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "无法分配麦克风缓冲"])
+            }
+            inputBuffer = buffer
+            pendingFrameLimit = Int64(source.sampleRate * 0.3)
             statusLock.lock()
             pushFailure = nil
             statusLock.unlock()
-            let pushedAtStart = OSAtomicAdd64Barrier(0, counters.advanced(by: Counter.pushed))
-            try engine.start()
             try Self.check(primeDestinations(), "无法预充专用麦克风")
+            try Self.check(AudioOutputUnitStart(unit), "无法启动物理麦克风")
             running = true
             sourceDeviceID = device
             sourceSampleRate = source.sampleRate
@@ -248,33 +289,64 @@ final class VirtualMicrophone {
                     "sourceSampleRate": source.sampleRate, "sourceChannels": source.channelCount,
                     "outputSampleRate": outputSampleRate, "outputChannels": outputChannels])
             }
-            // AUHAL may immediately reconfigure a newly started input engine.
-            // Refill only if startup churn left the surviving engine without real audio.
-            let startedEngine = engine
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
-                guard let self, self.running, self.engine === startedEngine else { return }
-                guard OSAtomicAdd64Barrier(0, self.counters.advanced(by: Counter.pushed)) == pushedAtStart else { return }
-                let status = self.primeDestinations()
-                if status != noErr {
-                    self.statusLock.lock()
-                    self.pushFailure = status
-                    self.statusLock.unlock()
-                }
-            }
         } catch {
-            input.removeTap(onBus: 0)
-            engine.stop()
+            releaseInput()
+            queue.sync {}
+            pendingFrameLimit = 0
             throw error
         }
+    }
+
+    private var isCapturing: Bool {
+        guard let unit = inputUnit else { return false }
+        var value: UInt32 = 0
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        return AudioUnitGetProperty(unit, kAudioOutputUnitProperty_IsRunning,
+            kAudioUnitScope_Global, 0, &value, &size) == noErr && value != 0
+    }
+
+    private func capture(flags: UnsafeMutablePointer<AudioUnitRenderActionFlags>,
+                         time: UnsafePointer<AudioTimeStamp>, frames: UInt32) -> OSStatus {
+        guard let unit = inputUnit, let buffer = inputBuffer, let target = targetFormat else {
+            return kAudioUnitErr_Uninitialized
+        }
+        let status: OSStatus
+        if frames > buffer.frameCapacity { status = kAudioUnitErr_TooManyFramesToProcess }
+        else {
+            buffer.frameLength = frames
+            status = AudioUnitRender(unit, flags, time, 1, frames, buffer.mutableAudioBufferList)
+        }
+        guard status == noErr else {
+            statusLock.lock()
+            pushFailure = status
+            statusLock.unlock()
+            return status
+        }
+        forward(buffer, when: AVAudioTime(audioTimeStamp: time, sampleRate: buffer.format.sampleRate),
+                converter: converter, target: target)
+        return noErr
+    }
+
+    private func releaseInput() {
+        if let unit = inputUnit {
+            // Stop callbacks before releasing their unretained owner or reusable PCM buffer.
+            AudioOutputUnitStop(unit)
+            AudioUnitUninitialize(unit)
+            AudioComponentInstanceDispose(unit)
+        }
+        inputUnit = nil
+        inputBuffer = nil
+        converter = nil
+        targetFormat = nil
     }
 
     private func stop() {
         for selector in queue.sync(execute: { Array(destinationSelectors.values) }) {
             AudioForensics.shared.event(selector, "capture-stopped")
         }
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
+        releaseInput()
         queue.sync {}
+        pendingFrameLimit = 0
         running = false
         sourceDeviceID = nil
         sourceSampleRate = nil
@@ -299,7 +371,9 @@ final class VirtualMicrophone {
                          converter: AVAudioConverter?, target: AVAudioFormat) {
         let sourceFrames = Int64(input.frameLength)
         add(sourceFrames, to: Counter.tapped)
-        guard pending.wait(timeout: .now()) == .success else {
+        let queued = OSAtomicAdd64Barrier(sourceFrames, counters.advanced(by: Counter.queued))
+        guard queued <= pendingFrameLimit else {
+            add(-sourceFrames, to: Counter.queued)
             add(sourceFrames, to: Counter.busy)
             return
         }
@@ -309,7 +383,7 @@ final class VirtualMicrophone {
                 input.format.sampleRate).rounded(.up) + 64)
             guard let output = AVAudioPCMBuffer(pcmFormat: target, frameCapacity: capacity) else {
                 add(sourceFrames, to: Counter.conversion)
-                pending.signal()
+                add(-sourceFrames, to: Counter.queued)
                 return
             }
             var supplied = false
@@ -327,7 +401,7 @@ final class VirtualMicrophone {
         guard let output, output.frameLength > 0,
               let channels = output.floatChannelData else {
             add(sourceFrames, to: Counter.conversion)
-            pending.signal()
+            add(-sourceFrames, to: Counter.queued)
             return
         }
         let frames = Int(output.frameLength)
@@ -344,7 +418,7 @@ final class VirtualMicrophone {
             }
         }
         queue.async { [weak self] in
-            defer { self?.pending.signal() }
+            defer { self?.add(-sourceFrames, to: Counter.queued) }
             guard let self else { return }
             let hostTime = when.isHostTimeValid ? when.hostTime : mach_absolute_time()
             let sampleTime = when.isSampleTimeValid ? when.sampleTime : -1
