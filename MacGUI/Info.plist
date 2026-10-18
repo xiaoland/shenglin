@@ -10,7 +10,7 @@
     <key>CFBundleName</key><string>声邻</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.2.0</string>
-    <key>CFBundleVersion</key><string>7</string>
+    <key>CFBundleVersion</key><string>8</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>通过蓝牙与已配对的 iPad 协调媒体音量。</string>
     <key>NSLocalNetworkUsageDescription</key><string>通过局域网与已配对设备协调录音状态和媒体音量。</string>

@@ -357,6 +357,7 @@ private struct SettingsPanel: View {
     @ObservedObject var model: AppModel
     @State private var showingAppPicker = false
     @State private var addingMicrophone = false
+    @State private var showingIPadInstaller = false
 
     var body: some View {
         Form {
@@ -381,6 +382,9 @@ private struct SettingsPanel: View {
                 Button("设置浏览器扩展…", action: model.installBrowserAdapter)
                 Text("每个网页分别调用扩展。通话页先选择“通话”，再开启 Voice；背景页选择“背景”。刷新后需要重新参与。")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("iPad 安装") {
+                Button("安装到 iPad…") { showingIPadInstaller = true }
             }
             Section {
                 DisclosureGroup("已排除 \(model.sources.filter(\.isExcluded).count) 个应用") {
@@ -452,6 +456,9 @@ private struct SettingsPanel: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showingIPadInstaller) {
+            IPadInstallationPanel(model: model.iPadInstallation)
+        }
         .fileImporter(isPresented: $showingAppPicker, allowedContentTypes: [.applicationBundle]) { result in
             switch result {
             case .success(let url): model.addApp(url, microphone: addingMicrophone)

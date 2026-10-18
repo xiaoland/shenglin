@@ -10,7 +10,7 @@ Android 版使用 Kotlin、Jetpack Compose 和 Material 3，源码位于 `Androi
 
 ## 下载与安装
 
-从 [Releases](https://github.com/xiaoland/shenglin/releases) 下载 Android ARM APK（arm64 / armv7）、macOS DMG 和 iPad 无签名 IPA。Android APK 使用独立发布签名，Android 8.0 起可安装；现有调试签名安装不能直接覆盖为发布版，卸载会丢失本机配对。macOS 包使用开发签名、未经 Apple 公证，系统可能阻止运行；iPad 包需用自己的免费 Apple 账号签名安装，无需下载源码，但需定期续签。详情见[安装与分发](manuals/安装与分发.md)。
+从 [Releases](https://github.com/xiaoland/shenglin/releases) 下载 Android ARM APK（arm64 / armv7）、macOS DMG 和 iPad 无签名 IPA。Android APK 使用独立发布签名，Android 8.0 起可安装；现有调试签名安装不能直接覆盖为发布版，卸载会丢失本机配对。macOS 包使用开发签名、未经 Apple 公证，系统可能阻止运行；iPad 包需用自己的免费 Apple 账号签名安装，无需下载源码，但需定期续签。从 0.2 beta.4 起，已准备声邻源码、Xcode 和 Rust 环境的 Mac 也可在“设置…”→“iPad 安装”中为 USB 连接的 iPad 构建、签名并覆盖安装。详情见[安装与分发](manuals/安装与分发.md)。
 
 安装后，在 iPad 上打开声邻并点“添加设备”；在 Mac 主窗口的“设备”中点“添加设备…”，选择 iPad 并输入它显示的六位验证码。两台 Mac 也可通过配对弹窗互相配对。[使用指南](manuals/使用指南.md)说明音量目标、应用排除、专用麦克风和诊断功能。
 

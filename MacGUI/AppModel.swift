@@ -88,6 +88,7 @@ struct PeerDisplay: Identifiable, Equatable {
 }
 
 @MainActor final class AppModel: ObservableObject {
+    let iPadInstallation = IPadInstallationModel()
     @Published private(set) var lastAction = "尚无音量操作"
     @Published private(set) var lastAckSequence: UInt64?
     @Published private(set) var sources = [SourceCandidate]()

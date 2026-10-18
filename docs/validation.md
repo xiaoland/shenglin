@@ -361,3 +361,12 @@ iPad 音量由独立 runner 只读系统 Audio/Video 音量，基线与正式界
 发布标签 `v0.2.0-beta.3` 指向 `553bc2843363a53a61c5a123cdfdc85313538c37`，已推送至 main 并创建[GitHub 预发布](https://github.com/xiaoland/shenglin/releases/tag/v0.2.0-beta.3)。Android 为发布签名、不可调试的 `0.2.0-beta.3 (2)` APK，仅包含 arm64-v8a 和 armeabi-v7a；签名、ZIP 对齐、Rust/JNA 原生库及动态依赖检查通过，缺签名配置会明确失败。Mac 与 iPad 为 `0.2.0 (7)`、arm64，来自已提交源码快照。Mac Release、驱动构建与测试、开发签名和 DMG 验证通过；iPad 沿原 Debug 配置生成无签名 IPA，归档中无开发签名、mobileprovision 或扫描到的设备标识。IPA 仍可能保留编译来源路径。DMG 的额外挂载复核被主机拒绝，未将其记为通过；创建镜像前的同一 staging 已完成严格签名验证。
 
 三个包及 `SHA256SUMS.txt` 已上传。GitHub 返回的四项资产大小和 SHA-256 均与本地一致；重新下载三个安装包后逐项校验通过，下载的校验文件也与本地逐字一致。证据位于 `local/release-beta3/`。此次没有替换设备上的应用，也没有重开用户已停止的实机验收。Android 发布签名不能直接覆盖当前调试签名安装，安装说明及 Release 已写明配对数据风险。
+
+
+## Mac 安装到 iPad（2026-10-18）
+
+Mac 设置新增“iPad 安装”→“安装到 iPad…”入口，使用指定源码目录、本机 Xcode 已登录的开发团队和 USB 连接的 iPad，执行 Rust/iPad 构建、自动签名与覆盖安装。构建使用硬件 UDID，安装及回执核对使用 CoreDevice UUID；签名验证包含应用标识、团队、设备授权及配置文件有效期。失败时停止，不自动卸载应用或清理数据。
+
+隔离测试执行实际安装调用链，覆盖设备筛选、Rust/Xcode/codesign 失败阻断安装、安装工具失败、错误回执不得报告成功及大量输出不阻塞。Mac Release 构建、严格深度签名、Swift 类型检查和既有展示状态检查通过。已从正式 Mac App 界面执行真实构建、签名和覆盖安装，系统安装回执核对通过，界面显示“已安装到 iPad”；用户随后确认没有问题并授权提交与发布 beta。完成标准限定为成功安装，没有将启动、配对或音量功能验证纳入本次验收。
+
+0.2 beta.4 的 Mac 版本为 `0.2.0 (8)`。Android `0.2.0-beta.3 (2)` 和 iPad 无签名 `0.2.0 (7)` 沿用 beta.3 产物，移动端业务代码及既有分发限制不变。Mac 安装入口仍依赖完整 Xcode、源码和 Rust 环境；免费开发签名仍受七天期限限制，不提供自动续签或到期提醒。
