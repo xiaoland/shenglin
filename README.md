@@ -21,4 +21,4 @@ Android 版使用 Kotlin、Jetpack Compose 和 Material 3，源码位于 `Androi
 - [开发与诊断](manuals/开发与诊断.md)：源码构建、驱动、CLI 与诊断工具。
 - [验收记录](docs/validation.md)：真机证据和仍待验证的场景。
 
-图标矢量稿、透明标记和菜单栏单色标记位于 [Design](Design)。项目代码使用 [MIT 许可证](LICENSE)；第三方许可证保留在 [third_party](third_party)。
+图标原稿、多配色与多尺寸素材、平台资源对应关系见 [Logo 素材指南](Design/README.md)。项目代码使用 [MIT 许可证](LICENSE)；第三方许可证保留在 [third_party](third_party)。

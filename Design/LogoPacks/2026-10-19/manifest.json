@@ -1,0 +1,1178 @@
+{
+  "source_commit": "71baa5f5aa54a486484e4a302d181430afc48033",
+  "outputs": [
+    {
+      "path": "png/mark/mark-brand-on-transparent-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "e1d430ff8be961f819d8880865940bbea8366f5bd92ba2648d7d0f74dda3ff80",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "9ac55c359bea727c594f0c0ee23b1b52b254c1edf2dc9f1730be457181797b40",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "6d516b55f64e8a79114b41cc4e2bbf7f2d28b335af440990ac200044e48234dc",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "75a33cf989d8a3ec4b7864d92138fffd1bfe3cc38b4e7b2afef062fa5d2ab62c",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "90812ad08e3b1677c8f501df68aed2afbc5188ce53d2a6bcdcfc2aa2ac6ab078",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "ba6f6e0628d0b54e5899c9375aa2f8b9619e3ae8c93934fd320c9a378837911f",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "166d965bde7d84e4258147182e42f38b9c6c80d71f38a4820733eb5bb06c12e6",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "16e024d879bbb72f0e595e8081a126cdf8f6cc0fc6ff92d77386727ad2ad302c",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-transparent-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "dc3d82b510a9cf1e6ed0231fc521c3da1a126d2252c6055a518e0b4b362070d0",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "9d28cb8a648da0713de2c6e4113078f894cf3951d604745227485a1247a65bf2",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "b17bac4fd291523a230fbf30e08d3cba3a95a8c4f56037c860fc6814f9e276ef",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "9ace98b275d583313b80f40c6e3ce5cc1ce3d4b6f893955a943bd77e2ff31ae7",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "3ec1d774600e9bc89a36bd4bff1fe734ff92f8767e166f07a5d50bb553f97f89",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "42c36aa7f2a738dd5d0f97e8db241545e32c09ad6e12d09b0a224d7d8022f7a3",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "850b3780462ff2d97309e3f4ab2bbb6f186535ca26be203ca1b7b83673fc2baf",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "590d6a36a087c2836c52ada91545d10d625175270a089e06032446190d8bc210",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "eccef853839764510c1ba86c98cd46f0e102e892b8d2ba4d6ae49d14c9e2a7c8",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-white-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "white",
+      "sha256": "f2762d225bc00fbf4ce2c3620432534dce0eb1c6214c8dd04b6d80a7ad5cff22",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "3b6d39c36744db8b8365958df90153f081a08a3a4b2cbaca84dd0d644684a001",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "f20678809e171f623c6f3c890c45b689f1fe7df3f8016670c1d8b08eaa125721",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "dc4109ccfbbbd933fd3fd437e5f561fdde8c1a993814f22e3575d23bf0dd4ac5",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "3381b5916f2aa9c2eed185e78f43b8da10e85499125bb7cc21b2310d2945d831",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "c3cf0e22efad821e7bb625310e50eb46d863c7083d449ae0c342a356c151adcc",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "a80e59636ac9c9a1f1aa89d69721fa9f25679e773cf700c531a70a751b830d39",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "095b08ac520a704809f4357757b41433a06e11eb0bf038e92dceb1b6005cb02a",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "3363a3a49b60fd08372cf2705603a46f60cb180398ce685528bf665dfa04d645",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-brand-on-black-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "brand",
+      "background": "black",
+      "sha256": "ef6a1288e37acc4fd35f8c16fe9b27dae0f3993afdb43f61748524971647eb28",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "6af36bccd1840079752df1a49b6e647afa0a6b9e2bc1256a868db5e1aa6253af",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "7d22ca0bfb9281d1a1ce50af74543a92c350dac5edffd50ea1c370360d3964c5",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "5f9e36086e0d7bfe84648d236d26b2658a74cd5739bce8926a96af888f4d37be",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "2c9a121a088ffaa23cf1a919ceef93773c50e6887079a359828e072e2bbffaec",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "2b25cd11b5256d6cff86a3dc5f73704bb7b8c268715cb32918df6aa390db190b",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "04815fdb99f2e20918c2e2af7b42a36e9d65193515140717c68fc550341c00fa",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "9a2485f322de844b8cb2bb8e9e23dab4763e930e53701e2182c9af5641586b12",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "795c826de829a7654d1cb193ff163c42d025b39ff7594b073fe2d283a50b1ca6",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-transparent-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "transparent",
+      "sha256": "ad8c4f4be63c1459ff5f1cad93dd338510fc19a6b25e9070137839c4268bbda6",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "4f80e1edfa4e705d231a9e77b7f0e456a550c27d5dc72cb0bea50be84216043e",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "7ab0a982339bbb5d5ba9b9be4d5eb02775b829603a4185e7390555c0803a33bc",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "3062c597d83dc174666ae1635b32db0e59b91654d8d4cb56af163f833518f1d8",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "d45f3285f00ace3dc4d0df22579e79f0e01c2bce37632acae6f2c1fc7816a913",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "449a339579a172a5253690ab8b8fafa2254b29c08b6f7a9ee70f72f839071f33",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "ebd7d3a063455d3b0d681a45b664e9b068bd4493068680002bd66bf1dc4ab749",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "05c251ae68eb23fa8c4944011f1f7fc9dda4c684659df0787feb29c5a8ac6ee8",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "105134197b03511e21cd1438e2e9530886d1f721a0c5546f7573f2148a6ccee0",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-white-on-black-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "white",
+      "background": "black",
+      "sha256": "ade2767e5cc4366cf43b7fd6573ba441feae67d16b73af4cb6f5570cef8c2ac4",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "f600d3a161d65c2f59202d101d3a4b64d9924e6644324377cba341291e7afe46",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "e8371c4b1b1c3b80d42506cf025bbf11948611669bbe0f845c48009b6705cf14",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "872094182a7efd148c8725552fdcdc9eb0cab3a043fb6866372c0747c3b9af1c",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "1605fdfb8efe7007da3b0c5f10f62fafd8ed83f79a1ac1161515273a4bc56279",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "ff6b494aa4fddb9d7a4aa3671b5e88ba02bfd3a4827fb94f7d064f388566dee2",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "7b9cfb5210a6f7bade448db450348e836d0ae9a1ccc05f599b967bc771c17999",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "8fa86f27d8815d7e773d519b1b87544cfae16ea9a8f144e7062a7c70575fe252",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "8b48187d108da922cc3d98d2794a54051a74e1d7538abdd2f48000c6555be084",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-transparent-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "transparent",
+      "sha256": "61174d647608847976c4c03ba6684634b29ac15edd1d06fd8c948b7ab2c71e73",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "a0782369854620e036f88da478e0d0587fe3b69998c4e552c31c1251f014dcba",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "1c721564a287a5c050fb39867fc0ee8e8bb67b4268ec3896f424995e16dc5a2d",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "11ea438e4593642e060c341b444725c7606be424471aa579bb8c653678825045",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "482d562dca8c6adb15c4748fc29dff50ac0fa17ddb2014298189512b9ae794df",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "f0ae10c585bbaad7d536d6651765550ed544bb32d9ab0ca606ba01ca049af3b2",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "5670b6d1ea1585352200911f20d14227d8afe9b9c4a4268098932b13333fdbd2",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "0b3fcb6dc339d82dd59186928ccf0e73585083651de9f66ab842bb0b8e0ada3d",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "a21b096b108150e2b9a913863d08a60a3958b23db5518bb55887af5ead3fa34c",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/mark/mark-black-on-white-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "mark",
+      "color": "black",
+      "background": "white",
+      "sha256": "845920376f2658d67584e92448aa5ef9e3df5706d5cc17ca8e89ee61f609e8b6",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "d3b91bc77c237d4871cabf56b03e6e91fb96e5797f295db6a77ba1f46a057dec",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "b3286b84099a60626e8ba75e8018ce137f5ffeec6a6129435caef39d4df7df37",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "45cd6dea2313d6a93250476d1f96d9d974bbdcc9e0fb1faca393780789bc57de",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "cfad7ab4b11b1afb08329888c0629b1241558a2ebad4aa98b3d8c694ae406548",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "2ef09f613cac32575ba238d1abaae298078c0ab6573d9f3f387a54e2a3e01144",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "51aeae29583ce06fb9c93f261a41dd50ab01f0ab11f169ffd71cdecfd012ab2c",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "5caa15ecb769efc30a2c4b073cb761669ba31ea12cf6c14a4b0e1002bc897201",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "5d9d9dffa5c9119d57078e08a2efe038a29e407895fb5287b13d50af0a9edb20",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-transparent-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "transparent",
+      "sha256": "7e83588e0c645565b43613bb13f02461cc37f24dc07000ea25bbb275ac5c6062",
+      "alpha_extrema": [
+        0,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "d09e4436a00f0d193abfb47f63505fa75d099e59f36833ef4c4a927abcdc079d",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "3a3e7f74a2464e5fba36f89bd3cb190ed213c72e665ec02be423561f2b18e282",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "3cb86ee511e7ddef956d972dfc9ece7ac5a033087c88669820f2a980176aa15c",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "a0bb506178af286356a592a7ffc42cd94ea662ea4378121dce9d47772cd64add",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "ce5588b2f329f620259dfd6a8943433e66ee0b8b7702451361625b941690a038",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "def3a925e572a5c6791191593c481ec713837db5a4bfe264aaf871bad41bd66f",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "a23e87c6d1f0d034c1f9c9efe7e8f38cf0802730a9712729ca11ec22ed2acbfe",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "b8b6e37ac4f15b9ed6bfa72e1213220f3ac2cd11ad6ef8a553b7a55a6108b682",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-white-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "white",
+      "sha256": "e35114188c16ed61aea040380f8a46c22c870a3c2e21e8f11c066166bfb20d49",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-16.png",
+      "size": 16,
+      "optical": "micro",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "f7ba523476d4e9bfb6275d2032833c4ddd69240fd27a9587aed8a4cc9b6cd257",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-24.png",
+      "size": 24,
+      "optical": "micro",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "cd223f8ac08aa557c2875697bcd572d027c51529b68a59ab5d6004f8d6a6e37c",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-32.png",
+      "size": 32,
+      "optical": "compact",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "df257390b979e6acea1e3c31105b4624d4bcf289975224eadd4302636adf2a92",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-48.png",
+      "size": 48,
+      "optical": "compact",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "9e54b65708b362f93bcc4af65988297ba68aeceff038f72003da357b2aff91d0",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-64.png",
+      "size": 64,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "55a3184c16c30b67089987d43838b70c21f4dc520ee587dcf9211b7187a36ff5",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-128.png",
+      "size": 128,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "e23ee22bd6560fa5772c22601e1f399abd0fcebcc0f80f1063423291a01f7211",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-256.png",
+      "size": 256,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "7930adf0324782dce78a8975c9869c5a4efd15e729e738751f85122f7318a9a4",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-512.png",
+      "size": 512,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "e9e0eaddaf613ad8f51887da444afa1b6f9fc3f76c7771365f987bb029ea94b1",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    },
+    {
+      "path": "png/app-icon/app-icon-brand-on-black-1024.png",
+      "size": 1024,
+      "optical": "regular",
+      "kind": "app-icon",
+      "color": "brand",
+      "background": "black",
+      "sha256": "58332e85c619321aae2563314bc6a4d554db70d57f3d893df402019cddf85027",
+      "alpha_extrema": [
+        255,
+        255
+      ]
+    }
+  ],
+  "png_count": 90,
+  "svg_master_count": 30,
+  "platform_original_png_count": 12
+}

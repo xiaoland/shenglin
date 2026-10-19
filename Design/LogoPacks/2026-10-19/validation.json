@@ -1,0 +1,20 @@
+{
+  "svg_parsed": 30,
+  "no_embedded_bitmaps": true,
+  "no_font_dependencies": true,
+  "png_size_and_alpha_checks": 90,
+  "regular_app_icon_source_pixel_difference_max_rgba": [
+    255,
+    255,
+    255,
+    54
+  ],
+  "visual_review": "contact-sheet viewed at native resolution; micro silhouettes, compact three holes, regular five holes; white and black backgrounds legible; no clipping",
+  "regular_source_white_composite_mean_absolute_rgb_difference": [
+    0.01739501953125,
+    0.011242866516113281,
+    0.010125160217285156
+  ],
+  "source_equivalence_note": "Geometry preserved; clip/mask converted to direct path gives antialiasing edge differences, not pixel-identical exports. Raw RGB maxima include invisible transparent-pixel RGB.",
+  "source_commit": "71baa5f5aa54a486484e4a302d181430afc48033"
+}
