@@ -238,7 +238,7 @@ class MainActivity : ComponentActivity() {
 @Composable private fun InfoCard(title: String, body: String) {
     OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, style = MaterialTheme.typography.titleMedium); Text(body) } }
 }
-private fun platform(value: String) = when (value) { "mac" -> "Mac"; "ipad" -> "iPad"; "android" -> "Android"; else -> "声邻设备" }
+private fun platform(value: String) = when (value) { "mac" -> "Mac"; "ipad" -> "iPad"; "android" -> "Android"; "windows" -> "Windows"; else -> "声邻设备" }
 private fun connectionText(peer: PeerUiState) = when { peer.lanConnected && peer.bleConnected -> "局域网、蓝牙均已认证"; peer.lanConnected -> "局域网已认证"; peer.bleConnected -> "蓝牙已认证"; else -> "等待连接或激活" }
 private fun pairingMessage(status: String): String? = when (status) {
     "verifying" -> "正在验证配对码…"; "verified" -> "验证码已通过，正在完成安全连接…"; "activated" -> "配对成功，设备已完成双向认证"

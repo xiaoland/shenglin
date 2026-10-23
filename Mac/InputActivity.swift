@@ -28,7 +28,7 @@ func activeInputDevices(ignoringPIDs: Set<pid_t> = []) -> [pid_t: Set<AudioObjec
     var running = [pid_t: Set<AudioObjectID>]()
     let ownPID = getpid()
     let ownExecutable = executablePath(pid: ownPID)
-    for object in objects {
+    for object in objects.prefix(Int(size) / MemoryLayout<AudioObjectID>.size) {
         guard let active = audioProperty(object, kAudioProcessPropertyIsRunningInput) else { return nil }
         guard active == 1 else { continue }
         guard let rawPID = audioProperty(object, kAudioProcessPropertyPID) else { return nil }
@@ -44,12 +44,15 @@ func activeInputDevices(ignoringPIDs: Set<pid_t> = []) -> [pid_t: Set<AudioObjec
             var devicesSize: UInt32 = 0
             guard AudioObjectGetPropertyDataSize(object, &devicesAddress, 0, nil, &devicesSize) == noErr else { return nil }
             var devices = [AudioObjectID](repeating: 0, count: Int(devicesSize) / MemoryLayout<AudioObjectID>.size)
-            guard !devices.isEmpty else { return nil }
+            // Tap-only processes can report input activity with no input device association.
+            guard !devices.isEmpty else { continue }
             let devicesStatus = devices.withUnsafeMutableBufferPointer { buffer in
                 AudioObjectGetPropertyData(object, &devicesAddress, 0, nil, &devicesSize, buffer.baseAddress!)
             }
             guard devicesStatus == noErr else { return nil }
-            running[pid, default: []].formUnion(devices)
+            let actual = devices.prefix(Int(devicesSize) / MemoryLayout<AudioObjectID>.size)
+            guard !actual.isEmpty else { continue }
+            running[pid, default: []].formUnion(actual)
         }
     }
     return running
@@ -91,10 +94,12 @@ final class InputActivity {
         let sourceUID: String?
         let sampleRate: Int
         let channels: Int
+        let remoteSource: RemoteMicrophoneSource?
         init(_ device: DedicatedMicrophone) {
             sourceUID = device.sourceUID
             sampleRate = device.outputSampleRate
             channels = device.outputChannels
+            remoteSource = device.remoteSource
         }
     }
     private var previous: Set<pid_t>?
@@ -188,15 +193,18 @@ final class InputActivity {
             return
         }
         let groups = Dictionary(grouping: microphones, by: Group.init)
+        do { try VirtualMicrophone.publish(microphones) }
+        catch { unavailable(error.localizedDescription); return }
         for key in Array(captures.keys) where groups[key] == nil { captures.removeValue(forKey: key)?.suspend() }
         var problems = [String]()
         for (key, devices) in groups {
             let capture = captures[key] ?? VirtualMicrophone(sourceUID: key.sourceUID,
-                sampleRate: key.sampleRate, channels: key.channels)
+                sampleRate: key.sampleRate, channels: key.channels, remoteSource: key.remoteSource)
             captures[key] = capture
             do {
                 considered.subtract(try capture.update(inputs: inputs, devices: microphones,
                     group: devices, muted: muted))
+                if let error = capture.remoteError { problems.append("\(devices.map(\.name).joined(separator: "、"))：\(error)") }
             } catch {
                 capture.suspend()
                 problems.append("\(devices.map(\.name).joined(separator: "、"))：\(error.localizedDescription)")

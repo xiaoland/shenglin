@@ -40,8 +40,8 @@ public enum PeerName {
 }
 
 public enum PeerPlatform: String, Codable {
-    case mac, ipad, android
-    public var displayName: String { switch self { case .mac: "Mac"; case .ipad: "iPad"; case .android: "Android" } }
+    case mac, ipad, android, windows
+    public var displayName: String { switch self { case .mac: "Mac"; case .ipad: "iPad"; case .android: "Android"; case .windows: "Windows" } }
 }
 
 public enum PeerTransport: String, Codable { case wifiDirect }

@@ -2,6 +2,7 @@
 .DS_Store
 DerivedData/
 /local/
+local.noindex/
 dist/
 *.xcuserstate
 xcuserdata/
@@ -9,3 +10,5 @@ __pycache__/
 BrowserExtension/node_modules/
 BrowserExtension/.wxt/
 BrowserExtension/.output/
+
+/Windows/target/

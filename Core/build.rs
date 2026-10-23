@@ -5,7 +5,9 @@ fn main() {
         .unwrap()
         .to_path_buf();
     let target = env::var("TARGET").unwrap();
-    let default = if target.contains("ios") {
+    let default = if target.contains("windows") {
+        "boringssl-windows"
+    } else if target.contains("ios") {
         "boringssl-ios"
     } else {
         "boringssl-macos"
@@ -19,14 +21,18 @@ fn main() {
         .compile("shenglin_pake");
     println!("cargo:rustc-link-search=native={lib}");
     println!("cargo:rustc-link-lib=static=crypto");
-    println!(
-        "cargo:rustc-link-lib={}",
-        if target.contains("android") {
-            "c++_static"
-        } else {
-            "c++"
-        }
-    );
+    if !target.contains("msvc") {
+        println!(
+            "cargo:rustc-link-lib={}",
+            if target.contains("windows-gnu") {
+                "static=c++"
+            } else if target.contains("android") {
+                "c++_static"
+            } else {
+                "c++"
+            }
+        );
+    }
     println!("cargo:rerun-if-env-changed=SHENGLIN_CRYPTO_LIB_DIR");
     println!("cargo:rerun-if-changed=../NativePAKE/NativePAKE.c");
     println!("cargo:rerun-if-changed=../NativePAKE/include/NativePAKE.h");

@@ -6,6 +6,8 @@ use std::{collections::HashMap, sync::Mutex};
 use subtle::ConstantTimeEq;
 mod pairing;
 pub use pairing::*;
+mod audio;
+pub use audio::*;
 uniffi::setup_scaffolding!();
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum CoreError {

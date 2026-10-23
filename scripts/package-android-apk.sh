@@ -16,7 +16,7 @@ python3 - "$apk" "$build_tools/aapt" <<'PY'
 import subprocess, sys, zipfile
 apk, aapt = sys.argv[1:]
 info = subprocess.check_output([aapt, 'dump', 'badging', apk], text=True)
-assert "package: name='local.shenglin' versionCode='2' versionName='0.2.0-beta.3'" in info, 'Unexpected package/version'
+assert "package: name='local.shenglin' versionCode='3' versionName='0.2.0-beta.6'" in info, 'Unexpected package/version'
 assert 'application-debuggable' not in info, 'Release must not be debuggable'
 with zipfile.ZipFile(apk) as z:
     libs = [name for name in z.namelist() if name.startswith('lib/') and name.endswith('.so')]

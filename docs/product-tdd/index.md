@@ -8,7 +8,7 @@
 
 当前配对信任记录统一为 `PairedPeer`：密钥标识一条已认证的配对关系，记录对端自报名称、平台和本端握手角色。平台决定目前可连接的传输组合，不决定对等音量协同的产品地位。Mac↔Mac 握手后先暂存密钥，实际 Wi-Fi 双向认证成功才正式保存；Mac↔iPad 也须通过新密钥的认证状态激活。既有配对采用 SPAKE2 版本 3，状态来源使用发起方/响应方角色；其记录与链路行为继续保留，新平台配对走下文的 v4 路径。设备改名在已认证 Wi-Fi 连接上以配对密钥签名同步。
 
-Android 接入采用三端共用的直接局域网配对：Mac、iPad、Android 均可显示验证码或发现对端并输入验证码，配对后各边独立认证、独立续租，不经其他设备转发。新配对使用 `_shenglin-pair4._tcp` 和 SPAKE2 v4，`t` 字段携带 `mac`、`ipad` 或 `android`；双方平台和名称一起纳入认证 transcript，不能从发现结果推定平台。transcript 以 `Shenglin-SPAKE2-v4` 开头，后接四字节大端长度前缀的 session、发起方名称、响应方名称、发起方平台、响应方平台、发起方消息、响应方消息；HKDF 的用途域也使用 v4。状态、回执和挑战的原身份签名保持兼容；认证证明帧新增下述可选介质证明。新关系保留兼容标记 `transport=wifiDirect`，它标识通用配对产生的关系，不限制该关系只能使用局域网；局域网状态链路由配对发起方监听、响应方连接；配对 socket 的连接方向不决定之后的状态 socket 方向。
+Android 接入采用三端共用的直接局域网配对：Mac、iPad、Android 均可显示验证码或发现对端并输入验证码，配对后各边独立认证、独立续租，不经其他设备转发。新配对使用 `_shenglin-pair4._tcp` 和 SPAKE2 v4，`t` 字段携带 `mac`、`ipad`、`android` 或 `windows`；双方平台和名称一起纳入认证 transcript，不能从发现结果推定平台。transcript 以 `Shenglin-SPAKE2-v4` 开头，后接四字节大端长度前缀的 session、发起方名称、响应方名称、发起方平台、响应方平台、发起方消息、响应方消息；HKDF 的用途域也使用 v4。状态、回执和挑战的原身份签名保持兼容；认证证明帧新增下述可选介质证明。新关系保留兼容标记 `transport=wifiDirect`，它标识通用配对产生的关系，不限制该关系只能使用局域网；局域网状态链路由配对发起方监听、响应方连接；配对 socket 的连接方向不决定之后的状态 socket 方向。
 
 上述 v4 路径保留旧 v3 配对及旧关系的行为，未带 `transport` 的已保存记录继续按原链路规则运行，不批量删除密钥，也不把 Android 伪装成 Mac 或 iPad。新关系双方先暂存完整记录，五分钟内完成新密钥的双向 Wi-Fi 认证后才激活。Android 的已配对 BLE 状态传输复用同一密钥、角色、来源租约与递增序号；未取得 BLE 认证证据时，选择“蓝牙且局域网”的边保持关闭。Android 对 Mac 充当 peripheral，对 iPad 充当 central；Android 双端由配对 initiator 充当 central、responder 充当 peripheral。物理连接角色不改变签名中的配对角色，局域网断开后 BLE 仍可独立续期。全连接的对等语义与某条边是否具备特定传输能力是两个独立条件。
 
@@ -39,3 +39,17 @@ Mac、iPad 和 Android 通过 UniFFI 调用 `Core/` 的 Rust 库。Rust 是配�
 迁移不改变线上协议或已有配对密钥。PAKE 继续调用固定版本 BoringSSL，transcript、用途域、签名字段和 UInt64 修订号保持兼容；收到的合法名称原字节参与认证，不按本机显示规则再次整理。Keychain、Android Keystore 和既有关系/账本存储格式由原生适配保留，加载旧状态不会延长已有租约。
 
 蓝牙、Bonjour/NSD、网络接口选择、录音观察、音量执行、权限和后台生命周期留在各端。Mac 的按应用输出保护与移动端的媒体类别音量不是同一种执行机制，不强行合并。Swift/Kotlin 绑定为构建产物，禁止手动维护另一份共同协议规则；核心变更需通过固定旧实现向量、跨绑定互通及相关真实设备场景验证。
+
+## Windows 与麦克风通道
+
+`Windows/` 以 Rust 直接依赖共同核心，使用同一 v4 配对、挑战认证、签名状态、来源租约和序号。x64 CLI 的 `serve` 由 NSSM LocalSystem 管理；实际物理网卡地址明确绑定，周期确认该地址与介质仍存在，VPN/虚拟接口不取得物理网络证据。Windows 只提供网络证据，不提供 BLE。`enabled` 与 `scope` 只约束音量协同；麦克风输入是独立的、逐关系逐输入显式授权。未知的录音观察不声明结束，失效状态不续租；消费已排队状态时重新检查关系及当前策略，不能让被删除的 peer 恢复需求。
+
+WASAPI 捕获会话用于判断本机录音进程，排除本服务的供源采集。输出使用各 render endpoint 的会话实例 ID 与 `ISimpleAudioVolume`，对活跃、非系统、非自身且不属于录音进程的会话施加相对增益，保留原值与实际应用值。修改前先保存恢复所有权；外部变化使整轮让权，只有当前仍匹配应用值才恢复，失去保护资格或请求结束也按同一规则恢复。调整gain时持久化旧应用值与待写目标，系统调用成功后才确认新值；崩溃恢复接受两种本程序可能写入的值，不把调用失败误判为用户接管。快照与来源账本按变化原子落盘，账本同时保存网络地址、介质、scope和启用策略；重启重新筛选当前已激活关系，离线撤销或收紧策略不能恢复旧租约，其修订号仍保留防重放。状态序号每次启动提前持久化预留一百万，重启不复用旧修订号。机器 DPAPI 让服务与管理员 CLI 共用关系；目录与配置 DACL 限 SYSTEM/Administrators，普通用户不可直接读取密钥或改写授权。
+
+麦克风流单独发现于 `_shenglin-mic._tcp`，实例名为 `serviceName(pairKey)-发送端配对角色`。任意已配对 peer 均可作为协议中的发送或接收端；角色只分离加密方向，不表示音频方向。当前原生适配实现 Windows 发送与 Mac 接收，后续平台只需接入采集或虚拟输入，不另建平台专属协议。Mac 挂载配置 `remoteSource={peerID,sourceID}` 与本地 `sourceUID` 互斥；48 kHz单声道是当前格式契约。设备列表由唯一 MicrophoneAgent 合并发布到现有 HAL，挂载稳定 UID 由关系与输入 ID 生成；本地专用设备与远端设备共享静音、快捷键、活动观察与取消挂载边界。
+
+TCP 首先发送换行 JSON `{version:1,nonce:base64(serverNonce32)}`；接收端返回随机 `clientNonce32` 与 `proof`。每个方向的 AES-256 密钥为 `HMAC-SHA256(pairKey, UTF8("Shenglin-Microphone-v1") || serverNonce32 || clientNonce32 || UTF8(senderPairRole))`。接收端 proof 使用其方向密钥对 `microphone-open|1` 作既有 authenticationSign，发送端用自己的方向密钥对 `microphone-ready|1` 作相同签名回应；两端验证后才交换加密控制或音频。服务只接受已激活关系，配对成功本身不授予任何输入。
+
+之后每条记录为四字节大端密文长度与 AES-GCM 密文（含16字节tag）。GCM nonce 为四字节零加八字节大端递增序号，每方向从0开始，AAD 为 `Shenglin-Microphone-v1`；明文1至16384字节，序号不得达到UInt64.max。新连接必须使用新随机数，不能跨连接重放；解密失败立即关闭。明文首字节1表示UTF-8 JSON控制，2表示PCM。请求为 `operation=list` 或 `operation=stream,sourceID=...`。列表仅返回此关系已授权的活动输入；stream先返回 `{sampleRate:48000,channels:1,encoding:"f32le",packetFrames:960}`，再以20ms、960帧的单声道Float32LE供音。接收端验证包长与有限样本；控制行最大1024字节，认证与记录读取都有绝对期限，最多8条并发会话，同一关系同一输入最多1条采集流。
+
+Windows 约250ms重新检查输入授权，撤销、取消配对或服务停止会结束采集；慢接收端受限发送缓冲和300ms写超时，WASAPI积压超过200ms时丢弃旧数据。Mac 只在虚拟输入存在活动客户端时连接，停止使用约1秒后取消。断开后HAL沿用既有250ms过期归零，仍有客户端时以新认证会话重试；不把网络失败切到其他未授权输入。远端采集复用现有驱动推送边界，不增加第二个NADS发布者。

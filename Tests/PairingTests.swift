@@ -102,8 +102,8 @@ final class PairingTests: XCTestCase {
             message: pad.offerFrame.message, name: "")))
     }
     func testV4AuthenticatesEveryPlatformInEitherRole() throws {
-        for local in [PeerPlatform.mac, .ipad, .android] {
-            for remote in [PeerPlatform.mac, .ipad, .android] {
+        for local in [PeerPlatform.mac, .ipad, .android, .windows] {
+            for remote in [PeerPlatform.mac, .ipad, .android, .windows] {
                 let initiator = try PairingInitiator(code: "123456", initiatorName: "First", platform: local)
                 let responder = try PairingResponder(start: initiator.startFrame, code: "123456",
                                                       responderName: "Second", platform: remote)

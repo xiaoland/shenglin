@@ -7,16 +7,29 @@ if [ ! -d "$repo/.git" ]; then
     exit 1
 fi
 cd "$repo"
+lsregister='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
+# 暂存目录不参与应用索引；失败也清除 Xcode 生成的第二份 App。
+staging=$(mktemp -d /Applications/.shenglin.XXXXXX)
+mv "$staging" "$staging.noindex"
+staging="$staging.noindex"
+derived='local/MacDerived.noindex'
+cleanup() {
+    "$lsregister" -u "$repo/$derived/Build/Products/Release/声邻.app" || true
+    rm -rf "$derived/Build/Products/Release/声邻.app"
+    if [ -e "$staging/previous.app" ]; then
+        echo "安装回滚失败，旧版应用保留在 $staging/previous.app" >&2
+    else
+        rm -rf "$staging"
+    fi
+}
+trap cleanup EXIT
 scripts/build-rust-core.sh macos
 xcodebuild -project MacGUI/ShenglinMac.xcodeproj -scheme ShenglinMac \
     -configuration Release -sdk macosx -destination 'generic/platform=macOS' \
-    -derivedDataPath local/MacDerived CODE_SIGNING_ALLOWED=NO build
-mkdir -p dist
-staging=$(mktemp -d dist/.shenglin.XXXXXX)
-trap 'rm -rf "$staging"' EXIT
+    -derivedDataPath "$derived" CODE_SIGNING_ALLOWED=NO build
 app='Shenglin.app'
-target="dist/$app"
-ditto 'local/MacDerived/Build/Products/Release/声邻.app' "$staging/$app"
+target="/Applications/$app"
+ditto "$derived/Build/Products/Release/声邻.app" "$staging/$app"
 driver='local/DriverBuild/ShenglinDriver.driver'
 if [ ! -d "$driver" ] || ! codesign --verify --strict "$driver"; then
     echo '请先构建并签名 HAL 驱动：SHENGLIN_SIGN_IDENTITY="Apple Development" scripts/build-driver.sh' >&2
@@ -51,10 +64,11 @@ if lsof -nP "$target/Contents/MacOS/声邻" 2>/dev/null |
     echo '声邻后台麦克风服务正在运行；请先停止服务再替换应用' >&2
     exit 1
 fi
-rm -rf "$target"
-mv "$staging/$app" "$target"
-lsregister='/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister'
-"$lsregister" -u "$repo/local/MacDerived/Build/Products/Release/声邻.app" || true
-rm -rf 'local/MacDerived/Build/Products/Release/声邻.app'
-"$lsregister" -f "$repo/$target"
-echo "已生成 $repo/$target"
+if [ -e "$target" ]; then mv "$target" "$staging/previous.app"; fi
+if ! mv "$staging/$app" "$target"; then
+    if [ -e "$staging/previous.app" ]; then mv "$staging/previous.app" "$target"; fi
+    exit 1
+fi
+rm -rf "$staging/previous.app"
+"$lsregister" -f "$target"
+echo "已更新唯一安装 $target"

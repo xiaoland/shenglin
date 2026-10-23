@@ -3,6 +3,19 @@ import Foundation
 import XCTest
 
 final class ProtocolTests: XCTestCase {
+    func testRemoteMountPreservesLocalConfigurationAndRejectsAmbiguousSources() throws {
+        let legacy = try JSONDecoder().decode(DedicatedMicrophone.self, from: Data(#"{"bundle":"example.local","name":"Local","sourceUID":"usb"}"#.utf8))
+        XCTAssertNil(legacy.remoteSource)
+        let remote = RemoteMicrophoneSource(peerID: "Shenglin-0123456789abcdef", sourceID: "capture-endpoint")
+        let mount = DedicatedMicrophone(bundle: "remote.example", name: "Peer mic", sampleRate: 48000, channels: 1, remoteSource: remote)
+        try DedicatedMicrophoneStore.validate([legacy, mount])
+        XCTAssertEqual(try JSONDecoder().decode(DedicatedMicrophone.self, from: JSONEncoder().encode(mount)), mount)
+        XCTAssertThrowsError(try DedicatedMicrophoneStore.validate([DedicatedMicrophone(bundle: "remote.example", name: "Invalid", sourceUID: "usb", sampleRate: 48000, channels: 1, remoteSource: remote)]))
+        XCTAssertThrowsError(try DedicatedMicrophoneStore.validate([DedicatedMicrophone(bundle: "remote.example", name: "Invalid", sampleRate: 48000, channels: 2, remoteSource: remote)]))
+        XCTAssertFalse(RemoteMicrophoneSource(peerID: "unknown", sourceID: "endpoint").valid)
+        XCTAssertFalse(RemoteMicrophoneSource(peerID: remote.peerID, sourceID: "").valid)
+    }
+
     func testConcurrentInputApplicationsKeepTheirOwnOutputWhileBackgroundUsesOneGain() {
         let protected: Set<String> = ["bundle:voice.a", "bundle:voice.b"]
         XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:voice.a"], protected: protected, browser: false, requested: 0.2), 1)

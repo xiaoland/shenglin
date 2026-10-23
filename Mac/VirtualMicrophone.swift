@@ -40,20 +40,26 @@ final class VirtualMicrophone {
     private var directFormat = false
     private var destinations = [AudioObjectID]()
     private var destinationSelectors = [AudioObjectID: String]()
-    private var configured: [DedicatedMicrophone]?
-    private var configuredPlugin: AudioObjectID?
+    private static var configured: [DedicatedMicrophone]?
+    private static var configuredPlugin: AudioObjectID?
     private let sourceUID: String?
+    private let remoteSource: RemoteMicrophoneSource?
+    private var remoteCapture: RemoteMicrophoneCapture?
+    private var generation = 0
+    var remoteError: String? { remoteCapture?.error }
     private let outputSampleRate: Int
     private let outputChannels: Int
     private let counters = UnsafeMutablePointer<Int64>.allocate(capacity: 6)
 
-    init(sourceUID: String? = nil, sampleRate: Int = 48000, channels: Int = 2) {
+    init(sourceUID: String? = nil, sampleRate: Int = 48000, channels: Int = 2,
+         remoteSource: RemoteMicrophoneSource? = nil) {
         self.sourceUID = sourceUID
+        self.remoteSource = remoteSource
         outputSampleRate = sampleRate
         outputChannels = channels
         counters.initialize(repeating: 0, count: 6)
     }
-    deinit { releaseInput(); counters.deinitialize(count: 6); counters.deallocate() }
+    deinit { remoteCapture?.stop(); releaseInput(); counters.deinitialize(count: 6); counters.deallocate() }
 
     private func add(_ value: Int64, to index: Int) {
         OSAtomicAdd64Barrier(value, counters.advanced(by: index))
@@ -92,12 +98,10 @@ final class VirtualMicrophone {
         return AudioObjectHasProperty(plugin, &address) ? plugin : nil
     }
 
-    func update(inputs: [pid_t: Set<AudioObjectID>], devices: [DedicatedMicrophone],
-                group: [DedicatedMicrophone], muted: Set<String>) throws -> Set<pid_t> {
+    static func publish(_ devices: [DedicatedMicrophone]) throws {
         guard let plugin = Self.pluginID else {
-            suspend()
             configured = nil
-            if devices.isEmpty { return [] }
+            if devices.isEmpty { return }
             throw NSError(domain: "Shenglin", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "请安装支持专用麦克风的 声邻驱动"])
         }
@@ -110,6 +114,11 @@ final class VirtualMicrophone {
             configured = devices
             configuredPlugin = plugin
         }
+    }
+
+    func update(inputs: [pid_t: Set<AudioObjectID>], devices: [DedicatedMicrophone],
+                group: [DedicatedMicrophone], muted: Set<String>) throws -> Set<pid_t> {
+        try Self.publish(devices)
         statusLock.lock()
         let failure = pushFailure
         pushFailure = nil
@@ -151,9 +160,43 @@ final class VirtualMicrophone {
                     Self.deviceID(uid: device.uid).map { ($0, device.selector) }
                 })
             }
-            let currentDevice = try physicalInputDevice()
-            if running && (!isCapturing || sourceDeviceID != currentDevice) { stop() }
-            if !running { try start(device: currentDevice) }
+            if let remoteSource {
+                if !running {
+                    try Self.check(primeDestinations(), "无法预充远端麦克风")
+                    let epoch = queue.sync { generation += 1; return generation }
+                    remoteCapture = RemoteMicrophoneCapture(source: remoteSource) { [weak self] pcm in
+                        guard let self else { return }
+                        try self.queue.sync {
+                            guard self.generation == epoch else { return }
+                            let samples = pcm.withUnsafeBytes { bytes in
+                                stride(from: 0, to: bytes.count, by: 4).map { bytes.loadUnaligned(fromByteOffset: $0, as: Float.self) }
+                            }
+                            let hostTime = mach_absolute_time()
+                            for selector in self.destinationSelectors.values {
+                                AudioForensics.shared.recordSource(selector, sampleRate: self.outputSampleRate,
+                                    channels: self.outputChannels, hostTime: hostTime, sampleTime: -1, samples: samples)
+                            }
+                            self.add(Int64(pcm.count / 4), to: Counter.tapped)
+                            for destination in self.destinations {
+                                let status = Self.setProperty(destination, Self.audioPush, data: pcm as CFData)
+                                if status != noErr { self.add(Int64(pcm.count / 4), to: Counter.pushFailed) }
+                                try Self.check(status, "无法写入远端麦克风")
+                            }
+                            self.add(Int64(pcm.count / 4), to: Counter.pushed)
+                        }
+                    }
+                    running = true
+                    sourceSampleRate = 48000; sourceChannels = 1; directFormat = true
+                    for selector in queue.sync(execute: { Array(destinationSelectors.values) }) {
+                        AudioForensics.shared.event(selector, "capture-started", ["remotePeer": remoteSource.peerID,
+                            "remoteInput": remoteSource.sourceID, "sourceSampleRate": 48000, "sourceChannels": 1])
+                    }
+                }
+            } else {
+                let currentDevice = try physicalInputDevice()
+                if running && (!isCapturing || sourceDeviceID != currentDevice) { stop() }
+                if !running { try start(device: currentDevice) }
+            }
         }
         return DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedDevices)
     }
@@ -341,6 +384,9 @@ final class VirtualMicrophone {
     }
 
     private func stop() {
+        remoteCapture?.stop()
+        remoteCapture = nil
+        queue.sync { generation += 1 }
         for selector in queue.sync(execute: { Array(destinationSelectors.values) }) {
             AudioForensics.shared.event(selector, "capture-stopped")
         }

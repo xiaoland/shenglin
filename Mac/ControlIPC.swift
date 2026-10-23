@@ -8,6 +8,7 @@ struct ControlRequest: Codable {
     let command: String
     var value: String?
     var browser: BrowserSnapshot?
+    var sourceID: String?
 }
 
 struct ControlStatus: Codable {
@@ -44,11 +45,16 @@ struct ControlStatus: Codable {
     let error: String
 }
 
+struct ControlMicrophonePeer: Codable { let id: String; let name: String; let platform: PeerPlatform }
+
 struct ControlResponse: Codable {
     let ok: Bool
     let message: String?
     let status: ControlStatus?
     var browser: BrowserReply?
+    var microphonePeers: [ControlMicrophonePeer]?
+    var microphones: [PeerMicrophone]?
+    var mounts: [DedicatedMicrophone]?
 }
 
 enum ControlIPC {
@@ -73,7 +79,7 @@ enum ControlIPC {
         defer { close(fd) }
         var noSignal: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &noSignal, socklen_t(MemoryLayout<Int32>.size))
-        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        var timeout = timeval(tv_sec: request.command.hasPrefix("microphone.remote.") ? 25 : 3, tv_usec: 0)
         guard setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0,
               setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == 0 else {
             throw systemError("无法设置本机控制超时")
@@ -132,9 +138,9 @@ enum ControlIPC {
 final class ControlServer {
     private let fd: Int32
     private let source: DispatchSourceRead
-    private let handler: @MainActor (ControlRequest) -> ControlResponse
+    private let handler: @MainActor (ControlRequest) async -> ControlResponse
 
-    init(handler: @escaping @MainActor (ControlRequest) -> ControlResponse) throws {
+    init(handler: @escaping @MainActor (ControlRequest) async -> ControlResponse) throws {
         self.handler = handler
         let directory = URL(fileURLWithPath: ControlIPC.path).deletingLastPathComponent().path
         try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
@@ -180,7 +186,7 @@ final class ControlServer {
                 return
             }
             Task { @MainActor in
-                let response = handler(request)
+                let response = await handler(request)
                 DispatchQueue.global(qos: .utility).async {
                     defer { close(client) }
                     if let data = try? JSONEncoder().encode(response) {

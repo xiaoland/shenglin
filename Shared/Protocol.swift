@@ -134,12 +134,31 @@ public enum InputMuteStore {
 }
 
 /// 用户显式分配的专用输入设备；应用重启或改名不会改变设备 UID。
+public struct RemoteMicrophoneSource: Codable, Hashable {
+    public let peerID: String
+    public let sourceID: String
+    public init(peerID: String, sourceID: String) { self.peerID = peerID; self.sourceID = sourceID }
+    public var valid: Bool {
+        peerID.hasPrefix("Shenglin-") && peerID.count == 25 &&
+        peerID.dropFirst(9).allSatisfy { $0.isHexDigit } &&
+        !sourceID.isEmpty && sourceID.utf8.count <= 512 && !sourceID.contains("\0")
+    }
+}
+
+public struct PeerMicrophone: Codable, Identifiable {
+    public let id: String
+    public let name: String
+    public let sampleRate: Int
+    public let channels: Int
+}
+
 public struct DedicatedMicrophone: Codable, Equatable {
     public let bundle: String
     public let name: String
     public let sourceUID: String?
     public let sampleRate: Int?
     public let channels: Int?
+    public let remoteSource: RemoteMicrophoneSource?
     public var selector: String { "bundle:\(bundle)" }
     public var uid: String { "local.shenglin.virtual-microphone.\(bundle)" }
     public var deviceName: String { "声邻 · \(name)" }
@@ -147,12 +166,13 @@ public struct DedicatedMicrophone: Codable, Equatable {
     public var outputChannels: Int { channels ?? 2 }
 
     public init(bundle: String, name: String, sourceUID: String? = nil,
-                sampleRate: Int? = nil, channels: Int? = nil) {
+                sampleRate: Int? = nil, channels: Int? = nil, remoteSource: RemoteMicrophoneSource? = nil) {
         self.bundle = bundle
         self.name = name
         self.sourceUID = sourceUID
         self.sampleRate = sampleRate
         self.channels = channels
+        self.remoteSource = remoteSource
     }
 }
 
@@ -164,6 +184,8 @@ public enum DedicatedMicrophoneStore {
                   $0.bundle.unicodeScalars.allSatisfy(allowed.contains) &&
                   !$0.name.isEmpty && $0.name.utf8.count <= 160 && !$0.name.contains("\0") &&
                   ($0.sourceUID == nil || (!$0.sourceUID!.isEmpty && $0.sourceUID!.utf8.count <= 255)) &&
+                  ($0.remoteSource == nil || ($0.sourceUID == nil && $0.remoteSource!.valid &&
+                    $0.outputSampleRate == 48000 && $0.outputChannels == 1)) &&
                   ($0.sampleRate == nil && $0.channels == nil ||
                    $0.sampleRate != nil && $0.channels != nil &&
                    (8000...192000).contains($0.sampleRate!) && (1...2).contains($0.channels!)) }) else {

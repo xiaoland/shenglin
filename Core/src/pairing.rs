@@ -42,13 +42,14 @@ fn valid_pair_name(name: &Option<String>) -> Result<String, CoreError> {
 }
 fn platform_valid(p: &Option<String>) -> bool {
     p.as_ref()
-        .is_none_or(|p| matches!(p.as_str(), "mac" | "ipad" | "android"))
+        .is_none_or(|p| matches!(p.as_str(), "mac" | "ipad" | "android" | "windows"))
 }
 fn display(p: &Option<String>, fallback: &str) -> String {
     match p.as_deref() {
         Some("mac") => "Mac",
         Some("ipad") => "iPad",
         Some("android") => "Android",
+        Some("windows") => "Windows",
         _ => fallback,
     }
     .into()

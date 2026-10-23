@@ -13,7 +13,7 @@ import tempfile
 import uuid
 
 root = Path(__file__).resolve().parents[1]
-app = root / 'dist/Shenglin.app/Contents/MacOS/声邻'
+app = Path('/Applications/Shenglin.app/Contents/MacOS/声邻')
 manifest = json.loads((root / 'BrowserExtension/.output/chrome-mv3/manifest.json').read_text())
 digest = hashlib.sha256(base64.b64decode(manifest['key'])).hexdigest()[:32]
 identity = ''.join(chr(ord('a') + int(c, 16)) for c in digest)
@@ -38,6 +38,8 @@ with tempfile.TemporaryDirectory(prefix='shenglin-native-') as temporary:
     source = directory / 'main.swift'
     source.write_text('''import Foundation
 struct CaptureDiagnostics: Codable {}
+struct PeerMicrophone: Codable {}
+struct DedicatedMicrophone: Codable {}
 enum PeerPlatform: String, Codable { case mac, ipad }
 enum ExclusionStore {
     static let url = URL(fileURLWithPath: ProcessInfo.processInfo.environment["SHENGLIN_TEST_DIRECTORY"]!).appendingPathComponent("exclusions.json")

@@ -7,7 +7,10 @@ if [ ! -d "$repo/.git" ]; then
     exit 1
 fi
 app='/Applications/Shenglin.app'
-if [ ! -d "$app" ]; then app="$repo/dist/Shenglin.app"; fi
+if [ ! -d "$app" ]; then
+    echo '请先运行 scripts/build-mac-app.sh 安装 /Applications/Shenglin.app。' >&2
+    exit 1
+fi
 codesign --verify --strict --deep "$app"
 
 running=$(pgrep -fl 'Shenglin.app/Contents/MacOS/声邻' || true)

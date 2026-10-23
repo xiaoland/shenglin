@@ -257,7 +257,7 @@ struct PeerDisplay: Identifiable, Equatable {
         recordConnection("startup")
         do {
             controlServer = try ControlServer { [weak self] request in
-                self?.handleControl(request) ?? ControlResponse(ok: false, message: "应用正在退出", status: nil)
+                await self?.handleControl(request) ?? ControlResponse(ok: false, message: "应用正在退出", status: nil)
             }
         } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
@@ -597,7 +597,7 @@ struct PeerDisplay: Identifiable, Equatable {
 
     private func startDirectBLEPeer(_ peer: PairedPeer) {
         let source = sourceID(for: peer.key)
-        guard peer.transport == .wifiDirect, peer.platform != .mac, directBLEPeers[source] == nil else { return }
+        guard peer.transport == .wifiDirect, [.ipad, .android].contains(peer.platform), directBLEPeers[source] == nil else { return }
         let client = BLEClient(key: peer.key, targetPeripheralID: peer.peripheralID,
             rediscoverPeripheral: peer.platform == .android,
             otherAuthenticatedPeripherals: { [weak self] in
@@ -1024,10 +1024,18 @@ struct PeerDisplay: Identifiable, Equatable {
 
     func microphoneSourceDescription(for selector: String) -> String {
         guard let device = try? MicrophoneStore.load().first(where: { $0.selector == selector }) else { return "" }
+        if let remote = device.remoteSource {
+            let name = (try? RemoteMicrophoneMount.peer(remote.peerID).name) ?? "已解除配对的设备"
+            return "远端：\(name) · 48000 Hz / 单声道"
+        }
         let name = device.sourceUID.flatMap { uid in
             PhysicalInputSource.available().first(where: { $0.id == uid })?.name
         } ?? (device.sourceUID == nil ? "系统默认输入（旧设备）" : "上游已断开")
         return "上游：\(name) · \(device.outputSampleRate) Hz / \(device.outputChannels) 声道"
+    }
+
+    func isRemoteMicrophone(_ selector: String) -> Bool {
+        (try? MicrophoneStore.load().first(where: { $0.selector == selector })?.remoteSource) != nil
     }
 
     func changeMicrophoneSource(_ source: SourceCandidate) {
@@ -1485,7 +1493,35 @@ struct PeerDisplay: Identifiable, Equatable {
                       error: errorMessage)
     }
 
-    private func handleControl(_ request: ControlRequest) -> ControlResponse {
+    private func handleControl(_ request: ControlRequest) async -> ControlResponse {
+        if request.command.hasPrefix("microphone.remote.") {
+            do {
+                switch request.command {
+                case "microphone.remote.peers":
+                    let peers = try MacCredentials.peers().map { ControlMicrophonePeer(id: MicrophoneProtocol.peerID($0), name: $0.name, platform: $0.platform) }
+                    return ControlResponse(ok: true, message: nil, status: nil, microphonePeers: peers)
+                case "microphone.remote.mounts":
+                    return ControlResponse(ok: true, message: nil, status: nil, mounts: try MicrophoneStore.load().filter { $0.remoteSource != nil })
+                case "microphone.remote.sources", "microphone.remote.mount":
+                    guard let id = request.value else { throw MicrophoneProtocol.failure("缺少 peer ID") }
+                    let peer = try RemoteMicrophoneMount.peer(id)
+                    let sources = try await Task.detached { try PeerMicrophoneConnection.sources(peer: peer) }.value
+                    if request.command == "microphone.remote.sources" {
+                        return ControlResponse(ok: true, message: nil, status: nil, microphones: sources)
+                    }
+                    guard let source = sources.first(where: { $0.id == request.sourceID }) else { throw MicrophoneProtocol.failure("对端未授权该输入设备") }
+                    let device = try RemoteMicrophoneMount.add(peerID: id, microphone: source)
+                    refreshSources()
+                    return ControlResponse(ok: true, message: nil, status: nil, mounts: [device])
+                case "microphone.remote.unmount":
+                    guard let selector = request.value else { throw MicrophoneProtocol.failure("缺少挂载标识") }
+                    try RemoteMicrophoneMount.remove(selector)
+                    clearShortcut(for: selector); input?.poll(); refreshSources()
+                    return ControlResponse(ok: true, message: "远端麦克风已移除", status: nil)
+                default: throw MicrophoneProtocol.failure("未知麦克风操作")
+                }
+            } catch { return ControlResponse(ok: false, message: error.localizedDescription, status: nil) }
+        }
         if request.command == "browser.state" {
             do {
                 guard let snapshot = request.browser else { throw NSError(domain: "ShenglinBrowser", code: 1) }
@@ -1505,7 +1541,7 @@ struct PeerDisplay: Identifiable, Equatable {
         case "status": refreshSources()
         case "driver.install": installDriver()
         case "microphone.agent.stop":
-            do { try MicrophoneAgentStatus.service.unregister() }
+            do { try await MicrophoneAgentStatus.service.unregister() }
             catch { problem = "无法停止后台麦克风服务：\(error.localizedDescription)" }
         case "pair.start":
             beginPairing()

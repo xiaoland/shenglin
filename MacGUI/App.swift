@@ -358,6 +358,7 @@ private struct SettingsPanel: View {
     @State private var showingAppPicker = false
     @State private var addingMicrophone = false
     @State private var showingIPadInstaller = false
+    @State private var showingRemoteMicrophone = false
 
     var body: some View {
         Form {
@@ -417,6 +418,7 @@ private struct SettingsPanel: View {
                         MicrophoneConfiguration(model: model, source: source)
                     }
                     Button("添加应用…") { addingMicrophone = true; showingAppPicker = true }
+                    Button("挂载远端麦克风…") { showingRemoteMicrophone = true }
                 } else {
                     Button("安装驱动…") { model.installDriver() }.disabled(model.driverInstalling)
                 }
@@ -456,6 +458,9 @@ private struct SettingsPanel: View {
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showingRemoteMicrophone) {
+            RemoteMicrophonePanel(model: model)
+        }
         .sheet(isPresented: $showingIPadInstaller) {
             IPadInstallationPanel(model: model.iPadInstallation)
         }
@@ -483,8 +488,10 @@ private struct MicrophoneConfiguration: View {
             HStack {
                 Text(model.microphoneSourceDescription(for: source.selector)).foregroundStyle(.secondary)
                 Spacer()
-                Button("更换上游…") { model.changeMicrophoneSource(source) }
-                    .disabled(model.sourceActivityUnknown || source.microphoneInUse)
+                if !model.isRemoteMicrophone(source.selector) {
+                    Button("更换上游…") { model.changeMicrophoneSource(source) }
+                        .disabled(model.sourceActivityUnknown || source.microphoneInUse)
+                }
             }
             HStack {
                 Text(model.recordingShortcutFor == source.selector ? "请按下快捷键，Esc 取消" :

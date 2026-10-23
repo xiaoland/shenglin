@@ -1060,7 +1060,7 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     private fun nowSeconds() = System.currentTimeMillis() / 1000L
     private fun remoteRole(role: String) = if (role == "initiator") "responder" else "initiator"
     private fun localRole(role: String) = role
-    private fun validPlatform(value: String) = value == "mac" || value == "ipad" || value == "android"
+    private fun validPlatform(value: String) = value == "mac" || value == "ipad" || value == "android" || value == "windows"
 
     private fun cleanName(value: String?, fallback: String, maxBytes: Int): String {
         val source = value.orEmpty()

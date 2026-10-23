@@ -12,6 +12,15 @@ cat > "$work/stubs.swift" <<'SWIFT'
 import CoreAudio
 import Foundation
 
+struct RemoteMicrophoneSource { let peerID: String; let sourceID: String }
+final class RemoteMicrophoneCapture {
+    var error: String? { nil }
+    init(source: RemoteMicrophoneSource, receive: @escaping (Data) throws -> Void) {
+        preconditionFailure("本机采集回归不应启动远端输入")
+    }
+    func stop() {}
+}
+
 struct DedicatedMicrophone: Equatable {
     let bundle: String
     let name: String

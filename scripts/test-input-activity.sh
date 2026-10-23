@@ -23,6 +23,7 @@ let inactive: AudioObjectID = 100
 let active: AudioObjectID = 101
 let second: AudioObjectID = 102
 var properties = [Property: [UInt32]]()
+var readOverrides = [Property: [UInt32]]()
 var sizeFailures = Set<Property>()
 var readFailures = Set<Property>()
 var reads = [Property]()
@@ -50,10 +51,10 @@ func AudioObjectGetPropertyData(_ object: AudioObjectID,
     precondition(address.pointee.mScope == (key.selector == kAudioProcessPropertyDevices
         ? kAudioObjectPropertyScopeInput : kAudioObjectPropertyScopeGlobal))
     reads.append(key)
-    guard !readFailures.contains(key), let value = properties[key] else { return -1 }
+    guard !readFailures.contains(key), let value = readOverrides[key] ?? properties[key] else { return -1 }
     let bytes = value.count * MemoryLayout<UInt32>.size
     precondition(Int(size.pointee) >= bytes)
-    value.withUnsafeBytes { source in output.copyMemory(from: source.baseAddress!, byteCount: bytes) }
+    if bytes > 0 { value.withUnsafeBytes { source in output.copyMemory(from: source.baseAddress!, byteCount: bytes) } }
     size.pointee = UInt32(bytes)
     return noErr
 }
@@ -65,6 +66,7 @@ func reset() {
         Property(active, kAudioProcessPropertyIsRunningInput): [1],
         Property(active, kAudioProcessPropertyPID): [42],
         Property(active, kAudioProcessPropertyDevices): [201, 202]]
+    readOverrides = [:]
     sizeFailures = []
     readFailures = []
     reads = []
@@ -108,7 +110,24 @@ for property in [list, Property(active, kAudioProcessPropertyDevices)] {
 }
 reset()
 properties[Property(active, kAudioProcessPropertyDevices)] = []
-precondition(activeInputDevices() == nil, "活跃输入缺少设备必须报告未知状态")
+precondition(activeInputDevices() == [:], "成功空列表没有可归属的输入设备")
+precondition(activeInputPIDs(on: 201) == [])
+reset()
+properties[list] = [active, second]
+properties[Property(second, kAudioProcessPropertyIsRunningInput)] = [1]
+properties[Property(second, kAudioProcessPropertyPID)] = [43]
+properties[Property(second, kAudioProcessPropertyDevices)] = []
+precondition(activeInputDevices() == [42: [201, 202]], "空设备进程不能阻断正常客户端")
+properties[Property(second, kAudioProcessPropertyPID)] = [42]
+precondition(activeInputDevices() == [42: [201, 202]], "同 PID 空设备对象不能抹去有效设备")
+reset()
+readOverrides[Property(active, kAudioProcessPropertyDevices)] = [201]
+precondition(activeInputDevices() == [42: [201]], "只消费实际返回的设备数据")
+readOverrides[Property(active, kAudioProcessPropertyDevices)] = []
+precondition(activeInputDevices() == [:])
+reset()
+readOverrides[list] = [inactive]
+precondition(activeInputDevices() == [:], "进程列表缩短不读取尾部填充对象")
 reset()
 properties[list] = []
 precondition(activeInputDevices() == [:])
@@ -135,9 +154,9 @@ precondition(sizes == [list])
 // Missing executable metadata must not cause nil == nil to classify an external process as internal.
 reset()
 executablePaths = [:]
-properties[Property(active, kAudioProcessPropertyDevices)] = []
+readFailures = [Property(active, kAudioProcessPropertyDevices)]
 precondition(activeInputDevices() == nil)
-print("通过：空闲进程跳过 PID/设备查询、活跃设备合并、内部 tap 提前排除、外部失败仍报告未知。")
+print("通过：空闲进程跳过 PID/设备查询、活跃设备合并、内部 tap 提前排除、成功空列表不阻断其他输入、缩短列表仅取实值、外部失败仍报告未知。")
 SWIFT
 swiftc "$work/queries.swift" "$work/main.swift" -o "$work/test-input-activity"
 "$work/test-input-activity"
