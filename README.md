@@ -6,9 +6,9 @@
 
 > **早期预览版。** 目前以 ARM Android、Apple Silicon Mac、iPad 和 x64 Windows 真机为开发、测试目标。iPad 的录音检测与音量控制使用系统私有接口，系统更新可能改变行为；后台、锁屏和多设备协同仍需继续验证。
 
-Android 版使用 Kotlin、Jetpack Compose 和 Material 3，源码位于 `Android/`，与更新后的 Mac、iPad 以及其他 Android 设备直接通过局域网配对和双向协同，不需要 Mac 中转。各端在“添加设备”中选择显示验证码，或发现对端并输入验证码。Android 被动观察系统录音活动，不采集音频；开启协同时显示常驻通知。网络条件可选“同一 Wi-Fi”或“同一局域网”，再选择与蓝牙按“或”或“且”组合；局域网允许 Wi-Fi 与网线混用，Wi-Fi 条件要求双方实际认证链路均走 Wi-Fi。构建、安装及实际验证范围见[开发与诊断](manuals/开发与诊断.md)和[验收记录](docs/validation.md)。
+Android 版使用 Kotlin、Jetpack Compose 和 Material 3，源码位于 `Android/`，与更新后的 Mac、iPad 以及其他 Android 设备直接通过局域网配对和双向协同，不需要 Mac 中转。各端在“添加设备”中选择显示验证码，或发现对端并输入验证码。Android 的音量协同被动观察系统录音活动；独立的“共享内置麦克风”开关经麦克风权限与逐设备授权后，允许 Mac 按需使用输入。两种功能均由前台服务提供，并显示常驻通知。网络条件可选“同一 Wi-Fi”或“同一局域网”，再选择与蓝牙按“或”或“且”组合；局域网允许 Wi-Fi 与网线混用，Wi-Fi 条件要求双方实际认证链路均走 Wi-Fi。构建、安装及实际验证范围见[开发与诊断](manuals/开发与诊断.md)和[验收记录](docs/validation.md)。
 
-Windows 版提供无 GUI 的命令行程序，可由 NSSM 作为服务管理。已配对设备可按输入设备授权共享麦克风；Mac 可挂载 Windows 输入为独立系统麦克风，录音应用选用时才会采集。协议使用通用 peer 与输入 ID，当前实现发送端为 Windows、接收端为 Mac。
+Windows 版提供无 GUI 的命令行程序，可由 NSSM 作为服务管理。已配对设备可按输入设备授权共享麦克风；Mac 可挂载 Windows 输入为独立系统麦克风，录音应用选用时才会采集。协议使用通用 peer 与输入 ID，当前实现发送端为 Windows、Android 和 iPad，接收端为 Mac。0.2 beta.7 新增 Android／iPad 供源；真机验证范围见验收记录。iPad 须在前台开始供音，之后可锁屏持续；最后一个客户端停止后释放麦克风，需回到声邻前台恢复待用。
 
 ## 下载与安装
 

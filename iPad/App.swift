@@ -53,6 +53,11 @@ private struct MainView: View {
                 }
 
                 Section {
+                    Toggle("共享内置麦克风", isOn: Binding(get: { server.microphoneEnabled }, set: server.setMicrophoneEnabled))
+                    Text(server.microphoneStatus).foregroundStyle(.secondary)
+                }
+
+                Section {
                     HStack {
                         Text("媒体音量降至")
                         Spacer()
@@ -80,6 +85,8 @@ private struct MainView: View {
                         DisclosureGroup {
                             LabeledContent("连接", value: peer.link)
                             LabeledContent("空间条件", value: server.enabled ? peer.space : "已暂停")
+                            Toggle("允许使用内置麦克风", isOn: Binding(
+                                get: { peer.microphoneShared }, set: { server.setMicrophoneShared(peer.id, shared: $0) }))
                             Button("取消配对", role: .destructive) {
                                 removingPeer = peer
                                 confirmPeerRemoval = true
@@ -107,7 +114,7 @@ private struct MainView: View {
                 }
                 Button("保留配对", role: .cancel) { removingPeer = nil }
             } message: {
-                Text("仅移除此设备在本机的关系；其他已配对设备不受影响。")
+                Text("移除此设备在本机的配对，并撤销其麦克风授权。")
             }
             .navigationTitle("声邻")
             .toolbar {
@@ -275,7 +282,7 @@ private struct DiagnosticsView: View {
             Section("最近一次音量操作") { Text(server.lastAction) }
             Section("当前媒体音量") { SystemVolumeView().frame(height: 44) }
             Section {
-                Text("声邻只协调录音状态，不采集或传输麦克风音频。")
+                Text("麦克风仅在开启共享、授权接收设备并被实际使用时采集。")
             }
         }
         .navigationTitle("运行详情")

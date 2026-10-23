@@ -10,6 +10,13 @@ public enum MicrophoneProtocol {
     public static func failure(_ message: String) -> NSError {
         NSError(domain: "ShenglinMicrophone", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
+    static func checkRemoteError(_ frame: Data) throws {
+        if frame.first == 1,
+           let object = try? JSONSerialization.jsonObject(with: frame.dropFirst()) as? [String: Any],
+           let message = object["error"] as? String, !message.isEmpty, message.utf8.count <= 512 {
+            throw failure("远端：\(message)")
+        }
+    }
 }
 
 /// Blocking transport runs on a worker, while Network callbacks have their own serial queue.
@@ -62,6 +69,23 @@ public final class PeerMicrophoneConnection {
         try checkCancelled()
         if case .service(_, _, _, let interface) = selected { parameters.requiredInterface = interface }
         let candidate = NWConnection(to: selected, using: parameters)
+        try start(candidate)
+        let hello = try readJSONLine()
+        guard hello["version"] as? Int == 1, let raw = hello["nonce"] as? String,
+              let server = Data(base64Encoded: raw), server.count == 32 else { throw MicrophoneProtocol.failure("麦克风协议版本或挑战无效") }
+        let client = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
+        tx = try audioSessionKey(key: peer.key, serverNonce: server, clientNonce: client, role: peer.localRole.rawValue)
+        rx = try audioSessionKey(key: peer.key, serverNonce: server, clientNonce: client, role: peer.localRole.remote.rawValue)
+        try write(JSONSerialization.data(withJSONObject: ["nonce": client.base64EncodedString(),
+            "proof": authenticationSign(message: "microphone-open|1", key: tx)]) + Data([10]))
+        let proof = try readJSONLine()
+        guard let signature = proof["proof"] as? String,
+              authenticationMatches(supplied: signature, expected: authenticationSign(message: "microphone-ready|1", key: rx)) else {
+            throw MicrophoneProtocol.failure("共享麦克风身份认证失败")
+        }
+    }
+
+    private func start(_ candidate: NWConnection) throws {
         lock.lock(); connection = candidate; let stopped = cancelled; lock.unlock()
         if stopped { candidate.cancel(); throw MicrophoneProtocol.failure("麦克风连接已关闭") }
         let ready = DispatchSemaphore(value: 0)
@@ -78,28 +102,45 @@ public final class PeerMicrophoneConnection {
         candidate.start(queue: queue)
         guard ready.wait(timeout: .now() + 5) == .success else { cancel(); throw MicrophoneProtocol.failure("麦克风连接超时") }
         try queue.sync { try result!.get() }
-        let hello = try readJSONLine()
-        guard hello["version"] as? Int == 1, let raw = hello["nonce"] as? String,
-              let server = Data(base64Encoded: raw), server.count == 32 else { throw MicrophoneProtocol.failure("麦克风协议版本或挑战无效") }
-        let client = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
-        tx = try audioSessionKey(key: peer.key, serverNonce: server, clientNonce: client, role: peer.localRole.rawValue)
-        rx = try audioSessionKey(key: peer.key, serverNonce: server, clientNonce: client, role: peer.localRole.remote.rawValue)
-        try write(JSONSerialization.data(withJSONObject: ["nonce": client.base64EncodedString(),
-            "proof": authenticationSign(message: "microphone-open|1", key: tx)]) + Data([10]))
-        let proof = try readJSONLine()
-        guard let signature = proof["proof"] as? String,
-              authenticationMatches(supplied: signature, expected: authenticationSign(message: "microphone-ready|1", key: rx)) else {
-            throw MicrophoneProtocol.failure("共享麦克风身份认证失败")
-        }
     }
 
-    private func write(_ data: Data) throws {
+    /// Accept only an already-authorized peer; the caller owns revocation and connection limits.
+    public func accept(_ candidate: NWConnection, peer: PairedPeer) throws {
+        try start(candidate)
+        guard let path = candidate.currentPath,
+              path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet) else {
+            throw MicrophoneProtocol.failure("麦克风仅允许局域网连接")
+        }
+        let server = Data((0..<32).map { _ in UInt8.random(in: .min ... .max) })
+        try write(JSONSerialization.data(withJSONObject: ["version": 1, "nonce": server.base64EncodedString()]) + Data([10]))
+        let hello = try readJSONLine()
+        guard let raw = hello["nonce"] as? String, let client = Data(base64Encoded: raw), client.count == 32,
+              let proof = hello["proof"] as? String else { throw MicrophoneProtocol.failure("麦克风认证消息无效") }
+        tx = try audioSessionKey(key: peer.key, serverNonce: server, clientNonce: client, role: peer.localRole.rawValue)
+        rx = try audioSessionKey(key: peer.key, serverNonce: server, clientNonce: client, role: peer.localRole.remote.rawValue)
+        guard authenticationMatches(supplied: proof, expected: authenticationSign(message: "microphone-open|1", key: rx)) else {
+            throw MicrophoneProtocol.failure("共享麦克风身份认证失败")
+        }
+        try write(JSONSerialization.data(withJSONObject: ["proof": authenticationSign(message: "microphone-ready|1", key: tx)]) + Data([10]))
+    }
+
+    public func send(_ frame: Data) throws {
+        guard (1...16384).contains(frame.count) else { throw MicrophoneProtocol.failure("音频帧长度无效") }
+        let record = try audioSeal(key: tx, sequence: sent, plaintext: frame); sent += 1
+        var size = UInt32(record.count).bigEndian
+        try write(withUnsafeBytes(of: &size) { Data($0) } + record, timeout: frame.first == 2 ? 0.3 : 2)
+    }
+    public func respond(_ value: [String: Any]) throws {
+        try send(Data([1]) + JSONSerialization.data(withJSONObject: value))
+    }
+
+    private func write(_ data: Data, timeout: Double = 2) throws {
         try checkCancelled()
         guard let connection else { throw MicrophoneProtocol.failure("麦克风未连接") }
         let done = DispatchSemaphore(value: 0)
         var failure: NWError?
         connection.send(content: data, completion: .contentProcessed { error in failure = error; done.signal() })
-        guard done.wait(timeout: .now() + 2) == .success else { cancel(); throw MicrophoneProtocol.failure("麦克风发送超时") }
+        guard done.wait(timeout: .now() + timeout) == .success else { cancel(); throw MicrophoneProtocol.failure("麦克风发送超时") }
         if let failure = queue.sync(execute: { failure }) { throw failure }
     }
     private func read(_ length: Int, timeout: Double = 3) throws -> Data {
@@ -133,10 +174,7 @@ public final class PeerMicrophoneConnection {
         throw MicrophoneProtocol.failure("麦克风控制消息无效")
     }
     public func request(_ value: [String: String]) throws {
-        var body = Data([1]); body.append(try JSONSerialization.data(withJSONObject: value))
-        let record = try audioSeal(key: tx, sequence: sent, plaintext: body); sent += 1
-        var size = UInt32(record.count).bigEndian
-        try write(withUnsafeBytes(of: &size) { Data($0) } + record)
+        try respond(value)
     }
     public func next() throws -> Data {
         let header = try read(4)
@@ -144,6 +182,7 @@ public final class PeerMicrophoneConnection {
         guard (17...16400).contains(count) else { throw MicrophoneProtocol.failure("音频帧长度无效") }
         let result = try audioOpen(key: rx, sequence: received, ciphertext: read(Int(count)))
         received += 1
+        try MicrophoneProtocol.checkRemoteError(result)
         return result
     }
     public func response() throws -> Data {

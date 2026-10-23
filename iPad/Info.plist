@@ -7,12 +7,13 @@
     <key>CFBundleDisplayName</key><string>声邻</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.2.0</string>
-    <key>CFBundleVersion</key><string>10</string>
+    <key>CFBundleVersion</key><string>11</string>
     <key>MinimumOSVersion</key><string>17.0</string>
     <key>NSBluetoothAlwaysUsageDescription</key><string>通过蓝牙与已配对设备协调录音状态和媒体音量。</string>
-    <key>NSLocalNetworkUsageDescription</key><string>在同一局域网内发现已配对设备，并协调录音状态和媒体音量。</string>
-    <key>NSBonjourServices</key><array><string>_shenglin._tcp</string><string>_shenglin-pair4._tcp</string></array>
-    <key>UIBackgroundModes</key><array><string>bluetooth-peripheral</string></array>
+    <key>NSLocalNetworkUsageDescription</key><string>在同一局域网内发现已配对设备，协调录音状态与媒体音量，并向已授权设备共享麦克风。</string>
+    <key>NSMicrophoneUsageDescription</key><string>将内置麦克风共享给你授权的已配对设备。</string>
+    <key>NSBonjourServices</key><array><string>_shenglin._tcp</string><string>_shenglin-pair4._tcp</string><string>_shenglin-mic._tcp</string></array>
+    <key>UIBackgroundModes</key><array><string>bluetooth-peripheral</string><string>audio</string></array>
     <key>UIDeviceFamily</key><array><integer>2</integer></array>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key><array>

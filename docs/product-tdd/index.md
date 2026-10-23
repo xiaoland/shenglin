@@ -15,11 +15,11 @@ Android 接入采用三端共用的直接局域网配对：Mac、iPad、Android 
 网络介质证明放在现有 `proof` 帧的可选 `medium` 与 `mediumSignature` 字段中；介质仅接受 `wifi` 或 `ethernet`，签名原文为 `network-medium|1|role|nonce|medium`，绑定本次挑战与发送方角色。原身份签名仍独立验证。缺失、无效或未知介质不会取得 Wi-Fi 资格，旧端仍可提供 LAN 身份证据；需要更新双方应用才能提供新的 Wi-Fi 证明。实际连接路径变化须撤销旧介质证据并重新认证，不能把一次 Wi-Fi 握手用于后续有线路径。配对始终允许 LAN，空间选择仅决定协同资格；Wi-Fi 范围优先使用可用 Wi-Fi 状态路径。
 
 
-Android 被动观察公开的匿名录音配置，不请求麦克风权限、不采集音频，也不推断具体录音应用身份。用户从可见界面开启协同后，`connectedDevice` 前台服务维持连接与观察。接收端按系统媒体音量档位执行上限，固定音量或无法可靠识别的输出路径报告不可用；本机录音或观察未知时保护本机输出。外部音量或路由改动使整轮交给用户，恢复仅能写回仍由本产品持有的快照；来源租约及手动接管状态须一起持久化，进程重启不能把同一来源的续期误认为新一轮。音量读取和恢复失败须报告，不能仅因认证状态已收到便回执执行成功。
+Android 的音量协同被动观察公开的匿名录音配置，不需要麦克风权限，也不推断具体录音应用身份。独立的麦克风共享功能需要录音权限；观察时按自身 AudioRecord 的 session ID 排除共享采集，查询前后 session ID 变化则重取快照，不能把自身录音传播为新的协同需求。用户从可见界面开启协同后，`connectedDevice` 前台服务维持连接与观察。接收端按系统媒体音量档位执行上限，固定音量或无法可靠识别的输出路径报告不可用；本机录音或观察未知时保护本机输出。外部音量或路由改动使整轮交给用户，恢复仅能写回仍由本产品持有的快照；来源租约及手动接管状态须一起持久化，进程重启不能把同一来源的续期误认为新一轮。音量读取和恢复失败须报告，不能仅因认证状态已收到便回执执行成功。
 
 当前代码在既有 BLE 配对链路上增设了双向签名状态与签名回执，并增设一条经 Wi-Fi 的 Bonjour/TCP 双向传输。Bonjour 发现结果仅选取 Wi-Fi 或以太网接口，并将服务解析与后续连接绑定到该物理接口，避免默认 VPN 路径接管解析。TCP 连接先用配对密钥完成带随机数的双向认证；Bonjour 发现本身不构成可信设备或空间证据。两条传输共用同一配对来源和递增版本，不能把重复状态算作两个请求。Mac 以 5 秒周期续期本机需求；接收端按来源和版本记录需求，接受的状态最多有效 20 秒。重发不重复调低，最后一项需求结束或过期后尝试渐变恢复。Mac 用 Process Tap 处理默认输出设备上可归属、未受保护的播放进程，加增益后原设备重放，不修改系统音量；旧整机快照只用于一次迁移恢复。iPad 沿用媒体音量执行器，保存恢复快照及整轮手动接管状态。旧版 BLE 命令与回执回退已移除，BLE 只传递签名 peer 状态与回执。上述参数是待真机校准的当前实现值。
 
-当前代码支持至少两台 Mac 与一台 iPad 的三条独立配对边：iPad 保存多台 Mac 的密钥，对已认证的 BLE central 分别返回状态和回执；Mac↔Mac 使用一次性码独立完成 SPAKE2 配对，随后直接通过按密钥发现的 Wi-Fi 链路传递状态，不借 iPad 转发。每条边分别判定空间条件并持有来源租约；一条边失效只撤销该来源。Apple 原有 BLE 传输为 Mac central/iPad peripheral，Mac↔Mac 的 Wi-Fi 一端监听、一端连接，这些传输角色不改变产品语义。空间配置由两个独立选择组成：`networkScope=wifi|lan` 选择网络范围，原 `SpaceMode` 的两个 raw 值只表达 BLE 或网络、BLE 且网络。缺失 scope 默认 `wifi`，不猜测旧设置是否曾被中间版本扩大为 LAN。局域网证据允许 Wi-Fi 或以太网，Wi-Fi 证据要求双方实际链路均走 Wi-Fi；它们不证明 SSID 或物理同室。Mac↔Mac 尚无 BLE 证据，因此严格 AND 模式对这条边保持关闭。短暂失去已满足的空间证据时保留上次状态至多 20 秒，主动切换网络范围、空间模式或暂停则重置 gate 并立即重算。iPad 通过只读的 `AVSystemController_IsSomeoneRecordingAttribute` 获取本机录音状态，不开启自己的麦克风；读数未知时不声明空闲，也不续期已有需求。语音备忘录录音和普通播放的区别已实测，iPad→Mac 音量协同已由用户真机验收；任意应用、锁屏和后台回收场景的可靠性仍不能据此推定。两端暂停时都撤销本机需求并停止响应；局域网实测和后台回收时的租约计时仍需真机验证。详见[验证记录](../validation.md)。
+当前代码支持至少两台 Mac 与一台 iPad 的三条独立配对边：iPad 保存多台 Mac 的密钥，对已认证的 BLE central 分别返回状态和回执；Mac↔Mac 使用一次性码独立完成 SPAKE2 配对，随后直接通过按密钥发现的 Wi-Fi 链路传递状态，不借 iPad 转发。每条边分别判定空间条件并持有来源租约；一条边失效只撤销该来源。Apple 原有 BLE 传输为 Mac central/iPad peripheral，Mac↔Mac 的 Wi-Fi 一端监听、一端连接，这些传输角色不改变产品语义。空间配置由两个独立选择组成：`networkScope=wifi|lan` 选择网络范围，原 `SpaceMode` 的两个 raw 值只表达 BLE 或网络、BLE 且网络。缺失 scope 默认 `wifi`，不猜测旧设置是否曾被中间版本扩大为 LAN。局域网证据允许 Wi-Fi 或以太网，Wi-Fi 证据要求双方实际链路均走 Wi-Fi；它们不证明 SSID 或物理同室。Mac↔Mac 尚无 BLE 证据，因此严格 AND 模式对这条边保持关闭。短暂失去已满足的空间证据时保留上次状态至多 20 秒，主动切换网络范围、空间模式或暂停则重置 gate 并立即重算。iPad 通过只读的 `AVSystemController_IsSomeoneRecordingAttribute` 获取本机录音状态，不以采集作为录音探针；读数未知时不声明空闲，也不续期已有需求。语音备忘录录音和普通播放的区别已实测，iPad→Mac 音量协同已由用户真机验收；任意应用、锁屏和后台回收场景的可靠性仍不能据此推定。两端暂停时都撤销本机需求并停止响应；局域网实测和后台回收时的租约计时仍需真机验证。详见[验证记录](../validation.md)。
 
 Mac 每 250 毫秒更新输入身份、输出集合及保护，不只响应请求整体开始或结束。原生输出绑定同时核对 AudioObjectID、PID、进程启动时间和应用身份，排除自身重放、浏览器家族及无法归属的输出。首版仅支持 macOS 14.2 以上默认输出的单流、无物理输入流、双声道交错 Float32 路径；权限、格式及运行失败均撤销 Tap，不回退整机降音量。强制退出后的原声恢复属于必须实测的发布门槛。
 
@@ -46,10 +46,23 @@ Mac、iPad 和 Android 通过 UniFFI 调用 `Core/` 的 Rust 库。Rust 是配�
 
 WASAPI 捕获会话用于判断本机录音进程，排除本服务的供源采集。输出使用各 render endpoint 的会话实例 ID 与 `ISimpleAudioVolume`，对活跃、非系统、非自身且不属于录音进程的会话施加相对增益，保留原值与实际应用值。修改前先保存恢复所有权；外部变化使整轮让权，只有当前仍匹配应用值才恢复，失去保护资格或请求结束也按同一规则恢复。调整gain时持久化旧应用值与待写目标，系统调用成功后才确认新值；崩溃恢复接受两种本程序可能写入的值，不把调用失败误判为用户接管。快照与来源账本按变化原子落盘，账本同时保存网络地址、介质、scope和启用策略；重启重新筛选当前已激活关系，离线撤销或收紧策略不能恢复旧租约，其修订号仍保留防重放。状态序号每次启动提前持久化预留一百万，重启不复用旧修订号。机器 DPAPI 让服务与管理员 CLI 共用关系；目录与配置 DACL 限 SYSTEM/Administrators，普通用户不可直接读取密钥或改写授权。
 
-麦克风流单独发现于 `_shenglin-mic._tcp`，实例名为 `serviceName(pairKey)-发送端配对角色`。任意已配对 peer 均可作为协议中的发送或接收端；角色只分离加密方向，不表示音频方向。当前原生适配实现 Windows 发送与 Mac 接收，后续平台只需接入采集或虚拟输入，不另建平台专属协议。Mac 挂载配置 `remoteSource={peerID,sourceID}` 与本地 `sourceUID` 互斥；48 kHz单声道是当前格式契约。设备列表由唯一 MicrophoneAgent 合并发布到现有 HAL，挂载稳定 UID 由关系与输入 ID 生成；本地专用设备与远端设备共享静音、快捷键、活动观察与取消挂载边界。
+麦克风流单独发现于 `_shenglin-mic._tcp`，实例名为 `serviceName(pairKey)-发送端配对角色`。任意已配对 peer 均可作为协议中的发送或接收端；角色只分离加密方向，不表示音频方向。当前原生适配实现 Windows、Android、iPad 发送与 Mac 接收，后续平台只需接入采集或虚拟输入，不另建平台专属协议。Mac 挂载配置 `remoteSource={peerID,sourceID}` 与本地 `sourceUID` 互斥；48 kHz单声道是当前格式契约。设备列表由唯一 MicrophoneAgent 合并发布到现有 HAL，挂载稳定 UID 由关系与输入 ID 生成；本地专用设备与远端设备共享静音、快捷键、活动观察与取消挂载边界。
 
 TCP 首先发送换行 JSON `{version:1,nonce:base64(serverNonce32)}`；接收端返回随机 `clientNonce32` 与 `proof`。每个方向的 AES-256 密钥为 `HMAC-SHA256(pairKey, UTF8("Shenglin-Microphone-v1") || serverNonce32 || clientNonce32 || UTF8(senderPairRole))`。接收端 proof 使用其方向密钥对 `microphone-open|1` 作既有 authenticationSign，发送端用自己的方向密钥对 `microphone-ready|1` 作相同签名回应；两端验证后才交换加密控制或音频。服务只接受已激活关系，配对成功本身不授予任何输入。
 
 之后每条记录为四字节大端密文长度与 AES-GCM 密文（含16字节tag）。GCM nonce 为四字节零加八字节大端递增序号，每方向从0开始，AAD 为 `Shenglin-Microphone-v1`；明文1至16384字节，序号不得达到UInt64.max。新连接必须使用新随机数，不能跨连接重放；解密失败立即关闭。明文首字节1表示UTF-8 JSON控制，2表示PCM。请求为 `operation=list` 或 `operation=stream,sourceID=...`。列表仅返回此关系已授权的活动输入；stream先返回 `{sampleRate:48000,channels:1,encoding:"f32le",packetFrames:960}`，再以20ms、960帧的单声道Float32LE供音。接收端验证包长与有限样本；控制行最大1024字节，认证与记录读取都有绝对期限，最多8条并发会话，同一关系同一输入最多1条采集流。
 
 Windows 约250ms重新检查输入授权，撤销、取消配对或服务停止会结束采集；慢接收端受限发送缓冲和300ms写超时，WASAPI积压超过200ms时丢弃旧数据。Mac 只在虚拟输入存在活动客户端时连接，停止使用约1秒后取消。断开后HAL沿用既有250ms过期归零，仍有客户端时以新认证会话重试；不把网络失败切到其他未授权输入。远端采集复用现有驱动推送边界，不增加第二个NADS发布者。
+
+Android 的 `PeerTransport` 唯一持有配对、物理网络和 Keystore 存储，`microphoneShared` 是每个已激活关系的内置输入授权，旧记录默认关闭。保存授权失败时回滚内存值。`MicrophoneSharing` 只接收授权快照和所选物理地址；撤销、取消配对、网络切换或关闭共享立即关闭相应监听与连接。认证使用共同 Rust 实现，最多八条工作连接且不排队。内置输入 ID 为 `android.builtin`，当前同一手机同时只允许一条采集流，其他已认证接收端收到占用错误。
+
+用户须从可见 Android Activity 授予 `RECORD_AUDIO` 并启动 `microphone` 类型前台服务；仅开启协同时显式使用 `connectedDevice` 类型。共享会话仅存活于当前进程，不持久化开启状态，保留逐 peer 授权但不在重启后自行恢复录音。协同开关与共享会话独立，任一开启时保持 PeerTransport；停止共享撤去 microphone 类型，不影响仍开启的协同。通知显示等待或采集状态并提供停止入口。该策略依据 [Android 前台服务类型](https://developer.android.com/develop/background-work/services/fgs/service-types#microphone)及[前台启动限制](https://developer.android.com/develop/background-work/services/fgs/restrictions-bg-start)；厂商回收行为仍需真机确认。
+
+Android 使用 AudioRecord 以 48 kHz 单声道 PCM16 采集，转换为协议中的 Float32LE；每次选择并验证内置输入路由，不跟随外接麦克风。没有客户端时释放 AudioRecord；仅实际采集时持有 CPU/Wi-Fi 锁。API29 起检查系统静音状态，输入竞争、权限失败或路由变化会结束当前流并报告原因。Mac 接收端显示受限长度的已认证 `error` 控制响应；仍有客户端时沿既有新会话重试逻辑恢复。录音器停止或释放抛异常时仍清除自身 session、释放两把锁并更新状态。
+
+
+iPad 的 `BLEServer` 继续持有配对和授权，`PairedPeer.microphoneShared` 缺失时拒绝共享，授权与密钥一起写入 Keychain 后才应用；取消配对同时撤销授权。`MicrophoneSharing` 独立于自动协同开关，以 `_shenglin-mic._tcp` 发布已授权关系，复用 `PeerMicrophoneConnection` 的认证、记录上限及读写期限，最多八条连接。输入 ID 为 `ipad.builtin`，同一时刻仅允许一条采集流；没有消费者时释放 AVAudioEngine 和 AVAudioSession。
+
+前台开启共享会请求系统麦克风权限，但不立即录音。仅在前台收到实际 stream 请求时，以 `playAndRecord/default/mixWithOthers` 激活会话，选定并核验内置输入；读取实际硬件格式，经 AVAudioConverter 转为 48 kHz 单声道 Float32。tap 只写有界缓冲，不等待网络；积压超过 200 ms 或两秒没有音频即结束流。音频后台模式仅维持已有供音，后台无客户端时撤下发现服务，回前台重新待用；中断或输入路由变化关闭共享，用户须重新开启。此边界依据 Apple 对[后台启动录音失败](https://developer.apple.com/documentation/coreaudiotypes/avaudiosession/errorcode/cannotstartrecording)的限制，不通过无人消费的持续采集保活。
+
+iPad 系统录音读数没有 owner，声邻自身采集期间本地保护输出，对外发送 `known=false/quiet=false`，避免反馈，也不假报其他应用空闲。激活音频会话前立即恢复声邻持有的音量快照；开始与停止会话后，在媒体音量未被用户改变的前提下更新自身路由基准，避免将自身切换路由误判为用户接管。会话混音不保证可与任意其他录音应用并发。

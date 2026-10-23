@@ -39,6 +39,9 @@ import local.shenglin.transport.PeerTransport
 class MainActivity : ComponentActivity() {
     private var service by mutableStateOf<PeerService?>(null)
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    private val microphonePermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) toggleMicrophone(true) else permissionMessage = "麦克风权限未授予，无法共享输入。"
+    }
     private val bluetoothPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { service?.refreshBluetooth() }
     private var permissionMessage by mutableStateOf<String?>(null)
     private val connection = object : ServiceConnection {
@@ -54,9 +57,9 @@ class MainActivity : ComponentActivity() {
             MaterialTheme(colorScheme = lightColorScheme(primary = Color(0xFF065E6E), secondary = Color(0xFF47676C), tertiary = Color(0xFF535F7D))) {
                 val current = service
                 val state = current?.state?.collectAsState()?.value ?: ServiceUiState()
-                ShenglinApp(state, current, getSharedPreferences("preferences", MODE_PRIVATE), ::toggleEnabled, ::requestBluetooth)
+                ShenglinApp(state, current, getSharedPreferences("preferences", MODE_PRIVATE), ::toggleEnabled, ::toggleMicrophone, ::requestBluetooth)
                 permissionMessage?.let { message ->
-                    AlertDialog(onDismissRequest = { permissionMessage = null }, title = { Text("蓝牙协同") }, text = { Text(message) },
+                    AlertDialog(onDismissRequest = { permissionMessage = null }, title = { Text("权限") }, text = { Text(message) },
                         confirmButton = { TextButton(onClick = { permissionMessage = null }) { Text("知道了") } })
                 }
             }
@@ -67,7 +70,16 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
                 notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             startForegroundService(Intent(this, PeerService::class.java))
-        } else { service?.pause(); stopService(Intent(this, PeerService::class.java)) }
+        } else service?.pause()
+    }
+    private fun toggleMicrophone(enabled: Boolean) {
+        if (!enabled) { service?.stopMicrophone(); return }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            microphonePermission.launch(Manifest.permission.RECORD_AUDIO); return
+        }
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        startForegroundService(Intent(this, PeerService::class.java).setAction("START_MICROPHONE"))
     }
     private fun requestBluetooth() {
         val permissions = if (Build.VERSION.SDK_INT >= 31) arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT, Manifest.permission.BLUETOOTH_ADVERTISE)
@@ -83,7 +95,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable private fun ShenglinApp(state: ServiceUiState, service: PeerService?, prefs: SharedPreferences, toggle: (Boolean) -> Unit, bluetooth: () -> Unit) {
+@Composable private fun ShenglinApp(state: ServiceUiState, service: PeerService?, prefs: SharedPreferences, toggle: (Boolean) -> Unit, microphone: (Boolean) -> Unit, bluetooth: () -> Unit) {
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var page by rememberSaveable { mutableStateOf("home") }
@@ -128,16 +140,25 @@ class MainActivity : ComponentActivity() {
                         } }
                     }
                     item {
+                        Card(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("共享内置麦克风", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                                Switch(state.microphoneEnabled, onCheckedChange = microphone, enabled = service != null,
+                                    modifier = Modifier.semantics { contentDescription = "共享内置麦克风" })
+                            }
+                            Text(state.microphoneStatus)
+                        } }
+                    }
+                    item {
                         val eligible = state.peers.count { it.spaceEligible }
                         ListItem(headlineContent = { Text(if (state.peers.isEmpty()) "添加你的第一台设备" else "${state.peers.size} 台已配对设备") },
-                            supportingContent = { Text(if (state.peers.isEmpty()) "支持 Mac、iPad 与 Android" else "$eligible 台符合协同空间条件") },
+                            supportingContent = { Text(if (state.peers.isEmpty()) "支持 Mac、Windows、iPad 与 Android" else "$eligible 台符合协同空间条件") },
                             trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, modifier = Modifier.clickable { page = if (state.peers.isEmpty()) "add" else "devices" })
                     }
-                    if (state.enabled && (state.status.contains("失败") || state.status.contains("权限") || state.status.contains("不可用"))) item {
+                    if (state.status.contains("失败") || state.status.contains("权限") || state.status.contains("不可用") || state.status.contains("无法开启")) item {
                         OutlinedCard { Column(Modifier.padding(16.dp)) { Text(state.status); TextButton(onClick = { page = "diagnostics" }) { Text("查看详情") } } }
                     }
                     item { OutlinedButton(onClick = { service?.restoreNow() }, Modifier.fillMaxWidth(), enabled = service != null) { Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(8.dp)); Text("立即恢复音量") } }
-                    item { Text("声邻只观察系统录音状态，不采集或传输麦克风音频。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
                 "devices" -> {
                     if (state.peers.isEmpty()) item { Text("还没有配对设备", style = MaterialTheme.typography.titleLarge); Text("在另一台设备上打开声邻，然后添加设备。") }
@@ -154,11 +175,16 @@ class MainActivity : ComponentActivity() {
                     else {
                         item { Text(peer.name, style = MaterialTheme.typography.headlineSmall); Text(platform(peer.platform)) }
                         item { InfoCard("连接状态", connectionText(peer)); Text(if (peer.spaceEligible) "空间条件已满足，可参与自动协同。" else "尚未满足设置中的网络与蓝牙条件，暂不协同。", style = MaterialTheme.typography.bodyMedium) }
+                        item {
+                            ListItem(headlineContent = { Text("允许使用内置麦克风") },
+                                trailingContent = { Switch(peer.microphoneShared, onCheckedChange = { act { service?.setMicrophoneShared(peer.id, it) } }, enabled = !peer.pending,
+                                    modifier = Modifier.semantics { contentDescription = "允许使用内置麦克风" }) })
+                        }
                         item { OutlinedButton(onClick = { forget = peer }, Modifier.fillMaxWidth()) { Text("取消配对", color = MaterialTheme.colorScheme.error) } }
                     }
                 }
                 "add" -> {
-                    if (!state.enabled) item { InfoCard("先开启自动协同", "开启后才能查找与验证附近设备。"); Button(onClick = { toggle(true) }) { Text("开启自动协同") } }
+                    if (!state.enabled && !state.microphoneEnabled) item { InfoCard("先开启设备连接", "开启自动协同或麦克风共享后，可以添加设备。"); Button(onClick = { toggle(true) }) { Text("开启自动协同") } }
                     item { Text("让另一台设备输入本机码", style = MaterialTheme.typography.titleMedium) }
                     item {
                         OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -166,13 +192,13 @@ class MainActivity : ComponentActivity() {
                                 Text(state.pairingCode, style = MaterialTheme.typography.displaySmall, fontFamily = FontFamily.Monospace)
                                 Text("两分钟内有效。在另一台设备的声邻中选择「${prefs.getString("name", Build.MODEL)}」并输入此码。")
                                 TextButton(onClick = { service?.cancelPairing() }) { Text("取消本机配对码") }
-                            } else Button(onClick = { act { service?.beginPairing() } }, enabled = state.enabled) { Text("显示本机配对码") }
+                            } else Button(onClick = { act { service?.beginPairing() } }, enabled = state.enabled || state.microphoneEnabled) { Text("显示本机配对码") }
                             pairingMessage(state.pairingStatus)?.let { Text(it, color = if (state.pairingStatus == "failed") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant) }
                         } }
                     }
                     item { Text("或输入另一台设备的码", style = MaterialTheme.typography.titleMedium); Text("先在 Mac、iPad 或 Android 的声邻中显示验证码，并连接同一局域网。") }
                     items(state.discovered, key = { it.id }) { peer ->
-                        OutlinedCard(onClick = { pairId = peer.id; code = "" }, enabled = state.enabled, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedCard(onClick = { pairId = peer.id; code = "" }, enabled = state.enabled || state.microphoneEnabled, modifier = Modifier.fillMaxWidth()) {
                             ListItem(headlineContent = { Text(peer.name) }, supportingContent = { Text(platform(peer.platform)) }, trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) })
                         }
                     }
@@ -185,6 +211,7 @@ class MainActivity : ComponentActivity() {
                 "diagnostics" -> {
                     item { InfoCard("设备连接", state.status) }
                     item { InfoCard("系统录音状态", when (state.recording) { true -> "正在录音"; false -> "本机空闲"; null -> "未知，保护本机输出" }) }
+                    item { InfoCard("麦克风共享", state.microphoneStatus) }
                     item { InfoCard("最近一次音量操作", state.volumeStatus) }
                     item { Text("Android 12 以下的蓝牙扫描需要系统定位开启。部分设备无法确认媒体输出路由时，声邻会保持音量并显示原因。", style = MaterialTheme.typography.bodySmall) }
                 }
@@ -196,7 +223,7 @@ class MainActivity : ComponentActivity() {
         text = { OutlinedTextField(code, onValueChange = { code = it.filter { digit -> digit in '0'..'9' }.take(6) }, label = { Text("对方的六位验证码") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)) },
         confirmButton = { TextButton(enabled = code.length == 6 && selected != null, onClick = { val id = pairId!!; act { service?.pair(id, code) }; pairId = null }) { Text("验证并添加") } },
         dismissButton = { TextButton(onClick = { pairId = null }) { Text("取消") } })
-    forget?.let { peer -> AlertDialog(onDismissRequest = { forget = null }, title = { Text("取消与「${peer.name}」的配对？") }, text = { Text("将停止与这台设备协同。再次连接需要重新验证配对码。") },
+    forget?.let { peer -> AlertDialog(onDismissRequest = { forget = null }, title = { Text("取消与「${peer.name}」的配对？") }, text = { Text("将停止与这台设备协同，并撤销麦克风共享授权。再次连接需要重新验证配对码。") },
         confirmButton = { TextButton(onClick = { service?.forget(peer.id); forget = null; page = "devices" }) { Text("取消配对") } }, dismissButton = { TextButton(onClick = { forget = null }) { Text("保留") } }) }
     error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text("暂时无法完成") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { error = null }) { Text("知道了") } }) }
 }

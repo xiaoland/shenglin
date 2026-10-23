@@ -1,6 +1,6 @@
 # 声邻 Windows
 
-`0.2.0-beta.6`，适用于 x64 Windows 10/11。无需 Rust 或编译工具；通过命令行配对、授权麦克风，用 NSSM 管理后台服务。当前可把 Windows 麦克风挂载到 Mac，Windows 接收远端麦克风尚未实现。
+`0.2.0-beta.7`，适用于 x64 Windows 10/11。无需 Rust 或编译工具；通过命令行配对、授权麦克风，用 NSSM 管理后台服务。当前可把 Windows 麦克风挂载到 Mac，Windows 接收远端麦克风尚未实现。
 
 ## 安装
 

@@ -59,6 +59,7 @@ public struct PairedPeer: Codable {
     public let localRole: PeerRole
     public var peripheralID: UUID?
     public let transport: PeerTransport?
+    public var microphoneShared: Bool?
 
     public init(key: Data, name: String, platform: PeerPlatform, localRole: PeerRole,
                 peripheralID: UUID? = nil, transport: PeerTransport? = nil) throws {

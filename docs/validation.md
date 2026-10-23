@@ -421,3 +421,52 @@ Swift 30项与 Android 23项单元测试通过；Mac 输入观察、快照一致
 本次不重复已完成的物理采集格式、HAL隔离和移除重挂硬件验收；也未覆盖多小时录音、睡眠唤醒、热拔插、Windows其它声卡或第三方应用全路径音量协同。移动端麦克风与Windows虚拟输入仅完成研究，未作为本版已实现能力。
 
 发布完成：[v0.2.0-beta.6](https://github.com/xiaoland/shenglin/releases/tag/v0.2.0-beta.6) 标签指向 `8b989c4`，源码已推送 main，GitHub Release 标记为预发布。四个安装包和 `SHA256SUMS.txt` 的远端大小、SHA-256 与本地相同；从发布页重新下载全部五项资产后逐字节比较通过。最终 Mac 和 Windows 均运行新版本，配对与挂载保留，Windows 上游为空、运行状态新鲜且无错误。发布证据位于忽略版本控制的 `local/release-beta6/`。
+
+
+## Android 与 iPad 麦克风供源开发验证（2026-10-23）
+
+beta.6 之后新增 Android 内置麦克风供源，使用原有 peer/source 与 Rust 音频协议接入 Mac。下列功能验收使用开发版本号 `0.2.0-beta.6 (3)`，不是已发布 beta.6 资产的更新；后续 beta.7 分发构建另见末尾记录。Mac `/Applications/Shenglin.app` 与 Huawei JKM-AL00a 的调试 APK 已覆盖更新，保留原配对数据。
+
+| 检查 | 观察结果 |
+| --- | --- |
+| 主机回归 | Android 33 项单元测试、APK 与测试 APK 构建、lint 通过；Swift 35 项测试和 Mac Release 构建、签名验证通过。 |
+| Android 14 / API34、target36 | 使用真实 PeerService、NSD、Rust 认证和 AudioRecord 的平台集成测试通过：列举不采集、后台首次与再次采集、Float32 有限样本/帧格式、自身录音排除、单接收端占用拒绝、暂停协同不断流、撤销/重授、停止释放。 |
+| 权限界面与服务类型 | 实际 Compose 开关弹出系统录音权限；拒绝后提示且共享关闭，允许后前台服务类型从 `0x10` 变为 `0x90`。强制结束或撤销 RECORD_AUDIO 后重新打开应用，仅恢复协同，共享保持关闭。 |
+| Mac 回归 | 接收端识别并显示有长度上限的已认证远端错误；更新后后台麦克风服务恢复，`control status` 的 inputError 为空。原 Windows 挂载保留。 |
+
+平台集成测试使用模拟器和同设备 TCP 客户端，不以音频能量作断言，没有保存 PCM，临时授权关系已删除。它不能证明真实手机音质、Android→Mac HAL 端到端或厂商锁屏可靠性。Huawei 解锁后已补真机验收，结果如下。Windows 接收端没有新增实现。
+
+证据位于 `local/AndroidMicrophone/`：`runtime-api34-final.txt`、`fgs-sharing.txt`、`revoke-permission.txt`、构建日志及最终 Mac 状态。可复现平台测试入口见[开发与诊断](../manuals/开发与诊断.md)。
+
+Huawei JKM-AL00a / Android 9 的真实 Mac HAL 验收已通过：静音与撤销授权均输出全零且释放 AudioRecord；取消静音、重授后恢复非零 PCM；暂停自动协同继续供音；锁屏中连续供音、释放 30 秒后重新使用均有非零输入，渲染错误为零。自身采集时 `microphoneCapturing=true/recording=false`，本地输出保护仍生效。三个采样秒约获得 144,384 帧，音频峰值在不同环境采样中为 0.009～0.079。
+
+真机首次揭示快速重授时 Android 9 的 mDNS 将同名服务改为“(2)”。修复为同一网络地址内复用该 peer 的监听端口，避免旧 SRV 记录将新端口视为冲突；重授整轮复验通过。关闭 Wi-Fi 会停止采集并归零，锁屏中恢复 Wi-Fi 后自动续音；成功复测约在重新启用 Wi-Fi 后 12.4 秒收到音频，随后稳定。先前一次固定 18 秒采样窗口尚无音频，因此不承诺重连时间上限。
+
+新增 Android 证据为 `physical-hal.json`、`physical-lifecycle.json`、`physical-lock.json` 和 `physical-network.json`。`physical-lifecycle.json` 保留固定重连窗口失败的观察，后续复测结果见 `physical-network.json`；不把异常窗口报告为通过。
+
+iPad Air 11 英寸 M4／iPadOS 27.0 已安装当前开发构建，保留配对，用户手动允许系统麦克风权限；逐设备授权、已认证输入列举和 Mac 挂载成功。实际收音验收从 Mac HAL 读取 48 kHz 单声道 Float32。Mac 侧只使用现有 CLI 与音频探针，iPad 激活及切换前台应用使用 `devicectl`；XCTest 仅读取设备状态和发送锁屏事件，没有操作 Mac 窗口或键盘。
+
+| iPad 真机步骤 | Mac HAL 观察 |
+| --- | --- |
+| 前台开始采集 | 3 秒获得 144,384 帧，峰值 0.24555。 |
+| 转入后台后等待 60 秒 | 设备状态为后台；随后 3 秒获得 143,872 帧，峰值 0.31509。 |
+| 后台静音接收设备 | 3 秒获得 144,384 帧，全零。 |
+| 后台取消静音，等待 15 秒 | 随后 3 秒仍全零，没有在后台重新启动采集。 |
+| 回到声邻前台 | 恢复非零 PCM，3 秒获得 144,384 帧，峰值 0.346457。 |
+| 锁屏后等待 60 秒 | 锁屏状态为 1、应用为后台；随后 3 秒获得 144,384 帧，峰值 0.25355。 |
+
+以上六段 HAL 渲染错误均为零。退出读取端后，已配对 Android 收到 iPad 的新鲜认证状态 `known=true/quiet=false`，说明 iPad 系统录音观察已回到未录音；Mac 的 `inputCount=0`、挂载设备不再使用、错误为空。探针和 XCTest 已退出，静音已取消，原 Windows／Android／iPad 挂载保留。此测试保存统计和状态，不额外保存 PCM。
+
+iPad 证据位于 `local/iPadMicrophone/physical-lifecycle.json`、同名脚本与日志、`android-observed-release.txt` 和 `mac-after.json`。前两次 Home 事件未使应用进入后台，脚本据实中止，分别保留在 `physical-lifecycle-first.*`、`physical-lifecycle-home.*`；最终轮改为用 `devicectl` 激活另一应用，并确认后台状态后采样。锁屏事件后也等待实际状态变化。不能仅凭设备命令返回成功认定已进入后台或锁屏。
+
+未覆盖多小时采集、其他应用竞争和外接输入热插拔；另一台 Android/API36 真机尚未执行本功能验收。iPad 后台或锁屏中的持续供音和结束释放已经验证；释放后仍需回到声邻前台才能再次供音。
+
+## 0.2 beta.7 分发构建（2026-10-23）
+
+本次整理 Android／iPad 供源、共同音频传输与 Mac 接收兼容改动，更新安装说明与权限描述。Android 版本为 `0.2.0-beta.7 (4)`，Mac／iPad 为 `0.2.0 (11)`，Windows 为 `0.2.0-beta.7`。Windows 发送端功能沿用 beta.6，仅同步版本与分发包；没有新增 Windows 接收端。
+
+Swift 35 项测试、Android 33 项单元测试与 lint、Windows／共同核心 15 项检查通过。四个平台完成分发构建：Android APK 非调试、仅含 ARM 双 ABI、发布证书与 beta.6 一致；iPad IPA 具有正确的版本、麦克风权限和音频后台声明，不含本机签名或配置文件；Windows ZIP 的程序版本、安装脚本与许可证齐全，远端及下载后哈希相同；Mac 应用及内置驱动签名、音频权限和 DMG 完整性通过。Android 打包检查直接读取 Gradle 版本，避免下次发版遗漏脚本中的重复版本号。
+
+Mac 唯一安装已更新并通过后台启动脚本恢复；CLI 确认 `inputCount=0`、错误为空，专用与远端输入映射保持。此次只更新 Mac 本机安装；Android／iPad 验收设备与 Windows 服务保留原安装和配对。没有操作 Mac 窗口或键盘。Mac 开发签名未经公证、Windows 未作 Authenticode、iPad 须自行签名的边界不变；未额外进行 DMG 挂载或多小时硬件复验。
+
+本地安装包、SHA-256 清单与发布说明已准备，证据位于 `local/release-beta7/`。截至本段记录，尚未提交或公开发布。

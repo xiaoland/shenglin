@@ -9,6 +9,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     let space: String
     let connected: Bool
     let allowsCoordination: Bool
+    let microphoneShared: Bool
 
     var summary: String {
         if allowsCoordination { return connected ? "可协同" : "短暂断连，仍可协同" }
@@ -26,6 +27,10 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     static let pairWriteID = CBUUID(string: BLEIdentifiers.pairingWrite)
     static let pairResponseID = CBUUID(string: BLEIdentifiers.pairingResponse)
     static let pairInfoID = CBUUID(string: BLEIdentifiers.pairingInfo)
+
+    @Published private(set) var microphoneEnabled = false
+    @Published private(set) var microphoneStatus = "共享已关闭"
+    private let microphone = MicrophoneSharing()
 
     @Published private(set) var status = "正在启动"
     @Published private(set) var startupIssue: String?
@@ -105,10 +110,25 @@ struct PairedPeerDisplay: Identifiable, Equatable {
 
     override init() {
         super.init()
+        microphone.changed = { [weak self] in
+            guard let self else { return }
+            self.microphoneEnabled = self.microphone.enabled
+            if self.microphoneStatus != self.microphone.status { self.note("MICROPHONE_STATUS \(self.microphone.status) capturing=\(self.microphone.capturing)") }
+            self.microphoneStatus = self.microphone.status
+            self.publishLocalState(); self.publishWiFiState()
+        }
+        microphone.sessionRouteChanged = { [weak self] in self?.volume?.inputSessionRouteChanged() }
+        microphone.beforeCapture = { [weak self] in
+            guard let self, let volume = self.volume else { throw MicrophoneProtocol.failure("音量状态不可用，无法安全开始共享") }
+            let result = volume.pauseForLocalInput()
+            guard !["restoreFailed", "readFailed", "readFailedAfterSet"].contains(result.0) else { throw MicrophoneProtocol.failure("无法恢复本机媒体音量，请稍后重试") }
+            self.outputPausedForInput = true
+        }
         UserDefaults.standard.set(deviceName, forKey: "deviceName")
         do {
             let peers = try PairingStore.all()
             pairedPeers = peers
+            microphone.update(peers: peers)
             pairedKeys = peers.map(\.key)
             pairedCount = pairedKeys.count
             do { pendingKey = try PairingStore.pending() }
@@ -135,6 +155,18 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             status = "无法读取配对密钥：\(error.localizedDescription)"
             startupIssue = status
         }
+    }
+
+    func setMicrophoneEnabled(_ value: Bool) { microphone.setEnabled(value) }
+
+    func setMicrophoneShared(_ id: String, shared: Bool) {
+        guard let peer = pairedPeers.first(where: { sourceID(for: $0.key) == id }) else { return }
+        do {
+            pairedPeers = try PairingStore.setMicrophoneShared(peer.key, shared: shared)
+            microphone.update(peers: pairedPeers)
+            refreshSpace()
+            peerRemovalError = nil
+        } catch { peerRemovalError = "麦克风授权保存失败：\(error.localizedDescription)" }
     }
 
     func setDeviceName(_ raw: String) {
@@ -232,7 +264,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                 link: "\(peer.platform.displayName) · \(ble ? "蓝牙已认证" : wifi ? "局域网已认证" : "未连接")",
                 space: spaceMode == .nearbyAndWiFi && !ble && !allowed ? "等待蓝牙近距验证" :
                     allowed ? (ble || wifi ? "允许协同" : "短断连宽限") : "等待空间条件",
-                connected: ble || wifi, allowsCoordination: allowed)
+                connected: ble || wifi, allowsCoordination: allowed, microphoneShared: peer.microphoneShared == true)
         }
         if displays != pairedPeerDisplays { pairedPeerDisplays = displays }
         if !removed.isEmpty { persistPeerLedger() }
@@ -257,6 +289,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             // Persist first: a Keychain error must leave the live relationship intact.
             let remaining = try PairingStore.removePeer(peer.key)
             pairedPeers = remaining
+            microphone.update(peers: remaining)
             pairedKeys = remaining.map(\.key)
             pairedCount = remaining.count
             isPaired = !remaining.isEmpty
@@ -614,7 +647,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             outputPausedForInput = false
             return volume.release(manual: manualAtEnd)
         }
-        let recording = sampleRecording()
+        let recording = microphone.capturing ? true : sampleRecording()
         let manual = peerLedger.manualTakeover
         if manual {
             outputDemandActive = true
@@ -724,7 +757,8 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     }
 
     private func makeLocalState(key: Data) -> PeerQuietUpdate {
-        let recording = sampleRecording()
+        // The system exposes no recording owner, so our capture cannot prove another app is idle.
+        let recording = microphone.capturing ? nil : sampleRecording()
         let now = Int64(Date().timeIntervalSince1970)
         let clock = UInt64(Date().timeIntervalSince1970 * 1000)
         localRevision = max(clock, localRevision &+ 1)

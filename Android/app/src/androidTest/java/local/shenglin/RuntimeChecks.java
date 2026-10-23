@@ -14,10 +14,12 @@ import local.shenglin.core.Pairing;
 
 /** Runs on an installed APK, including the real Rust UniFFI library and Android Keystore. */
 public final class RuntimeChecks extends Instrumentation {
-    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); start(); }
+    private String mode;
+    @Override public void onCreate(Bundle arguments) { super.onCreate(arguments); mode = arguments == null ? null : arguments.getString("mode"); start(); }
     @Override public void onStart() {
         Bundle result = new Bundle();
         try {
+            if ("microphone".equals(mode)) { MicrophoneRuntimeChecks.run(this, result); finish(Activity.RESULT_OK, result); return; }
             Context context = getTargetContext();
             Context isolated = new ContextWrapper(context) {
                 @Override public File getNoBackupFilesDir() {

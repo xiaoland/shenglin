@@ -74,6 +74,12 @@ import Darwin
         return result
     }
 
+    // Our input session may reroute output; a real volume change still counts as user takeover.
+    func inputSessionRouteChanged() {
+        guard let baseline = roundBaseline, let now = current(), abs(now - baseline.applied) <= 0.005 else { return }
+        roundBaseline = QuietSnapshot(original: baseline.original, applied: baseline.applied, route: route())
+    }
+
     func release(manual: Bool) -> (String, Int) {
         roundBaseline = nil
         guard let saved = snapshot else { return ("alreadyRestored", Int(((current() ?? 0) * 1000).rounded())) }

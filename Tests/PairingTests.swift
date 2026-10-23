@@ -24,6 +24,16 @@ final class PairingTests: XCTestCase {
         XCTAssertFalse(modified.valid(key: key))
     }
 
+    func testMicrophoneGrantDefaultsToDeniedAndSurvivesRoundTrip() throws {
+        let oldRecord = Data(#"{"key":"BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=","name":"iPad","platform":"ipad","localRole":"responder"}"#.utf8)
+        var peer = try JSONDecoder().decode(PairedPeer.self, from: oldRecord)
+        XCTAssertNil(peer.microphoneShared)
+        peer.microphoneShared = true
+        let restored = try JSONDecoder().decode(PairedPeer.self, from: JSONEncoder().encode(peer))
+        XCTAssertEqual(restored.microphoneShared, true)
+        XCTAssertEqual(restored.key, peer.key)
+    }
+
     func testOneTimeCodeAuthenticatesBothSidesBeforeKeyIsUsable() throws {
         let mac = try PairingInitiator(code: "004219", initiatorName: "My Mac")
         let pad = try PairingResponder(start: mac.startFrame, code: "004219", responderName: "My iPad")

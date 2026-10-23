@@ -3,6 +3,17 @@ import Foundation
 import XCTest
 
 final class ProtocolTests: XCTestCase {
+    func testRemoteMicrophoneReportsOnlyBoundedControlErrors() throws {
+        let message = Data(#"{"error":"麦克风已被占用"}"#.utf8)
+        XCTAssertThrowsError(try MicrophoneProtocol.checkRemoteError(Data([1]) + message)) {
+            XCTAssertEqual($0.localizedDescription, "远端：麦克风已被占用")
+        }
+        XCTAssertNoThrow(try MicrophoneProtocol.checkRemoteError(Data([2]) + message))
+        XCTAssertNoThrow(try MicrophoneProtocol.checkRemoteError(Data([1]) + Data(#"{"sampleRate":48000}"#.utf8)))
+        let oversized = try JSONSerialization.data(withJSONObject: ["error": String(repeating: "x", count: 513)])
+        XCTAssertNoThrow(try MicrophoneProtocol.checkRemoteError(Data([1]) + oversized))
+    }
+
     func testRemoteMountPreservesLocalConfigurationAndRejectsAmbiguousSources() throws {
         let legacy = try JSONDecoder().decode(DedicatedMicrophone.self, from: Data(#"{"bundle":"example.local","name":"Local","sourceUID":"usb"}"#.utf8))
         XCTAssertNil(legacy.remoteSource)

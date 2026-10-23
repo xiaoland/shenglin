@@ -60,6 +60,14 @@ enum PairingStore {
         return peers
     }
 
+    static func setMicrophoneShared(_ key: Data, shared: Bool) throws -> [PairedPeer] {
+        var peers = try all()
+        guard let index = peers.firstIndex(where: { $0.key == key }) else { throw PairingError.invalidMessage }
+        peers[index].microphoneShared = shared
+        try save(JSONEncoder().encode(peers), account: peersAccount)
+        return peers
+    }
+
     static func updateName(_ key: Data, name: String) throws {
         var peers = try all()
         guard let index = peers.firstIndex(where: { $0.key == key }) else { throw PairingError.invalidMessage }

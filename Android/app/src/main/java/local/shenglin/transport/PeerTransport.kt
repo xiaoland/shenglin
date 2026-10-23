@@ -14,6 +14,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
+import local.shenglin.microphone.MicrophonePeer
 import local.shenglin.SecureStore
 import local.shenglin.ble.BleProtocol
 import local.shenglin.ble.BlePeers
@@ -60,6 +61,8 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         @JvmField val lanConnected: Boolean,
         @JvmField val bleConnected: Boolean,
         @JvmField val spaceEligible: Boolean,
+        @JvmField val microphoneShared: Boolean = false,
+        @JvmField val pending: Boolean = false,
     ) {
         constructor(id: String, name: String, platform: String, connected: Boolean) : this(id, name, platform, connected, connected, false, false)
         constructor(id: String, name: String, platform: String, connected: Boolean, lanConnected: Boolean, bleConnected: Boolean) :
@@ -400,8 +403,21 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         return peers.values.map { record ->
             val lan = record.id in verifiedLan
             val ble = record.id in verifiedBle
-            Peer(record.id, record.name, record.platform, lan || ble, lan, ble, spaceEvidence(record.id))
+            Peer(record.id, record.name, record.platform, lan || ble, lan, ble, spaceEvidence(record.id), record.microphoneShared, record.pending)
         }.sortedBy { it.name.lowercase(Locale.ROOT) }
+    }
+
+    internal fun microphoneAddress(): InetAddress? = if (started) lanAddress else null
+    internal fun microphonePeers(): List<MicrophonePeer> = peers.values.filter { !it.pending && it.microphoneShared }
+        .map { MicrophonePeer(it.id, it.key.clone(), it.localRole) }
+    fun setMicrophoneShared(id: String, shared: Boolean) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        val peer = checkNotNull(peers[id]) { "设备已取消配对" }
+        check(!peer.pending) { "请先完成配对" }
+        val previous = peer.microphoneShared
+        peer.microphoneShared = shared
+        if (!persist()) { peer.microphoneShared = previous; error("无法保存麦克风授权") }
+        publishPeers()
     }
 
     /** Read-only snapshot for service diagnostics; does not advance a SpaceGate or expose credentials. */
@@ -997,7 +1013,7 @@ class PeerTransport(context: Context, private val listener: Listener, private va
             val pending = item.optBoolean("pending", false)
             val expiresAt = item.optLong("pendingExpiresAtMillis", 0)
             if (pending && TransportLifecycle.pendingExpired(expiresAt, System.currentTimeMillis())) { expiredPending = true; continue }
-            val peer = PeerRecord(key, item.getString("name"), platform, role, pending).apply { pendingExpiresAtMillis = if (pending) expiresAt else 0 }
+            val peer = PeerRecord(key, item.getString("name"), platform, role, pending).apply { pendingExpiresAtMillis = if (pending) expiresAt else 0; microphoneShared = !pending && item.optBoolean("microphoneShared", false) }
             if (peer.id != item.getString("id")) throw JSONException("设备标识无效")
             peers[peer.id] = peer
         }
@@ -1038,7 +1054,8 @@ class PeerTransport(context: Context, private val listener: Listener, private va
             array.put(JSONObject()
                 .put("id", peer.id).put("name", peer.name).put("platform", peer.platform)
                 .put("role", peer.localRole).put("key", Crypto.base64(peer.key))
-                .put("pending", peer.pending).put("pendingExpiresAtMillis", peer.pendingExpiresAtMillis))
+                .put("pending", peer.pending).put("pendingExpiresAtMillis", peer.pendingExpiresAtMillis)
+                .put("microphoneShared", peer.microphoneShared))
         }
         root.put("peers", array)
         val records = JSONObject()
@@ -1122,6 +1139,7 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         val id = fingerprint(key)
         var name = cleanName(name, platform, 128)
         var pendingExpiresAtMillis = 0L
+        var microphoneShared = false
     }
 
     private class ResolveRequest(

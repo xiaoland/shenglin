@@ -12,11 +12,15 @@ signing_properties="${SHENGLIN_ANDROID_SIGNING_PROPERTIES:-$repo_dir/local/andro
 apk="$repo_dir/Android/app/build/outputs/apk/release/app-release.apk"
 build_tools="$ANDROID_HOME/build-tools/36.0.0"
 "$build_tools/apksigner" verify --verbose --print-certs "$apk"
-python3 - "$apk" "$build_tools/aapt" <<'PY'
-import subprocess, sys, zipfile
-apk, aapt = sys.argv[1:]
+python3 - "$apk" "$build_tools/aapt" "$repo_dir/Android/app/build.gradle" <<'PY'
+import re, subprocess, sys, zipfile
+from pathlib import Path
+apk, aapt, config = sys.argv[1:]
+source = Path(config).read_text()
+version_code = re.search(r'^\s*versionCode\s+(\d+)\s*$', source, re.M).group(1)
+version_name = re.search(r"^\s*versionName\s+'([^']+)'\s*$", source, re.M).group(1)
 info = subprocess.check_output([aapt, 'dump', 'badging', apk], text=True)
-assert "package: name='local.shenglin' versionCode='3' versionName='0.2.0-beta.6'" in info, 'Unexpected package/version'
+assert f"package: name='local.shenglin' versionCode='{version_code}' versionName='{version_name}'" in info, 'Unexpected package/version'
 assert 'application-debuggable' not in info, 'Release must not be debuggable'
 with zipfile.ZipFile(apk) as z:
     libs = [name for name in z.namelist() if name.startswith('lib/') and name.endswith('.so')]

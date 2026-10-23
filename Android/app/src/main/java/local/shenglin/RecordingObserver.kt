@@ -8,6 +8,7 @@ import android.os.Handler
 internal class RecordingObserver(
     private val audio: AudioManager,
     private val handler: Handler,
+    private val ownSession: () -> Int? = { null },
     private val listener: (Boolean?) -> Unit,
 ) {
     private var registered = false
@@ -19,11 +20,23 @@ internal class RecordingObserver(
         catch (_: RuntimeException) { listener(null) }
     }
     fun sample() {
-        val state = try { audio.activeRecordingConfigurations.isNotEmpty() } catch (_: RuntimeException) { null }
+        val state = try {
+            otherRecording(ownSession) { audio.activeRecordingConfigurations.map { it.clientAudioSessionId } }
+        } catch (_: RuntimeException) { null }
         listener(state)
     }
     fun stop() {
         if (registered) audio.unregisterAudioRecordingCallback(callback)
         registered = false
     }
+}
+
+/** 采集线程可能在系统查询期间启停；混合快照不能发布为新的录音需求。 */
+internal fun otherRecording(ownSession: () -> Int?, sessions: () -> List<Int>): Boolean? {
+    repeat(2) {
+        val own = ownSession()
+        val active = sessions()
+        if (own == ownSession()) return active.any { it != own }
+    }
+    return null
 }
