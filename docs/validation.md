@@ -419,3 +419,5 @@ Windows 共同核心 9 项、平台逻辑 5 项、CLI 1 项检查通过。实际
 Swift 30项与 Android 23项单元测试通过；Mac 输入观察、快照一致性、展示、浏览器Native Messaging及单安装脚本隔离回归通过。Mac签名与DMG完整性验证通过；额外挂载复核仍被主机以“权限被拒绝”拒绝，未记作通过。Android发布签名、非debuggable、双ARM ABI和版本检查通过；iPad无签名IPA构建、版本、Payload结构及无签名/配置文件检查通过。四个安装包及SHA256SUMS已准备，发布状态以后续上传核验为准。
 
 本次不重复已完成的物理采集格式、HAL隔离和移除重挂硬件验收；也未覆盖多小时录音、睡眠唤醒、热拔插、Windows其它声卡或第三方应用全路径音量协同。移动端麦克风与Windows虚拟输入仅完成研究，未作为本版已实现能力。
+
+发布完成：[v0.2.0-beta.6](https://github.com/xiaoland/shenglin/releases/tag/v0.2.0-beta.6) 标签指向 `8b989c4`，源码已推送 main，GitHub Release 标记为预发布。四个安装包和 `SHA256SUMS.txt` 的远端大小、SHA-256 与本地相同；从发布页重新下载全部五项资产后逐字节比较通过。最终 Mac 和 Windows 均运行新版本，配对与挂载保留，Windows 上游为空、运行状态新鲜且无错误。发布证据位于忽略版本控制的 `local/release-beta6/`。
