@@ -469,4 +469,4 @@ Swift 35 项测试、Android 33 项单元测试与 lint、Windows／共同核心
 
 Mac 唯一安装已更新并通过后台启动脚本恢复；CLI 确认 `inputCount=0`、错误为空，专用与远端输入映射保持。此次只更新 Mac 本机安装；Android／iPad 验收设备与 Windows 服务保留原安装和配对。没有操作 Mac 窗口或键盘。Mac 开发签名未经公证、Windows 未作 Authenticode、iPad 须自行签名的边界不变；未额外进行 DMG 挂载或多小时硬件复验。
 
-本地安装包、SHA-256 清单与发布说明已准备，证据位于 `local/release-beta7/`。截至本段记录，尚未提交或公开发布。
+[v0.2.0-beta.7](https://github.com/xiaoland/shenglin/releases/tag/v0.2.0-beta.7) 已公开发布为预发布版本，标签对应 `07f967a`，源码已推送 main。GitHub 上四个安装包与 `SHA256SUMS.txt` 的大小、SHA-256 均与本地一致；公开发布后重新下载全部五项附件，逐字节比较通过。安装包、校验清单、发布说明与核验证据位于 `local/release-beta7/`。
