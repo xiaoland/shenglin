@@ -9,6 +9,7 @@ struct ControlRequest: Codable {
     var value: String?
     var browser: BrowserSnapshot?
     var sourceID: String?
+    var gain: Float?
 }
 
 struct ControlStatus: Codable {

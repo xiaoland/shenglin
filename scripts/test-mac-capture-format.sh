@@ -12,6 +12,8 @@ cat > "$work/stubs.swift" <<'SWIFT'
 import CoreAudio
 import Foundation
 
+enum MicrophoneProtocol { static func failure(_ message: String) -> NSError { NSError(domain: "test", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) } }
+enum MicrophoneGain { static func apply(_ samples: [Float], gain: Float) -> [Float] { samples } }
 struct RemoteMicrophoneSource { let peerID: String; let sourceID: String }
 final class RemoteMicrophoneCapture {
     var error: String? { nil }
@@ -28,6 +30,7 @@ struct DedicatedMicrophone: Equatable {
     let selector: String
     let outputSampleRate: Int
     let outputChannels: Int
+    var inputGain: Float { 1 }
     var deviceName: String { name }
 }
 enum DedicatedInputPolicy {

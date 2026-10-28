@@ -1038,6 +1038,27 @@ struct PeerDisplay: Identifiable, Equatable {
         (try? MicrophoneStore.load().first(where: { $0.selector == selector })?.remoteSource) != nil
     }
 
+    func microphoneGain(_ selector: String) -> Float {
+        (try? MicrophoneStore.load().first(where: { $0.selector == selector })?.inputGain) ?? 1
+    }
+
+    @discardableResult func setMicrophoneGain(_ selector: String, gain: Float) -> Bool {
+        do {
+            var devices = try MicrophoneStore.load()
+            guard let index = devices.firstIndex(where: { $0.selector == selector && $0.remoteSource != nil }) else {
+                throw MicrophoneProtocol.failure("远端麦克风不存在")
+            }
+            devices[index].gain = gain == 1 ? nil : gain
+            try MicrophoneStore.save(devices)
+            input?.poll()
+            refreshSources()
+            return true
+        } catch {
+            errorMessage = "无法保存输入增益：\(error.localizedDescription)"
+            return false
+        }
+    }
+
     func changeMicrophoneSource(_ source: SourceCandidate) {
         guard !sourceActivityUnknown && !source.microphoneInUse else {
             errorMessage = sourceActivityUnknown ? "无法确认麦克风是否正在使用，暂不能切换上游。"
@@ -1502,6 +1523,14 @@ struct PeerDisplay: Identifiable, Equatable {
                     return ControlResponse(ok: true, message: nil, status: nil, microphonePeers: peers)
                 case "microphone.remote.mounts":
                     return ControlResponse(ok: true, message: nil, status: nil, mounts: try MicrophoneStore.load().filter { $0.remoteSource != nil })
+                case "microphone.remote.gain":
+                    guard let selector = request.value, let gain = request.gain else {
+                        throw MicrophoneProtocol.failure("缺少挂载标识或输入增益")
+                    }
+                    guard setMicrophoneGain(selector, gain: gain) else {
+                        throw MicrophoneProtocol.failure(errorMessage)
+                    }
+                    return ControlResponse(ok: true, message: "输入增益已保存", status: nil)
                 case "microphone.remote.sources", "microphone.remote.mount":
                     guard let id = request.value else { throw MicrophoneProtocol.failure("缺少 peer ID") }
                     let peer = try RemoteMicrophoneMount.peer(id)

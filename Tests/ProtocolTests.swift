@@ -27,6 +27,34 @@ final class ProtocolTests: XCTestCase {
         XCTAssertFalse(RemoteMicrophoneSource(peerID: remote.peerID, sourceID: "").valid)
     }
 
+    func testRemoteMicrophoneGainPersistsAndClampsFullScale() throws {
+        let legacy = try JSONDecoder().decode(DedicatedMicrophone.self, from: Data(#"{"bundle":"local","name":"Local"}"#.utf8))
+        XCTAssertEqual(legacy.inputGain, 1)
+        let remote = RemoteMicrophoneSource(peerID: "Shenglin-0123456789abcdef", sourceID: "capture")
+        var device = DedicatedMicrophone(bundle: "remote.test", name: "Mic", sampleRate: 48000,
+            channels: 1, remoteSource: remote, gain: 8)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("microphones.json")
+        try DedicatedMicrophoneStore.save([legacy, device], at: url)
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [legacy, device])
+        let uid = device.uid
+        device.gain = 1
+        XCTAssertEqual(device.uid, uid)
+        for invalid: Float in [0, -1, 3, 9, .infinity, .nan] {
+            device.gain = invalid
+            XCTAssertThrowsError(try DedicatedMicrophoneStore.save([device], at: url))
+        }
+        XCTAssertEqual(try DedicatedMicrophoneStore.load(at: url), [legacy, DedicatedMicrophone(
+            bundle: "remote.test", name: "Mic", sampleRate: 48000, channels: 1, remoteSource: remote, gain: 8)])
+        var local = legacy
+        local.gain = 8
+        XCTAssertThrowsError(try DedicatedMicrophoneStore.validate([local]))
+        let signal: [Float] = [-0.25, -0.125, -0.01, 0, 0.01, 0.125, 0.25]
+        XCTAssertEqual(MicrophoneGain.apply(signal, gain: 1), signal)
+        XCTAssertEqual(MicrophoneGain.apply(signal, gain: 8), [-1, -1, -0.08, 0, 0.08, 1, 1])
+    }
+
     func testConcurrentInputApplicationsKeepTheirOwnOutputWhileBackgroundUsesOneGain() {
         let protected: Set<String> = ["bundle:voice.a", "bundle:voice.b"]
         XCTAssertEqual(VolumePolicy.outputGain(identities: ["bundle:voice.a"], protected: protected, browser: false, requested: 0.2), 1)

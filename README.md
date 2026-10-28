@@ -10,6 +10,8 @@ Android 版使用 Kotlin、Jetpack Compose 和 Material 3，源码位于 `Androi
 
 Windows 版提供无 GUI 的命令行程序，可由 NSSM 作为服务管理。已配对设备可按输入设备授权共享麦克风；Mac 可挂载 Windows 输入为独立系统麦克风，录音应用选用时才会采集。协议使用通用 peer 与输入 ID，当前实现发送端为 Windows、Android 和 iPad，接收端为 Mac。0.2 beta.7 新增 Android／iPad 供源；真机验证范围见验收记录。iPad 须在前台开始供音，之后可锁屏持续；最后一个客户端停止后释放麦克风，需回到声邻前台恢复待用。
 
+Mac 0.2 beta.8 新增远程麦克风的逐挂载输入增益，并修复诊断队列阻塞录音检测的问题。增益默认保留原始音量，可在专用麦克风设置中调高；其他平台本次沿用 beta.7 安装包。
+
 ## 下载与安装
 
 从 [Releases](https://github.com/xiaoland/shenglin/releases) 下载 Android ARM APK（arm64 / armv7）、macOS DMG、iPad 无签名 IPA 和 Windows x64 ZIP。Android APK 使用独立发布签名，Android 8.0 起可安装；现有调试签名安装不能直接覆盖为发布版，卸载会丢失本机配对。macOS 包使用开发签名、未经 Apple 公证，系统可能阻止运行；iPad 包需用自己的免费 Apple 账号签名安装，无需下载源码，但需定期续签。从 0.2 beta.4 起，已准备声邻源码、Xcode 和 Rust 环境的 Mac 也可在“设置…”→“iPad 安装”中为 USB 连接的 iPad 构建、签名并覆盖安装。Windows 的安装、配对与共享步骤见 [Windows 使用说明](Windows/README.md)，其他平台详情见[安装与分发](manuals/安装与分发.md)。

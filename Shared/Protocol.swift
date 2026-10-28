@@ -159,6 +159,8 @@ public struct DedicatedMicrophone: Codable, Equatable {
     public let sampleRate: Int?
     public let channels: Int?
     public let remoteSource: RemoteMicrophoneSource?
+    public var gain: Float?
+    public var inputGain: Float { gain ?? 1 }
     public var selector: String { "bundle:\(bundle)" }
     public var uid: String { "local.shenglin.virtual-microphone.\(bundle)" }
     public var deviceName: String { "声邻 · \(name)" }
@@ -166,13 +168,15 @@ public struct DedicatedMicrophone: Codable, Equatable {
     public var outputChannels: Int { channels ?? 2 }
 
     public init(bundle: String, name: String, sourceUID: String? = nil,
-                sampleRate: Int? = nil, channels: Int? = nil, remoteSource: RemoteMicrophoneSource? = nil) {
+                sampleRate: Int? = nil, channels: Int? = nil, remoteSource: RemoteMicrophoneSource? = nil,
+                gain: Float? = nil) {
         self.bundle = bundle
         self.name = name
         self.sourceUID = sourceUID
         self.sampleRate = sampleRate
         self.channels = channels
         self.remoteSource = remoteSource
+        self.gain = gain
     }
 }
 
@@ -183,6 +187,7 @@ public enum DedicatedMicrophoneStore {
               devices.allSatisfy({ !$0.bundle.isEmpty && $0.bundle.utf8.count <= 255 &&
                   $0.bundle.unicodeScalars.allSatisfy(allowed.contains) &&
                   !$0.name.isEmpty && $0.name.utf8.count <= 160 && !$0.name.contains("\0") &&
+                  MicrophoneGain.values.contains($0.inputGain) && ($0.remoteSource != nil || $0.inputGain == 1) &&
                   ($0.sourceUID == nil || (!$0.sourceUID!.isEmpty && $0.sourceUID!.utf8.count <= 255)) &&
                   ($0.remoteSource == nil || ($0.sourceUID == nil && $0.remoteSource!.valid &&
                     $0.outputSampleRate == 48000 && $0.outputChannels == 1)) &&
@@ -205,6 +210,16 @@ public enum DedicatedMicrophoneStore {
         try validate(devices)
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder().encode(devices.sorted { $0.bundle < $1.bundle }).write(to: url, options: .atomic)
+    }
+}
+
+public enum MicrophoneGain {
+    public static let values: [Float] = [1, 2, 4, 8]
+
+    /// 增益应用于已验证的有限 Float32 样本；峰值限制在麦克风 PCM 的满幅范围内。
+    public static func apply(_ samples: [Float], gain: Float) -> [Float] {
+        precondition(values.contains(gain))
+        return samples.map { min(1, max(-1, $0 * gain)) }
     }
 }
 

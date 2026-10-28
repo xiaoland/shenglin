@@ -34,12 +34,21 @@ enum MicrophoneAgent {
         }
         var forensics = [String: ForensicStatus]()
         var lastForensicCheck = Date.distantPast
+        var forensicCheckPending = false
         let timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
             activity.poll()
-            if Date().timeIntervalSince(lastForensicCheck) >= 1 {
-                forensics = Dictionary(uniqueKeysWithValues: ((try? MicrophoneStore.load()) ?? [])
-                    .map { ($0.selector, AudioForensics.shared.status(for: $0.selector)) })
+            if !forensicCheckPending && Date().timeIntervalSince(lastForensicCheck) >= 1 {
+                forensicCheckPending = true
                 lastForensicCheck = Date()
+                // 诊断队列可能正在扫描磁盘，录音需求检测不能等待它。
+                DispatchQueue.global(qos: .utility).async {
+                    let snapshot = Dictionary(uniqueKeysWithValues: ((try? MicrophoneStore.load()) ?? [])
+                        .map { ($0.selector, AudioForensics.shared.status(for: $0.selector)) })
+                    DispatchQueue.main.async {
+                        forensics = snapshot
+                        forensicCheckPending = false
+                    }
+                }
             }
             let status = MicrophoneAgentStatus(pid: getpid(), updatedAt: Date(),
                 error: activity.lastObservation.error, diagnostics: activity.captureDiagnostics,

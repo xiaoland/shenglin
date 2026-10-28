@@ -19,7 +19,9 @@ if action == "microphone" {
             request = ControlRequest(command: "microphone.remote." + parts[0], value: parts[1])
         } else if parts.count == 3, parts[0] == "mount" {
             request = ControlRequest(command: "microphone.remote.mount", value: parts[1], sourceID: parts[2])
-        } else { throw MicrophoneProtocol.failure("用法：microphone peers|mounts|sources <peer ID>|mount <peer ID> <输入 ID>|unmount <selector>") }
+        } else if parts.count == 3, parts[0] == "gain", let gain = Float(parts[2]), MicrophoneGain.values.contains(gain) {
+            request = ControlRequest(command: "microphone.remote.gain", value: parts[1], gain: gain)
+        } else { throw MicrophoneProtocol.failure("用法：microphone peers|mounts|sources <peer ID>|mount <peer ID> <输入 ID>|unmount <selector>|gain <selector> <1|2|4|8>") }
         let response = try ControlIPC.exchange(request)
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         print(String(decoding: try encoder.encode(response), as: UTF8.self))

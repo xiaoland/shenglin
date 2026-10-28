@@ -40,6 +40,7 @@ final class VirtualMicrophone {
     private var directFormat = false
     private var destinations = [AudioObjectID]()
     private var destinationSelectors = [AudioObjectID: String]()
+    private var destinationGains = [String: Float]()
     private static var configured: [DedicatedMicrophone]?
     private static var configuredPlugin: AudioObjectID?
     private let sourceUID: String?
@@ -156,6 +157,7 @@ final class VirtualMicrophone {
             inactiveSince = nil
             queue.sync {
                 destinations = activeDevices
+                destinationGains = Dictionary(uniqueKeysWithValues: group.map { ($0.selector, $0.inputGain) })
                 destinationSelectors = Dictionary(uniqueKeysWithValues: group.compactMap { device in
                     Self.deviceID(uid: device.uid).map { ($0, device.selector) }
                 })
@@ -165,25 +167,7 @@ final class VirtualMicrophone {
                     try Self.check(primeDestinations(), "无法预充远端麦克风")
                     let epoch = queue.sync { generation += 1; return generation }
                     remoteCapture = RemoteMicrophoneCapture(source: remoteSource) { [weak self] pcm in
-                        guard let self else { return }
-                        try self.queue.sync {
-                            guard self.generation == epoch else { return }
-                            let samples = pcm.withUnsafeBytes { bytes in
-                                stride(from: 0, to: bytes.count, by: 4).map { bytes.loadUnaligned(fromByteOffset: $0, as: Float.self) }
-                            }
-                            let hostTime = mach_absolute_time()
-                            for selector in self.destinationSelectors.values {
-                                AudioForensics.shared.recordSource(selector, sampleRate: self.outputSampleRate,
-                                    channels: self.outputChannels, hostTime: hostTime, sampleTime: -1, samples: samples)
-                            }
-                            self.add(Int64(pcm.count / 4), to: Counter.tapped)
-                            for destination in self.destinations {
-                                let status = Self.setProperty(destination, Self.audioPush, data: pcm as CFData)
-                                if status != noErr { self.add(Int64(pcm.count / 4), to: Counter.pushFailed) }
-                                try Self.check(status, "无法写入远端麦克风")
-                            }
-                            self.add(Int64(pcm.count / 4), to: Counter.pushed)
-                        }
+                        try self?.receiveRemotePCM(pcm, epoch: epoch)
                     }
                     running = true
                     sourceSampleRate = 48000; sourceChannels = 1; directFormat = true
@@ -199,6 +183,31 @@ final class VirtualMicrophone {
             }
         }
         return DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedDevices)
+    }
+
+    private func receiveRemotePCM(_ pcm: Data, epoch: Int) throws {
+        try self.queue.sync {
+            guard self.generation == epoch else { return }
+            let samples = pcm.withUnsafeBytes { bytes in
+                stride(from: 0, to: bytes.count, by: 4).map { bytes.loadUnaligned(fromByteOffset: $0, as: Float.self) }
+            }
+            let hostTime = mach_absolute_time()
+            self.add(Int64(pcm.count / 4), to: Counter.tapped)
+            for destination in self.destinations {
+                guard let selector = self.destinationSelectors[destination],
+                      let gain = self.destinationGains[selector] else {
+                    throw MicrophoneProtocol.failure("远端麦克风映射已变化")
+                }
+                let output = gain == 1 ? samples : MicrophoneGain.apply(samples, gain: gain)
+                AudioForensics.shared.recordSource(selector, sampleRate: self.outputSampleRate,
+                    channels: self.outputChannels, hostTime: hostTime, sampleTime: -1, samples: output)
+                let data = gain == 1 ? pcm : output.withUnsafeBytes { Data($0) }
+                let status = Self.setProperty(destination, Self.audioPush, data: data as CFData)
+                if status != noErr { self.add(Int64(pcm.count / 4), to: Counter.pushFailed) }
+                try Self.check(status, "无法写入远端麦克风")
+            }
+            self.add(Int64(pcm.count / 4), to: Counter.pushed)
+        }
     }
 
     func suspend() {

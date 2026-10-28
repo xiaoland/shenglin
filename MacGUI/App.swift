@@ -485,6 +485,16 @@ private struct MicrophoneConfiguration: View {
             LabeledContent("状态", value: model.sourceActivityUnknown ? "使用状态未知" :
                            source.microphoneInUse ? "正在使用" : "未在使用")
             if source.isExcluded { Text("已排除设备间音量协同").foregroundStyle(.secondary) }
+            if model.isRemoteMicrophone(source.selector) {
+                Picker("输入增益", selection: Binding(
+                    get: { model.microphoneGain(source.selector) },
+                    set: { model.setMicrophoneGain(source.selector, gain: $0) }
+                )) {
+                    ForEach(MicrophoneGain.values, id: \.self) { gain in
+                        Text(gain == 1 ? "原始（1 倍）" : "\(Int(gain)) 倍").tag(gain)
+                    }
+                }
+            }
             HStack {
                 Text(model.microphoneSourceDescription(for: source.selector)).foregroundStyle(.secondary)
                 Spacer()
