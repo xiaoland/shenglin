@@ -1,4 +1,4 @@
-// 只读取或供给 声邻虚拟设备的合成样本，不访问物理麦克风。
+// HAL 验收客户端；record 只读取显式指定的声邻虚拟输入。
 #include <AudioUnit/AudioUnit.h>
 #include <CoreAudio/CoreAudio.h>
 #include <CoreFoundation/CoreFoundation.h>
@@ -28,6 +28,8 @@ std::array<LevelBin, 16384> levels{};
 std::atomic<size_t> levelCount{0};
 std::atomic<long long> firstSampleTime{-1}, lastSampleEnd{-1};
 std::atomic<unsigned long long> sampleTimeSkips{0}, callbackFrames{0};
+std::vector<float> recorded;
+std::atomic<size_t> recordedCount{0}, recordingOverflows{0};
 
 void Check(OSStatus status, const char* operation) {
     if (status == noErr) return;
@@ -85,6 +87,14 @@ OSStatus Input(void*, AudioUnitRenderActionFlags* flags, const AudioTimeStamp* t
     list.mBuffers[0] = {inputChannels, frames * inputChannels * UInt32(sizeof(float)), data};
     const auto status = AudioUnitRender(unit, flags, time, 1, frames, &list);
     if (status != noErr) { errors.fetch_add(1); return status; }
+    if (!recorded.empty()) {
+        const auto offset = recordedCount.load(std::memory_order_relaxed);
+        const auto count = size_t(frames) * inputChannels;
+        if (count <= recorded.size() - offset) {
+            std::memcpy(recorded.data() + offset, data, count * sizeof(float));
+            recordedCount.store(offset + count, std::memory_order_release);
+        } else recordingOverflows.fetch_add(1);
+    }
     unsigned long long hits = 0;
     unsigned long long zeros = 0;
     auto run = zeroRun.load(std::memory_order_relaxed);
@@ -121,8 +131,9 @@ OSStatus Input(void*, AudioUnitRenderActionFlags* flags, const AudioTimeStamp* t
     return noErr;
 }
 
-void Read(AudioObjectID device, UInt32 channels = 2) {
+void Read(AudioObjectID device, UInt32 channels = 2, const char* recording = nullptr, int seconds = 0) {
     inputChannels = channels;
+    if (recording) recorded.resize(size_t(48000) * channels * seconds);
     AudioComponentDescription description{kAudioUnitType_Output, kAudioUnitSubType_HALOutput,
         kAudioUnitManufacturer_Apple, 0, 0};
     auto component = AudioComponentFindNext(nullptr, &description);
@@ -148,7 +159,12 @@ void Read(AudioObjectID device, UInt32 channels = 2) {
     std::cout << "ready " << getpid() << ' ' << device << std::endl;
     std::string command;
     while (std::getline(std::cin, command)) {
-        if (command == "stats") {
+        if (command == "mark") {
+            // Sample offsets refer to successfully copied PCM, not wall-clock estimates.
+            std::cout << "{\"frames\":" << recordedCount.load(std::memory_order_acquire) / channels
+                      << ",\"errors\":" << errors.load()
+                      << ",\"overflows\":" << recordingOverflows.load() << "}" << std::endl;
+        } else if (command == "stats") {
             std::cout << samples.exchange(0) << ' ' << nonzero.exchange(0)
                       << ' ' << errors.exchange(0) << ' ' << zeroFrames.exchange(0)
                       << ' ' << maxZeroRun.exchange(0) << std::endl;
@@ -181,6 +197,15 @@ void Read(AudioObjectID device, UInt32 channels = 2) {
         else { std::fputs("未知读取命令\n", stderr); std::exit(2); }
     }
     if (command != "bins") Check(AudioOutputUnitStop(unit), "停止输入");
+    if (recording) {
+        std::ofstream output(recording, std::ios::binary);
+        output.write(reinterpret_cast<const char*>(recorded.data()), recordedCount.load() * sizeof(float));
+        output.close();
+        if (!output || recordingOverflows.load()) {
+            std::fputs("录音保存失败或超过容量；已保留可用PCM。\n", stderr);
+            std::exit(3);
+        }
+    }
     Check(AudioUnitUninitialize(unit), "结束 AUHAL");
     Check(AudioComponentInstanceDispose(unit), "释放 AUHAL");
 }
@@ -188,6 +213,30 @@ void Read(AudioObjectID device, UInt32 channels = 2) {
 
 int main(int argc, char** argv) {
     if (argc < 2) return 2;
+    if (std::strcmp(argv[1], "outputs") == 0 && argc == 2) {
+        AudioObjectPropertyAddress address{kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, 0};
+        UInt32 size = 0;
+        Check(AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size), "读取设备数");
+        std::vector<AudioObjectID> devices(size / sizeof(AudioObjectID));
+        Check(AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, devices.data()), "读取设备");
+        for (auto id : devices) {
+            address = {kAudioDevicePropertyStreams, kAudioDevicePropertyScopeOutput, 0};
+            Check(AudioObjectGetPropertyDataSize(id, &address, 0, nullptr, &size), "读取输出流");
+            if (!size) continue;
+            std::cout << id;
+            for (AudioObjectPropertySelector property : std::array<AudioObjectPropertySelector, 2>{kAudioDevicePropertyDeviceUID, kAudioObjectPropertyName}) {
+                address = {property, kAudioObjectPropertyScopeGlobal, 0};
+                CFStringRef value = nullptr; size = sizeof(value);
+                Check(AudioObjectGetPropertyData(id, &address, 0, nullptr, &size, &value), "读取设备名称");
+                char text[2048]{};
+                if (!value || !CFStringGetCString(value, text, sizeof(text), kCFStringEncodingUTF8)) return 1;
+                std::cout << '\t' << text;
+                CFRelease(value);
+            }
+            std::cout << '\n';
+        }
+        return 0;
+    }
     if (std::strcmp(argv[1], "configure") == 0 && argc == 3) {
         std::ifstream file(argv[2], std::ios::binary);
         if (!file) return 2;
@@ -208,7 +257,14 @@ int main(int argc, char** argv) {
     }
     if (argc < 3) return 2;
     auto device = Device(argv[2]);
-    if (std::strcmp(argv[1], "read") == 0 && argc == 3)
+    if (std::strcmp(argv[1], "device-id") == 0 && argc == 3) std::cout << device << std::endl;
+    else if (std::strcmp(argv[1], "record") == 0 && argc == 5) {
+        char* end = nullptr;
+        auto seconds = std::strtol(argv[4], &end, 10);
+        constexpr char prefix[] = "local.shenglin.virtual-microphone.";
+        if (*end || seconds < 1 || seconds > 600 || std::strncmp(argv[2], prefix, sizeof(prefix) - 1)) return 2;
+        Read(device, 1, argv[3], int(seconds));
+    } else if (std::strcmp(argv[1], "read") == 0 && argc == 3)
         Read(device, std::strcmp(argv[2], "default-input") == 0 ? 1 : 2);
     else if (std::strcmp(argv[1], "read-mono") == 0 && argc == 3)
         Read(device, 1);
