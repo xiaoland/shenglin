@@ -634,7 +634,8 @@ struct PeerDisplay: Identifiable, Equatable {
     }
 
     private func expirePendingMacPeers() {
-        guard Date().timeIntervalSince(lastPendingMacCheck) >= 5 else { return }
+        guard !pendingMacIDs.isEmpty,
+              Date().timeIntervalSince(lastPendingMacCheck) >= 5 else { return }
         lastPendingMacCheck = Date()
         do {
             let current = Set(try MacCredentials.pendingMacPeers().map { sourceID(for: $0.key) })
