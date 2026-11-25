@@ -67,26 +67,28 @@ final class AudioForensics {
         MacPreferences.defaults.set(resolved.path, forKey: "diagnosticsDirectory")
         let volumeID = Self.volumeID(at: resolved)
         MacPreferences.defaults.set(volumeID ?? "", forKey: "diagnosticsVolumeUUID")
-        queue.async {
-            self.closeHandles()
-            self.directory = resolved
-            self.storageVolumeID = volumeID
-            self.minute.removeAll()
-            self.previousMetrics.removeAll()
-            self.previousClients.removeAll()
-            self.lastPerformance.removeAll()
-            self.lastDriverPerformance.removeAll()
-            self.lastPrune = .distantPast
-            self.coverage.removeAll()
-            self.coverageScanned = false
-            if self.storageVolumeID != nil {
-                let recovered = self.warnings.filter { $0.value.hasPrefix("诊断写盘失败：") }.map(\.key)
-                for selector in recovered {
-                    self.warnings.removeValue(forKey: selector)
-                }
+        queue.async { self.useLocation(resolved, volumeID: volumeID) }
+    }
+
+    private func useLocation(_ resolved: URL, volumeID: String?) {
+        closeHandles()
+        directory = resolved
+        storageVolumeID = volumeID
+        minute.removeAll()
+        previousMetrics.removeAll()
+        previousClients.removeAll()
+        lastPerformance.removeAll()
+        lastDriverPerformance.removeAll()
+        lastPrune = .distantPast
+        coverage.removeAll()
+        coverageScanned = false
+        if storageVolumeID != nil {
+            let recovered = warnings.filter { $0.value.hasPrefix("诊断写盘失败：") }.map(\.key)
+            for selector in recovered {
+                warnings.removeValue(forKey: selector)
             }
-            for device in self.known.values { self.writeManifest(device) }
         }
+        for device in known.values { writeManifest(device) }
     }
 
     func setLimitGB(_ value: Int) {
@@ -158,6 +160,13 @@ final class AudioForensics {
         guard pollSlot.wait(timeout: .now()) == .success else { return }
         queue.async {
             defer { self.pollSlot.signal() }
+            let defaults = MacPreferences.defaults
+            if let path = defaults.string(forKey: "diagnosticsDirectory") {
+                let volumeID = defaults.string(forKey: "diagnosticsVolumeUUID").flatMap { $0.isEmpty ? nil : $0 }
+                if path != self.directory.path || volumeID != self.storageVolumeID {
+                    self.useLocation(URL(fileURLWithPath: path, isDirectory: true), volumeID: volumeID)
+                }
+            }
             self.observeConfiguration(devices)
             for device in devices {
                 guard let id = VirtualMicrophone.deviceID(uid: device.uid) else { continue }
@@ -198,17 +207,42 @@ final class AudioForensics {
     func export(to destination: URL, completion: @escaping (Error?) -> Void) {
         queue.async {
             self.closeHandles()
-            do { try self.requireStorage() }
-            catch { completion(error); return }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            process.arguments = ["-c", "-k", "--keepParent", self.directory.path, destination.path]
+            let manager = FileManager.default
             do {
+                try self.requireStorage()
+                let files = try self.evidenceFiles()
+                guard !files.isEmpty else {
+                    throw NSError(domain: "Shenglin", code: 7,
+                        userInfo: [NSLocalizedDescriptionKey: "当前取证目录没有可导出的声邻记录"])
+                }
+                let work = try manager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                    appropriateFor: destination, create: true)
+                defer { try? manager.removeItem(at: work) }
+                let archive = work.appendingPathComponent("evidence.zip")
+                let list = work.appendingPathComponent("files")
+                let parent = self.directory.deletingLastPathComponent()
+                var names = Data()
+                for file in files {
+                    let components = file.pathComponents.suffix(file.lastPathComponent == "manifest.json" ? 2 : 3)
+                    let path = ([self.directory.lastPathComponent] + components).joined(separator: "/")
+                    names.append(contentsOf: ("./" + path).utf8)
+                    names.append(0)
+                }
+                try names.write(to: list)
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+                process.currentDirectoryURL = parent
+                process.arguments = ["--format", "zip", "-cf", archive.path, "--no-recursion", "--null", "-T", list.path]
                 try process.run()
                 process.waitUntilExit()
-                if process.terminationStatus != 0 {
+                guard process.terminationStatus == 0 else {
                     throw NSError(domain: "Shenglin", code: Int(process.terminationStatus),
                         userInfo: [NSLocalizedDescriptionKey: "诊断压缩失败"])
+                }
+                if manager.fileExists(atPath: destination.path) {
+                    _ = try manager.replaceItemAt(destination, withItemAt: archive)
+                } else {
+                    try manager.moveItem(at: archive, to: destination)
                 }
                 completion(nil)
             } catch { completion(error) }
@@ -432,24 +466,57 @@ final class AudioForensics {
         handles.removeAll()
     }
 
+    // The selected volume can also contain unrelated files. A matching device manifest
+    // and the recorder’s rolling filename format identify evidence, including removed devices.
+    private func evidenceFiles() throws -> [URL] {
+        let manager = FileManager.default
+        let folders = try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey],
+                                                     options: [.skipsHiddenFiles])
+        var result = [URL]()
+        for folder in folders {
+            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            let manifest = folder.appendingPathComponent("manifest.json")
+            guard let metadata = try? manifest.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+                  metadata.isRegularFile == true, (metadata.fileSize ?? 0) <= 64 * 1024,
+                  let data = try? Data(contentsOf: manifest),
+                  let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  info["version"] as? Int == 1, info["encoding"] as? String == "interleaved Float32 little-endian",
+                  let selector = info["selector"] as? String,
+                  selector.replacingOccurrences(of: ":", with: "-") == folder.lastPathComponent else { continue }
+            result.append(manifest)
+            let rolling = folder.appendingPathComponent("rolling")
+            guard (try? rolling.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            let segments = try manager.contentsOfDirectory(at: rolling,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles])
+            for file in segments {
+                let parts = file.lastPathComponent.split(separator: "-", maxSplits: 2, omittingEmptySubsequences: false)
+                guard parts.count == 3, let bucket = Int(parts[0]), bucket >= 0,
+                      let index = Int(parts[1]), index >= 0,
+                      ["upstream.bin", "hal-output.bin", "events.jsonl"].contains(parts[2]),
+                      (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+                result.append(file)
+            }
+        }
+        return result
+    }
+
     private func prune() {
         guard !coverageScanned || Date().timeIntervalSince(lastPrune) >= 60 else { return }
         lastPrune = Date()
         coverageScanned = true
         coverage.removeAll()
         let manager = FileManager.default
-        guard let walk = manager.enumerator(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]) else { return }
+        guard (try? requireStorage()) != nil, let evidence = try? evidenceFiles() else { return }
         var files = [(url: URL, bytes: Int64, age: Date, modified: Date)]()
         var total: Int64 = 0
-        for case let url as URL in walk {
-            guard ["bin", "jsonl", "json"].contains(url.pathExtension) else { continue }
+        for url in evidence {
             guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { continue }
             let size = Int64(values.fileSize ?? 0)
             total += size
             if url.lastPathComponent != "manifest.json" {
                 let bucket = Int(url.lastPathComponent.split(separator: "-").first ?? "")
-                files.append((url, size, bucket.map { Date(timeIntervalSince1970: TimeInterval($0 * 60)) }
+                files.append((url, size, bucket.map { Date(timeIntervalSince1970: TimeInterval($0) * 60) }
                     ?? values.contentModificationDate ?? .distantPast,
                     values.contentModificationDate ?? .distantPast))
             }

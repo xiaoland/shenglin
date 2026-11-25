@@ -41,6 +41,22 @@ try FileManager.default.createDirectory(at: rolling, withIntermediateDirectories
 let recorder = AudioForensics.shared
 recorder.setLocation(root)
 _ = recorder.location
+let device = DedicatedMicrophone(selector: "test", uid: "test", sourceUID: nil,
+                                 outputSampleRate: 48_000, outputChannels: 1)
+recorder.poll([device])
+_ = recorder.location
+let unrelated = root.appendingPathComponent("personal.json")
+try Data("personal".utf8).write(to: unrelated)
+let foreignFolder = root.appendingPathComponent("other/rolling", isDirectory: true)
+try FileManager.default.createDirectory(at: foreignFolder, withIntermediateDirectories: true)
+let foreignSegment = foreignFolder.appendingPathComponent("0-0-upstream.bin")
+try Data([1]).write(to: foreignSegment)
+let linkedSegment = rolling.appendingPathComponent("0-0-upstream.bin")
+try FileManager.default.createSymbolicLink(at: linkedSegment, withDestinationURL: unrelated)
+let directoryNamedBin = rolling.appendingPathComponent("0-1-upstream.bin", isDirectory: true)
+try FileManager.default.createDirectory(at: directoryNamedBin, withIntermediateDirectories: true)
+let privateNote = rolling.appendingPathComponent("notes.json")
+try Data("secret".utf8).write(to: privateNote)
 recorder.setLimitGB(1)
 _ = recorder.location
 let now = Int(Date().timeIntervalSince1970 / 60)
@@ -56,10 +72,35 @@ let old = try segment(now - 20_000, 100)
 recorder.poll([])
 _ = recorder.location
 precondition(FileManager.default.fileExists(atPath: old.path), "age alone must not delete evidence")
+let archiveURL = root.appendingPathComponent("export.zip")
+func exportContents() throws -> String {
+    var exportError: Error?
+    recorder.export(to: archiveURL) { exportError = $0 }
+    _ = recorder.location
+    if let exportError { throw exportError }
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+    task.arguments = ["-tf", archiveURL.path]
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    try task.run()
+    let result = pipe.fileHandleForReading.readDataToEndOfFile()
+    task.waitUntilExit()
+    precondition(task.terminationStatus == 0)
+    return String(decoding: result, as: UTF8.self)
+}
+let entries = try exportContents()
+precondition(entries.contains("test/manifest.json") && entries.contains(old.lastPathComponent))
+for foreign in ["personal.json", "notes.json", "other/", "0-0-upstream.bin", "0-1-upstream.bin", "export.zip"] {
+    precondition(!entries.contains("/" + foreign))
+}
 let newer = try segment(now - 10, 700_000_000)
 let newest = try segment(now - 5, 700_000_000)
 recorder.setLimitGB(1)
 _ = recorder.location
+for preserved in [unrelated, foreignSegment, privateNote, linkedSegment, directoryNamedBin] {
+    precondition(FileManager.default.fileExists(atPath: preserved.path), "retention removed an unrelated file")
+}
 precondition(!FileManager.default.fileExists(atPath: old.path))
 precondition(!FileManager.default.fileExists(atPath: newer.path))
 precondition(FileManager.default.fileExists(atPath: newest.path), "newest evidence must survive cap pruning")
@@ -86,8 +127,6 @@ precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().time
              "retention reconciliation must forget externally deleted audio")
 let eventBucket = Int(Date().timeIntervalSince1970 / 60)
 recorder.mark("test")
-let device = DedicatedMicrophone(selector: "test", uid: "test", sourceUID: nil,
-                                 outputSampleRate: 48_000, outputChannels: 1)
 recorder.performance([device], capture: CaptureDiagnostics(sourceSampleRate: 48_000,
     sourceChannels: 1, directFormat: true, tappedFrames: 123, busyDroppedFrames: 0,
     conversionDroppedFrames: 0, pushFailedFrames: 0, pushedFrames: 123))
@@ -140,6 +179,8 @@ precondition(recorder.status(for: "test").warning == nil,
 let archive = root.appendingPathComponent("status-benchmark", isDirectory: true)
 let archiveRolling = archive.appendingPathComponent("test/rolling", isDirectory: true)
 try FileManager.default.createDirectory(at: archiveRolling, withIntermediateDirectories: true)
+try FileManager.default.copyItem(at: root.appendingPathComponent("test/manifest.json"),
+    to: archive.appendingPathComponent("test/manifest.json"))
 for index in 0..<10_000 {
     try Data([0]).write(to: archiveRolling.appendingPathComponent("\(now - index)-0-upstream.bin"))
 }

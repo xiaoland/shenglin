@@ -15,7 +15,7 @@
     <key>NSBluetoothAlwaysUsageDescription</key><string>通过蓝牙与已配对的 iPad 协调媒体音量。</string>
     <key>NSLocalNetworkUsageDescription</key><string>通过局域网与已配对设备协调录音状态和媒体音量。</string>
     <key>NSBonjourServices</key><array><string>_shenglin._tcp</string><string>_shenglin-pair4._tcp</string><string>_shenglin-mic._tcp</string></array>
-    <key>NSMicrophoneUsageDescription</key><string>将物理麦克风输入实时转发到声邻虚拟麦克风；声音只在本机内存中处理。</string>
+    <key>NSMicrophoneUsageDescription</key><string>将物理麦克风声音转发给使用专用麦克风的应用，并在本机诊断目录保存音频供回看。</string>
     <key>NSHighResolutionCapable</key><true/>
 <key>NSAudioCaptureUsageDescription</key><string>仅在本机内处理其他应用的输出，以保留通话声音并降低背景音；不保存或传送音频。</string>
 </dict></plist>
