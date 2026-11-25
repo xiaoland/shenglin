@@ -1,6 +1,14 @@
 #!/bin/sh
 set -eu
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
+case $# in
+    0) ;;
+    1) case $1 in
+           *.app/Contents/Resources/BrowserExtension) ;;
+           *) echo '目标必须是 Mac App 内的 Contents/Resources/BrowserExtension。' >&2; exit 1 ;;
+       esac ;;
+    *) echo '用法：build-browser-extension.sh [App 内的 BrowserExtension 目标目录]' >&2; exit 1 ;;
+esac
 # Xcode 启动时可能没有继承终端中 mise 的 PATH。
 export PATH="$HOME/.local/share/mise/shims:/opt/homebrew/bin:/usr/local/bin:$PATH"
 if ! command -v pnpm >/dev/null 2>&1 || [ ! -x "$repo/BrowserExtension/node_modules/.bin/wxt" ]; then
@@ -13,7 +21,4 @@ if [ "$#" -eq 1 ]; then
     rm -rf "$destination"
     mkdir -p "$destination"
     ditto "$repo/BrowserExtension/.output/chrome-mv3" "$destination"
-elif [ "$#" -ne 0 ]; then
-    echo '用法：build-browser-extension.sh [App 内的 BrowserExtension 目标目录]' >&2
-    exit 1
 fi

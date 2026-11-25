@@ -151,21 +151,26 @@ export default defineBackground(() => {
     pending = pending.then(() => execute(message)).then(reply, e => reply({...status(message.tabId), error: e.message}));
     return true;
   });
-  chrome.tabs.onRemoved.addListener(tabId => { pending = pending.then(() => remove(tabId)).then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; }); });
-  chrome.tabs.onUpdated.addListener((tabId, change) => {
-    // Loading may also happen during same-document transitions; release capture immediately, then verify documentId.
-    const page = pages.get(tabId);
-    if (change.url && page && new URL(change.url).origin !== page.origin) {
-      pending = pending.then(() => remove(tabId)).then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
-      return;
-    }
-    if (change.status === 'loading') {
-      if (page) { page.loading = true; page.navigationExpected = true; }
-      pending = pending.then(() => audio({command: 'release', tabId})).then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
-    } else if (change.status === 'complete' && page) {
-      page.loading = false;
-      pending = pending.then(update).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
-    }
+  chrome.tabs.onRemoved.addListener(tabId => {
+    pending = pending.then(async () => {
+      if (pages.has(tabId)) { await remove(tabId); await update(); }
+    }).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
   });
-
+  chrome.tabs.onUpdated.addListener((tabId, change) => {
+    if (!change.url && !change.status) return;
+    pending = pending.then(async () => {
+      const page = pages.get(tabId);
+      if (!page) return;
+      if (change.url && new URL(change.url).origin !== page.origin) {
+        await remove(tabId);
+      } else if (change.status === 'loading') {
+        // A same-document transition may keep the conversation, but always releases capture.
+        page.loading = true; page.navigationExpected = true;
+        await audio({command: 'release', tabId});
+      } else if (change.status === 'complete') {
+        page.loading = false;
+      } else return;
+      await update();
+    }).catch(e => { nativeError = e.message; connection = 'unavailable'; gain = undefined; });
+  });
 });
