@@ -60,7 +60,7 @@ class PeerService : Service() {
             val now = SystemClock.elapsedRealtime()
             if (lastTickElapsed != 0L) maxTickGapMs = maxOf(maxTickGapMs, now - lastTickElapsed)
             lastTickElapsed = now; tickCount++
-            observer.sample(); reconcile(); handler.postDelayed(this, 1000)
+            observer.sample(); handler.postDelayed(this, 1000)
         }
     }
     override fun dump(fd: FileDescriptor, writer: PrintWriter, args: Array<out String>?) {
@@ -83,7 +83,7 @@ class PeerService : Service() {
         val audio = getSystemService(AudioManager::class.java)
         volume = VolumeController(this, audio)
         volumeStatus = volume.recover()
-        microphone = MicrophoneSharing(this) { observer.sample(); reconcile() }
+        microphone = MicrophoneSharing(this) { observer.sample() }
         observer = RecordingObserver(audio, handler, { microphone.ownSession }) { value ->
             recording = value
             transport?.setLocalRecording(value)
@@ -157,7 +157,6 @@ class PeerService : Service() {
         } else startForeground(1, notification(sharing))
         foreground = true
     }
-    fun enabled() = enabled
     fun pause() {
         enabled = false
         if (!startupFailed) status = "自动协同已暂停"
@@ -210,7 +209,7 @@ class PeerService : Service() {
     fun cancelPairing() { transport?.cancelPairing(); publish() }
     fun pair(id: String, code: String) { requireTransport().pair(id, code); publish() }
     fun setMicrophoneShared(id: String, shared: Boolean) { transport?.setMicrophoneShared(id, shared); publish() }
-    fun forget(id: String) { transport?.forget(id); publish() }
+    fun forget(id: String) { checkNotNull(transport) { "设备连接服务尚未就绪" }.forget(id); publish() }
     fun refreshBluetooth() { transport?.refreshBluetooth(); publish() }
     private fun requireTransport(): PeerTransport {
         check(enabled || microphoneEnabled) { "请先开启自动协同或麦克风共享" }

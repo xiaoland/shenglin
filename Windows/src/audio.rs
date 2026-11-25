@@ -174,7 +174,6 @@ impl Snapshot {
 struct Saved {
     values: HashMap<String, Snapshot>,
     manual: bool,
-    active: bool,
 }
 pub struct Volume {
     store: Store,
@@ -281,7 +280,6 @@ impl Volume {
         }
         let ids: HashSet<_> = sessions.iter().map(|s| s.id.clone()).collect();
         self.saved.values.retain(|id, _| ids.contains(id));
-        self.saved.active = demand;
         self.save()?;
         Ok(if !known {
             "unavailable"
@@ -303,7 +301,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "shenglin-volume-{}-{}",
             std::process::id(),
-            crate::wire::nonce().replace('/', "_")
+            u64::from_le_bytes(shenglin_core::random_bytes(8).unwrap().try_into().unwrap())
         ));
         std::fs::create_dir_all(&path).unwrap();
         let store = Store(path.clone());

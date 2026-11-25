@@ -20,6 +20,11 @@ enum PairingStore {
  }
 }
 final class Probe {
+ final class Microphone {
+  var peers = [Peer]()
+  func update(peers: [Peer]) { self.peers = peers }
+ }
+ let microphone = Microphone()
  var pairedPeers: [Peer] = []
  var pairedKeys: [Data] = []
  var pairedCount = 0
@@ -47,6 +52,7 @@ let aCentral = UUID(), mCentral = UUID()
 let aLink = Link(), mLink = Link()
 let probe = Probe()
 probe.pairedPeers = [android, mac]; probe.pairedKeys = [android.key, mac.key]; probe.pairedCount = 2
+probe.microphone.update(peers: probe.pairedPeers)
 probe.wifiPeers = [a:aLink, m:mLink]
 probe.wifiVerifiedSources = [a,m]; probe.wifiEvidenceSources = [a,m]
 probe.bleProofs = [aCentral:Proof(key: android.key), mCentral:Proof(key:mac.key)]
@@ -56,11 +62,13 @@ probe.spaceGates = [a:true,m:true]
 PairingStore.failure = true
 probe.removePeer(a)
 assert(probe.pairedCount == 2 && probe.pairedKeys == [android.key,mac.key])
+assert(probe.microphone.peers.map(\.key) == [android.key,mac.key])
 assert(!aLink.stopped && !mLink.stopped && probe.refreshed == 0 && probe.persisted == 0)
 assert(probe.bleProofs.count == 2 && probe.peerRemovalError != nil)
 PairingStore.failure = false; PairingStore.remaining = [mac]
 probe.removePeer(a)
 assert(probe.pairedCount == 1 && probe.pairedKeys == [mac.key] && probe.isPaired)
+assert(probe.microphone.peers.map(\.key) == [mac.key])
 assert(aLink.stopped && !mLink.stopped && probe.wifiPeers[m] === mLink)
 assert(probe.wifiVerifiedSources == [m] && probe.wifiEvidenceSources == [m])
 assert(probe.bleProofs[aCentral] == nil && probe.bleProofs[mCentral]?.key == mac.key)

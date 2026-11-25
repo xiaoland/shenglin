@@ -100,9 +100,6 @@ private struct MainView: View {
                             .padding(.vertical, 4)
                         }
                     }
-                    if !server.isPaired && !server.pairingPendingActivation {
-                        Text("尚未添加设备").foregroundStyle(.secondary)
-                    }
                     if let error = server.peerRemovalError { Text(error).foregroundStyle(.red) }
                     Button("添加设备", systemImage: "plus") { presentedSheet = .pairing }
                 }
@@ -239,10 +236,6 @@ private struct PairingView: View {
                         if server.pairingPendingActivation { ProgressView() }
                         else if completed { Image(systemName: "checkmark.circle") }
                         Text(server.pairingStatus).foregroundStyle(.secondary)
-                    }
-                    if !server.pairingMode && !server.pairingPendingActivation && !completed {
-                        Button("通过局域网重新显示验证码") { server.beginWiFiPairing() }
-                            .disabled(!server.enabled)
                     }
                 } footer: {
                     if !server.enabled { Text("请先在主界面开启自动协同。") }

@@ -158,6 +158,10 @@ fn malformed_and_temporal_boundaries() {
     assert!(g.allows(true, true, true, 100));
     assert!(g.allows(true, false, true, 119));
     assert!(!g.allows(true, false, true, 120));
+    assert!(!g.allows(true, false, true, 115));
+    assert!(g.allows(true, true, true, 200));
+    assert!(!g.allows(true, false, false, 100));
+    assert!(!g.allows(true, false, false, 201));
     g.reset();
     assert!(!g.allows(true, false, true, 100));
 }

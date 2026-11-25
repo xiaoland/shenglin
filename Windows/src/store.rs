@@ -108,7 +108,7 @@ impl Store {
         if !path.exists() {
             return Ok(Config::default());
         }
-        let c: Config = serde_json::from_slice(&protect(fs::read(path)?, false)?)?;
+        let mut c: Config = serde_json::from_slice(&protect(fs::read(path)?, false)?)?;
         if c.peers.len() > 32
             || !c.gain.is_finite()
             || !(0.0..=0.5).contains(&c.gain)
@@ -119,6 +119,9 @@ impl Store {
         {
             bail!("配置无效");
         }
+        let now = crate::wire::now();
+        c.peers
+            .retain(|p| p.pending_until.is_none_or(|deadline| deadline > now));
         Ok(c)
     }
     pub fn change(&self, change: impl FnOnce(&mut Config) -> Result<()>) -> Result<()> {
@@ -132,10 +135,10 @@ impl Store {
     }
     pub fn stage(&self, peer: Peer) -> Result<()> {
         self.change(|c| {
+            c.peers.retain(|p| p.key != peer.key);
             if c.peers.len() >= 32 {
                 bail!("最多配对32台设备");
             }
-            c.peers.retain(|p| p.key != peer.key);
             c.peers.push(peer);
             Ok(())
         })

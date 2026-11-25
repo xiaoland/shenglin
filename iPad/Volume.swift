@@ -65,8 +65,6 @@ import Darwin
 
     // Restore immediately before local input, then keep observing manual changes in this round.
     func pauseForLocalInput() -> (String, Int) {
-        restoreTimer?.invalidate()
-        restoreTimer = nil
         let result = apply(quiet: false, target: 0)
         if !["restoreFailed", "readFailed", "readFailedAfterSet"].contains(result.0), let now = current() {
             roundBaseline = QuietSnapshot(original: now, applied: now, route: route())
@@ -146,6 +144,9 @@ import Darwin
     }
 
     func apply(quiet: Bool, target: Float) -> (String, Int) {
+        // Both a new quiet request and an immediate restore supersede the running ramp.
+        restoreTimer?.invalidate()
+        restoreTimer = nil
         guard let now = current() else { return ("readFailed", -1) }
         if quiet {
             if let baseline = roundBaseline, route() != baseline.route || abs(now - baseline.applied) > 0.005 {
@@ -153,11 +154,6 @@ import Darwin
                 return ("preservedManualOrRoute", Int((now * 1000).rounded()))
             }
             roundBaseline = nil
-            if restoreTimer != nil {
-                // Keep the baseline if a new request interrupts the restore ramp.
-                restoreTimer?.invalidate()
-                restoreTimer = nil
-            }
             if let saved = snapshot {
                 guard route() == saved.route, abs(now - saved.applied) <= 0.005 else {
                     snapshot = nil

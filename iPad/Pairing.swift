@@ -4,7 +4,7 @@ import Security
 enum PairingStore {
     private static let peersAccount = "ShenglinPairedPeersV3"
     private static let pendingAccount = "ShenglinPendingPeerV3"
-    private struct Pending: Codable { let key: Data; let expiresAt: Date; let name: String? }
+    struct Pending: Codable { let key: Data; let expiresAt: Date; let name: String? }
 
     private static func query(_ account: String) -> [String: Any] {
         [kSecClass as String: kSecClassGenericPassword, kSecAttrAccount as String: account]
@@ -55,6 +55,9 @@ enum PairingStore {
     }
 
     static func removePeer(_ key: Data) throws -> [PairedPeer] {
+        // Discard a promoted key before removing the saved peer that identifies it as promoted.
+        if try pending()?.key == key { try clearPending() }
+        _ = try pendingWiFi()
         let peers = try all().filter { $0.key != key }
         try save(JSONEncoder().encode(peers), account: peersAccount)
         return peers
@@ -75,7 +78,7 @@ enum PairingStore {
         try save(JSONEncoder().encode(peers), account: peersAccount)
     }
 
-    static func pending() throws -> Data? {
+    static func pending() throws -> Pending? {
         guard let data = try read(pendingAccount) else { return nil }
         let record = try JSONDecoder().decode(Pending.self, from: data)
         guard record.key.count == 32 else { throw PairingError.invalidMessage }
@@ -83,20 +86,19 @@ enum PairingStore {
             try delete(pendingAccount)
             return nil
         }
-        return record.key
+        return record
     }
 
-    static func stage(_ key: Data, name: String = "Mac") throws {
+    static func stage(_ key: Data, name: String) throws -> Pending {
         guard key.count == 32 else { throw PairingError.invalidMessage }
-        try save(JSONEncoder().encode(Pending(key: key, expiresAt: Date().addingTimeInterval(300),
-                                            name: PeerName.display(name, fallback: "Mac"))),
-                 account: pendingAccount)
+        let record = Pending(key: key, expiresAt: Date().addingTimeInterval(300),
+                             name: PeerName.display(name, fallback: "Mac"))
+        try save(JSONEncoder().encode(record), account: pendingAccount)
+        return record
     }
 
-    static func promotePending() throws -> Data {
-        guard let data = try read(pendingAccount) else { throw PairingError.expired }
-        let pending = try JSONDecoder().decode(Pending.self, from: data)
-        guard pending.expiresAt > Date(), pending.key.count == 32 else { throw PairingError.expired }
+    static func promotePending() throws -> [PairedPeer] {
+        guard let pending = try pending() else { throw PairingError.expired }
         var peers = try all()
         if !peers.contains(where: { $0.key == pending.key }) {
             peers.append(try PairedPeer(key: pending.key,
@@ -105,7 +107,7 @@ enum PairingStore {
         }
         try save(JSONEncoder().encode(peers), account: peersAccount)
         try? delete(pendingAccount)
-        return pending.key
+        return peers
     }
 
     private static let wifiPendingAccount = "ShenglinPendingWiFiPeersV4"
@@ -132,12 +134,13 @@ enum PairingStore {
         try save(JSONEncoder().encode(records), account: wifiPendingAccount)
     }
 
-    static func promoteWiFi(_ key: Data) throws {
+    static func promoteWiFi(_ key: Data) throws -> [PairedPeer] {
         guard let peer = try pendingWiFi().first(where: { $0.key == key }) else { throw PairingError.expired }
         var peers = try all()
         peers.append(peer)
         try save(JSONEncoder().encode(peers), account: peersAccount)
-        _ = try pendingWiFi()
+        _ = try? pendingWiFi()
+        return peers
     }
 
     static func clearPending() throws { try delete(pendingAccount) }

@@ -41,6 +41,7 @@ class TransportLifecycleTest {
         assertTrue(TransportLifecycle.spaceAllowed(gates, "peer", true, true, true, 100))
         assertTrue(TransportLifecycle.spaceAllowed(gates, "peer", true, true, false, 119))
         assertFalse(TransportLifecycle.spaceAllowed(gates, "peer", true, true, false, 120))
+        assertFalse(TransportLifecycle.spaceAllowed(gates, "peer", true, true, false, 115))
         assertTrue(TransportLifecycle.spaceAllowed(gates, "peer", true, true, true, 200))
         TransportLifecycle.resetSpaceGates(gates)
         assertFalse(TransportLifecycle.spaceAllowed(gates, "peer", true, true, false, 201))

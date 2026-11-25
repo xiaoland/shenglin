@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalFocusManager
@@ -34,7 +35,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import local.shenglin.transport.PeerTransport
 
 class MainActivity : ComponentActivity() {
     private var service by mutableStateOf<PeerService?>(null)
@@ -99,24 +99,26 @@ class MainActivity : ComponentActivity() {
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     var page by rememberSaveable { mutableStateOf("home") }
+    var parentPage by rememberSaveable { mutableStateOf("devices") }
     var detailId by rememberSaveable { mutableStateOf<String?>(null) }
     var pairId by rememberSaveable { mutableStateOf<String?>(null) }
     var code by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     var forget by remember { mutableStateOf<PeerUiState?>(null) }
     fun act(action: () -> Unit) { try { action() } catch (failure: Exception) { error = failure.message ?: "暂时无法完成，请重试" } }
+    fun openChild(child: String) { parentPage = page; page = child }
     fun back() {
         if (page == "add" && state.pairingStatus in listOf("waiting", "verifying")) service?.cancelPairing()
-        page = if (page == "diagnostics") "settings" else "devices"; detailId = null
+        page = parentPage; detailId = null
     }
     LaunchedEffect(page, pairId) { focus.clearFocus(); keyboard?.hide() }
     val nested = page in listOf("add", "detail", "diagnostics")
     BackHandler(nested) { back() }
-    Scaffold(
+    PageScaffold(if (page == "detail") "detail/$detailId" else page,
         topBar = {
             TopAppBar(title = { Text(when (page) { "home" -> "声邻"; "devices" -> "设备"; "settings" -> "协同设置"; "add" -> "添加设备"; "detail" -> "设备详情"; else -> "运行详情" }) },
                 navigationIcon = { if (nested) IconButton(onClick = { back() }) { Icon(Icons.AutoMirrored.Outlined.ArrowBack, "返回") } },
-                actions = { if (page == "devices") IconButton(onClick = { page = "add" }) { Icon(Icons.Outlined.Add, "添加设备") } })
+                actions = { if (page == "devices" && state.peers.isNotEmpty()) IconButton(onClick = { openChild("add") }) { Icon(Icons.Outlined.Add, "添加设备") } })
         },
         bottomBar = {
             if (!nested) NavigationBar {
@@ -153,21 +155,21 @@ class MainActivity : ComponentActivity() {
                         val eligible = state.peers.count { it.spaceEligible }
                         ListItem(headlineContent = { Text(if (state.peers.isEmpty()) "添加你的第一台设备" else "${state.peers.size} 台已配对设备") },
                             supportingContent = { Text(if (state.peers.isEmpty()) "支持 Mac、Windows、iPad 与 Android" else "$eligible 台符合协同空间条件") },
-                            trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, modifier = Modifier.clickable { page = if (state.peers.isEmpty()) "add" else "devices" })
+                            trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, modifier = Modifier.clickable { if (state.peers.isEmpty()) openChild("add") else page = "devices" })
                     }
                     if (state.status.contains("失败") || state.status.contains("权限") || state.status.contains("不可用") || state.status.contains("无法开启")) item {
-                        OutlinedCard { Column(Modifier.padding(16.dp)) { Text(state.status); TextButton(onClick = { page = "diagnostics" }) { Text("查看详情") } } }
+                        OutlinedCard { Column(Modifier.padding(16.dp)) { Text(state.status); TextButton(onClick = { openChild("diagnostics") }) { Text("查看详情") } } }
                     }
                     item { OutlinedButton(onClick = { service?.restoreNow() }, Modifier.fillMaxWidth(), enabled = service != null) { Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(8.dp)); Text("立即恢复音量") } }
                 }
                 "devices" -> {
                     if (state.peers.isEmpty()) item { Text("还没有配对设备", style = MaterialTheme.typography.titleLarge); Text("在另一台设备上打开声邻，然后添加设备。") }
                     items(state.peers, key = { it.id }) { peer ->
-                        OutlinedCard(onClick = { detailId = peer.id; page = "detail" }, modifier = Modifier.fillMaxWidth()) {
+                        OutlinedCard(onClick = { detailId = peer.id; openChild("detail") }, modifier = Modifier.fillMaxWidth()) {
                             ListItem(headlineContent = { Text(peer.name) }, supportingContent = { Text("${platform(peer.platform)} · ${if (peer.spaceEligible) "空间条件已满足" else "等待空间条件"}") }, trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) })
                         }
                     }
-                    item { Button(onClick = { page = "add" }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text("添加设备") } }
+                    if (state.peers.isEmpty()) item { Button(onClick = { openChild("add") }, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Add, null); Spacer(Modifier.width(8.dp)); Text("添加设备") } }
                 }
                 "detail" -> {
                     val peer = state.peers.firstOrNull { it.id == detailId }
@@ -204,12 +206,9 @@ class MainActivity : ComponentActivity() {
                     }
                     if (state.discovered.isEmpty()) item { Text("尚未发现正在显示验证码的设备。", color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 }
-                "settings" -> {
-                    item { SettingsContent(prefs, service, bluetooth) }
-                    item { ListItem(headlineContent = { Text("运行详情") }, supportingContent = { Text("连接、录音与最近一次音量操作") }, trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, modifier = Modifier.clickable { page = "diagnostics" }) }
-                }
+                "settings" -> item { SettingsContent(prefs, service, bluetooth) { openChild("diagnostics") } }
                 "diagnostics" -> {
-                    item { InfoCard("设备连接", state.status) }
+                    item { InfoCard("设备连接", state.connectionSummary(), "最近事件 · ${state.status}") }
                     item { InfoCard("系统录音状态", when (state.recording) { true -> "正在录音"; false -> "本机空闲"; null -> "未知，保护本机输出" }) }
                     item { InfoCard("麦克风共享", state.microphoneStatus) }
                     item { InfoCard("最近一次音量操作", state.volumeStatus) }
@@ -224,16 +223,33 @@ class MainActivity : ComponentActivity() {
         confirmButton = { TextButton(enabled = code.length == 6 && selected != null, onClick = { val id = pairId!!; act { service?.pair(id, code) }; pairId = null }) { Text("验证并添加") } },
         dismissButton = { TextButton(onClick = { pairId = null }) { Text("取消") } })
     forget?.let { peer -> AlertDialog(onDismissRequest = { forget = null }, title = { Text("取消与「${peer.name}」的配对？") }, text = { Text("将停止与这台设备协同，并撤销麦克风共享授权。再次连接需要重新验证配对码。") },
-        confirmButton = { TextButton(onClick = { service?.forget(peer.id); forget = null; page = "devices" }) { Text("取消配对") } }, dismissButton = { TextButton(onClick = { forget = null }) { Text("保留") } }) }
+        confirmButton = { TextButton(onClick = {
+            forget = null
+            act {
+                checkNotNull(service) { "设备连接服务尚未就绪" }.forget(peer.id)
+                page = "devices"
+            }
+        }) { Text("取消配对") } }, dismissButton = { TextButton(onClick = { forget = null }) { Text("保留") } }) }
     error?.let { message -> AlertDialog(onDismissRequest = { error = null }, title = { Text("暂时无法完成") }, text = { Text(message) }, confirmButton = { TextButton(onClick = { error = null }) { Text("知道了") } }) }
 }
 
-@Composable private fun SettingsContent(prefs: SharedPreferences, service: PeerService?, bluetooth: () -> Unit) {
+@Composable private fun PageScaffold(
+    page: String,
+    topBar: @Composable () -> Unit,
+    bottomBar: @Composable () -> Unit,
+    content: @Composable (PaddingValues) -> Unit,
+) {
+    rememberSaveableStateHolder().SaveableStateProvider(page) {
+        Scaffold(topBar = topBar, bottomBar = bottomBar, content = content)
+    }
+}
+
+@Composable private fun SettingsContent(prefs: SharedPreferences, service: PeerService?, bluetooth: () -> Unit, diagnostics: () -> Unit) {
     var target by remember { mutableFloatStateOf(prefs.getInt("target", 20).toFloat()) }
     var scope by remember { mutableStateOf(prefs.getString("networkScope", "wifi")!!) }
     var space by remember { mutableStateOf(prefs.getString("space", "nearbyOrWiFi")!!) }
     var name by rememberSaveable { mutableStateOf(prefs.getString("name", Build.MODEL)!!) }
-    var savedName by remember { mutableStateOf(name) }
+    var savedName by remember { mutableStateOf(prefs.getString("name", Build.MODEL)!!) }
     val validName = name.trim().let { it.isNotEmpty() && it.codePointCount(0, it.length) <= 40 }
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("其他设备录音时", style = MaterialTheme.typography.titleMedium)
@@ -254,7 +270,9 @@ class MainActivity : ComponentActivity() {
         HorizontalDivider()
         OutlinedTextField(name, onValueChange = { name = it }, label = { Text("本机名称") }, singleLine = true,
             supportingText = { Text(if (validName) "其他设备将看到此名称" else "请输入 1–40 个字符") }, isError = !validName, modifier = Modifier.fillMaxWidth())
-        Button(onClick = { service?.setName(name.trim()); savedName = name }, enabled = validName && name != savedName && service != null) { Text("保存名称") }
+        Button(onClick = { name = name.trim(); service?.setName(name); savedName = name }, enabled = validName && name.trim() != savedName && service != null) { Text("保存名称") }
+        ListItem(headlineContent = { Text("运行详情") }, supportingContent = { Text("连接、录音与最近一次音量操作") },
+            trailingContent = { Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, null) }, modifier = Modifier.clickable(onClick = diagnostics))
     }
 }
 @Composable private fun Choice(label: String, selected: Boolean, description: String? = null, action: () -> Unit) {
@@ -262,8 +280,21 @@ class MainActivity : ComponentActivity() {
         RadioButton(selected, null); Spacer(Modifier.width(12.dp)); Column { Text(label); description?.let { Text(it, style = MaterialTheme.typography.bodySmall) } }
     }
 }
-@Composable private fun InfoCard(title: String, body: String) {
-    OutlinedCard(Modifier.fillMaxWidth()) { Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) { Text(title, style = MaterialTheme.typography.titleMedium); Text(body) } }
+@Composable private fun InfoCard(title: String, body: String, note: String? = null) {
+    OutlinedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text(body)
+            if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+internal fun ServiceUiState.connectionSummary(): String {
+    val paired = peers.filterNot { it.pending }
+    if (paired.isEmpty()) return if (peers.isEmpty()) "尚无已配对设备" else "等待设备完成配对"
+    val connected = paired.count { it.lanConnected || it.bleConnected }
+    return "已连接 $connected 台，共配对 ${paired.size} 台"
 }
 private fun platform(value: String) = when (value) { "mac" -> "Mac"; "ipad" -> "iPad"; "android" -> "Android"; "windows" -> "Windows"; else -> "声邻设备" }
 private fun connectionText(peer: PeerUiState) = when { peer.lanConnected && peer.bleConnected -> "局域网、蓝牙均已认证"; peer.lanConnected -> "局域网已认证"; peer.bleConnected -> "蓝牙已认证"; else -> "等待连接或激活" }

@@ -19,14 +19,6 @@ pub fn now() -> i64 {
         .unwrap()
         .as_secs() as i64
 }
-pub fn random(n: usize) -> Vec<u8> {
-    let mut b = vec![0; n];
-    getrandom::getrandom(&mut b).expect("系统随机数不可用");
-    b
-}
-pub fn nonce() -> String {
-    B64.encode(random(16))
-}
 pub fn setup(s: &TcpStream) -> Result<()> {
     s.set_nonblocking(false)?;
     s.set_nodelay(true)?;
@@ -70,11 +62,20 @@ pub fn receive(s: &mut TcpStream) -> Result<Value> {
     Ok(serde_json::from_str(&line(s, 1024)?)?)
 }
 
-pub fn daemon(ip: Ipv4Addr) -> Result<ServiceDaemon> {
+pub fn with_daemon<T>(
+    ip: Ipv4Addr,
+    operation: impl FnOnce(&ServiceDaemon) -> Result<T>,
+) -> Result<T> {
     let d = ServiceDaemon::new()?;
-    d.disable_interface(IfKind::All)?;
-    d.enable_interface(IfKind::Addr(ip.into()))?;
-    Ok(d)
+    let result = (|| {
+        d.disable_interface(IfKind::All)?;
+        d.enable_interface(IfKind::Addr(ip.into()))?;
+        operation(&d)
+    })();
+    let shutdown = d.shutdown();
+    let value = result?;
+    shutdown?;
+    Ok(value)
 }
 pub fn advertise(
     d: &ServiceDaemon,
@@ -228,7 +229,7 @@ pub struct AudioWire {
 impl AudioWire {
     pub fn accept(mut stream: TcpStream, p: &Peer) -> Result<Self> {
         setup(&stream)?;
-        let server = random(32);
+        let server = random_bytes(32)?;
         send(
             &mut stream,
             &json!({"version":1,"nonce":B64.encode(&server)}),
