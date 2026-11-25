@@ -1,8 +1,9 @@
 #!/bin/sh
 set -eu
 cd "$(dirname "$0")"
-mkdir -p ../../work/metadata-check
-cat > ../../work/metadata-check/main.swift <<'SWIFT'
+output=../../local/metadata-check
+mkdir -p "$output"
+cat > "$output/main.swift" <<'SWIFT'
 import Foundation
 let found = methodReport("NSObject", selectors: ["description", "definitelyMissingSelectorForProbe"])
 assert(found[0] == "NSObject: 类存在")
@@ -15,7 +16,7 @@ for text in ["wrong duck 104", "secret duck 99", "secret duck 111", "secret duck
 }
 print("类缺失、方法缺失与方法签名分支检查通过；未扫描或调用私有库。")
 SWIFT
-xcrun swiftc Scan.swift ../../work/metadata-check/main.swift -o ../../work/metadata-check/check
-../../work/metadata-check/check
-xcodebuild -project MetadataProbe.xcodeproj -scheme MetadataProbe -sdk iphoneos -derivedDataPath ../../work/MetadataDerivedData CODE_SIGNING_ALLOWED=NO build > ../../work/metadata-build.log 2>&1
-tail -3 ../../work/metadata-build.log
+xcrun swiftc Scan.swift "$output/main.swift" -o "$output/check"
+"$output/check"
+xcodebuild -project MetadataProbe.xcodeproj -scheme MetadataProbe -sdk iphoneos -derivedDataPath "$output/DerivedData" CODE_SIGNING_ALLOWED=NO build > "$output/build.log" 2>&1
+tail -3 "$output/build.log"

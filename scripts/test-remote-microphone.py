@@ -2,6 +2,7 @@
 """实测已挂载的 Windows→Mac 麦克风；会短暂静音、撤销授权及停启 Windows 服务。"""
 import argparse
 import base64
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import selectors
@@ -48,9 +49,16 @@ def main():
     subprocess.run(['xcrun', 'clang++', '-std=c++17', '-O2', str(ROOT / 'experiments/VirtualMicrophoneProbe.cpp'),
         '-framework', 'CoreAudio', '-framework', 'CoreFoundation', '-framework', 'AudioUnit', '-o', str(binary)], check=True)
     stages = []
-    with (output / 'reader.stderr').open('w') as errors:
+    with (output / 'reader.stderr').open('w') as errors, ExitStack() as cleanup:
         reader = subprocess.Popen([str(binary), 'read-mono', 'local.shenglin.virtual-microphone.' + args.mount],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors, text=True, bufsize=1)
+        cleanup.callback(mac, 'control', 'mute', 'remove', selector)
+        cleanup.callback(win, f'''try {{
+    & $exe share {grant}
+    if ($LASTEXITCODE) {{ throw "恢复授权失败" }}
+}} finally {{
+    if ((Get-Service Shenglin).Status -ne "Running") {{ Start-Service Shenglin }}
+}}''')
 
         def line():
             with selectors.DefaultSelector() as poll:
@@ -118,8 +126,6 @@ def main():
                     reader.kill()
                     reader.wait()
                 (output / 'results.json').write_text(json.dumps(stages, ensure_ascii=False, indent=2))
-                win(f'& $exe share {grant}\nif ($LASTEXITCODE) {{ throw "恢复授权失败" }}\nif ((Get-Service Shenglin).Status -ne "Running") {{ Start-Service Shenglin }}')
-                mac('control', 'mute', 'remove', selector)
     time.sleep(3)
     final = json.loads(win('& $exe status'))
     assert not final['runtime']['microphoneStreams'] and final['runtime']['error'] is None, final

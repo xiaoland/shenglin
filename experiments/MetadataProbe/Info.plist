@@ -25,10 +25,6 @@
 		<string>audio</string>
 		<string>bluetooth-peripheral</string>
 	</array>
-	<key>UIDeviceFamily</key>
-	<array>
-		<integer>2</integer>
-	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UISupportedInterfaceOrientations</key>
