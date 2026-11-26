@@ -29,9 +29,8 @@ enum MicrophoneAgent {
         let descriptor = open(directory.appendingPathComponent("microphone-agent.lock").path,
                               O_CREAT | O_RDWR, 0o600)
         guard descriptor >= 0, flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { exit(1) }
-        let activity = InputActivity { observation in
-            if let error = observation.error { NSLog("Shenglin microphone agent: %@", error) }
-        }
+        let activity = MicrophoneCapture()
+        var lastPublished: MicrophoneAgentStatus?
         var forensics = [String: ForensicStatus]()
         var lastForensicCheck = Date.distantPast
         var forensicCheckPending = false
@@ -50,11 +49,17 @@ enum MicrophoneAgent {
                     }
                 }
             }
-            let status = MicrophoneAgentStatus(pid: getpid(), updatedAt: Date(),
-                error: activity.lastObservation.error, diagnostics: activity.captureDiagnostics,
-                forensics: forensics)
-            if let data = try? JSONEncoder().encode(status) {
-                try? data.write(to: MicrophoneAgentStatus.url, options: .atomic)
+            let now = Date()
+            let error = activity.error
+            let diagnostics = activity.captureDiagnostics
+            if let previous = lastPublished, previous.error == error, previous.diagnostics == diagnostics,
+               previous.forensics == forensics, now.timeIntervalSince(previous.updatedAt) < 1 { return }
+            if error != lastPublished?.error, let error { NSLog("Shenglin microphone agent: %@", error) }
+            let status = MicrophoneAgentStatus(pid: getpid(), updatedAt: now,
+                error: error, diagnostics: diagnostics, forensics: forensics)
+            if let data = try? JSONEncoder().encode(status),
+               (try? data.write(to: MicrophoneAgentStatus.url, options: .atomic)) != nil {
+                lastPublished = status
             }
         }
         activity.poll()

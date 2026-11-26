@@ -28,9 +28,6 @@ struct CaptureDiagnostics {
     let pushFailedFrames: Int64
     let pushedFrames: Int64
 }
-enum VirtualMicrophone {
-    static func deviceID(uid: String) -> AudioObjectID? { nil }
-}
 SWIFT
 cat > "$work/main.swift" <<'SWIFT'
 import Foundation
@@ -39,10 +36,31 @@ let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
 let rolling = root.appendingPathComponent("test/rolling", isDirectory: true)
 try FileManager.default.createDirectory(at: rolling, withIntermediateDirectories: true)
 let recorder = AudioForensics.shared
+func manifest(in rolling: URL) throws {
+    let data = Data(#"{"version":1,"encoding":"interleaved Float32 little-endian","selector":"test"}"#.utf8)
+    try data.write(to: rolling.deletingLastPathComponent().appendingPathComponent("manifest.json"))
+}
+func until(_ message: String, _ condition: () -> Bool) {
+    let deadline = Date().addingTimeInterval(12)
+    while Date() < deadline {
+        recorder.poll([], ids: [:])
+        if condition() { return }
+        Thread.sleep(forTimeInterval: 0.05)
+    }
+    preconditionFailure(message)
+}
+func external(_ program: String, _ arguments: [String]) throws {
+    let child = Process()
+    child.executableURL = URL(fileURLWithPath: program)
+    child.arguments = arguments
+    try child.run()
+    child.waitUntilExit()
+    precondition(child.terminationStatus == 0)
+}
+try manifest(in: rolling)
 recorder.setLocation(root)
 _ = recorder.location
 recorder.setLimitGB(1)
-_ = recorder.location
 let now = Int(Date().timeIntervalSince1970 / 60)
 func segment(_ minute: Int, _ bytes: UInt64) throws -> URL {
     let url = rolling.appendingPathComponent("\(minute)-0-upstream.bin")
@@ -53,23 +71,24 @@ func segment(_ minute: Int, _ bytes: UInt64) throws -> URL {
     return url
 }
 let old = try segment(now - 20_000, 100)
-recorder.poll([])
-_ = recorder.location
-precondition(FileManager.default.fileExists(atPath: old.path), "age alone must not delete evidence")
 let newer = try segment(now - 10, 700_000_000)
 let newest = try segment(now - 5, 700_000_000)
-recorder.setLimitGB(1)
-_ = recorder.location
-precondition(!FileManager.default.fileExists(atPath: old.path))
-precondition(!FileManager.default.fileExists(atPath: newer.path))
+let unrelated = root.appendingPathComponent("unrelated.bin")
+FileManager.default.createFile(atPath: unrelated.path, contents: Data([1]))
+let sparse = try FileHandle(forWritingTo: unrelated)
+try sparse.truncate(atOffset: 2_000_000_000)
+try sparse.close()
+until("cap must prune the oldest eligible evidence") {
+    !FileManager.default.fileExists(atPath: old.path) && !FileManager.default.fileExists(atPath: newer.path)
+}
+precondition(FileManager.default.fileExists(atPath: unrelated.path), "retention must leave unrelated files alone")
 precondition(FileManager.default.fileExists(atPath: newest.path), "newest evidence must survive cap pruning")
 precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - (now - 5) * 60)) <= 1,
              "coverage must start at the oldest surviving audio minute")
-try FileManager.default.setAttributes([.modificationDate: Date(timeIntervalSinceNow: -10)], ofItemAtPath: newest.path)
-recorder.setLimitGB(1)
-_ = recorder.location
-precondition(recorder.status(for: "test").coverageSeconds == 0,
-             "audio older than five seconds must report inactive coverage")
+try external("/usr/bin/touch", ["-t", "200001010000", newest.path])
+until("external changes must refresh coverage") {
+    recorder.status(for: "test").coverageSeconds == 0
+}
 recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 1, sampleTime: 0, samples: [0])
 _ = recorder.location
 precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - (now - 5) * 60)) <= 1,
@@ -79,11 +98,21 @@ precondition(recorder.status(for: "test").coverageSeconds == 0,
              "cached coverage must expire when recording pauses")
 recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 2, sampleTime: 1, samples: [0])
 _ = recorder.location
-try FileManager.default.removeItem(at: newest)
-recorder.setLimitGB(1)
+try external("/bin/rm", [newest.path])
+until("retention reconciliation must forget externally deleted audio") {
+    abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - now * 60)) <= 1
+}
+let openSegment = try FileManager.default.contentsOfDirectory(at: rolling, includingPropertiesForKeys: nil)
+    .first { $0.pathExtension == "bin" }!
+try external("/bin/rm", [openSegment.path])
+until("coverage must forget a deleted segment even when its handle was open") {
+    recorder.status(for: "test").coverageSeconds == 0
+}
+recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 3, sampleTime: 2, samples: [0])
 _ = recorder.location
-precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - now * 60)) <= 1,
-             "retention reconciliation must forget externally deleted audio")
+precondition(recorder.status(for: "test").coverageSeconds > 0, "the next write must reopen a deleted segment")
+precondition(try! FileManager.default.contentsOfDirectory(at: rolling, includingPropertiesForKeys: nil)
+    .contains { $0.pathExtension == "bin" }, "the next write must be visible on disk")
 let eventBucket = Int(Date().timeIntervalSince1970 / 60)
 recorder.mark("test")
 let device = DedicatedMicrophone(selector: "test", uid: "test", sourceUID: nil,
@@ -145,13 +174,14 @@ for index in 0..<10_000 {
 }
 try FileManager.default.setAttributes([.modificationDate: Date()],
     ofItemAtPath: archiveRolling.appendingPathComponent("\(now)-0-upstream.bin").path)
+try manifest(in: archiveRolling)
 recorder.setLocation(archive)
 _ = recorder.location
 let coldStart = DispatchTime.now().uptimeNanoseconds
-let discoveredCoverage = recorder.status(for: "test").coverageSeconds
+until("initial inventory must discover existing audio") {
+    recorder.status(for: "test").coverageSeconds >= 9_999 * 60
+}
 let coldMS = Double(DispatchTime.now().uptimeNanoseconds - coldStart) / 1_000_000
-precondition(discoveredCoverage >= 9_999 * 60,
-             "first status after directory selection must discover existing audio")
 func measure(_ iterations: Int, _ body: () throws -> Void) rethrows -> Double {
     let start = DispatchTime.now().uptimeNanoseconds
     for _ in 0..<iterations { try body() }

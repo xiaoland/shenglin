@@ -414,8 +414,10 @@ private struct SettingsPanel: View {
             }
             Section {
                 if model.virtualMicrophoneAvailable {
-                    ForEach(model.sources.filter { $0.microphoneName != nil }) { source in
-                        MicrophoneConfiguration(model: model, source: source)
+                    ForEach(model.sources.filter { $0.microphone != nil }) { source in
+                        if let device = source.microphone {
+                            MicrophoneConfiguration(model: model, source: source, device: device)
+                        }
                     }
                     Button("添加应用…") { addingMicrophone = true; showingAppPicker = true }
                     Button("挂载远端麦克风…") { showingRemoteMicrophone = true }
@@ -477,6 +479,7 @@ private struct SettingsPanel: View {
 private struct MicrophoneConfiguration: View {
     @ObservedObject var model: AppModel
     let source: SourceCandidate
+    let device: DedicatedMicrophone
     @State private var expanded = false
 
     var body: some View {
@@ -485,9 +488,9 @@ private struct MicrophoneConfiguration: View {
             LabeledContent("状态", value: model.sourceActivityUnknown ? "使用状态未知" :
                            source.microphoneInUse ? "正在使用" : "未在使用")
             if source.isExcluded { Text("已排除设备间音量协同").foregroundStyle(.secondary) }
-            if model.isRemoteMicrophone(source.selector) {
+            if device.remoteSource != nil {
                 Picker("输入增益", selection: Binding(
-                    get: { model.microphoneGain(source.selector) },
+                    get: { device.inputGain },
                     set: { model.setMicrophoneGain(source.selector, gain: $0) }
                 )) {
                     ForEach(MicrophoneGain.values, id: \.self) { gain in
@@ -496,9 +499,9 @@ private struct MicrophoneConfiguration: View {
                 }
             }
             HStack {
-                Text(model.microphoneSourceDescription(for: source.selector)).foregroundStyle(.secondary)
+                Text(model.microphoneSourceDescription(device)).foregroundStyle(.secondary)
                 Spacer()
-                if !model.isRemoteMicrophone(source.selector) {
+                if device.remoteSource == nil {
                     Button("更换上游…") { model.changeMicrophoneSource(source) }
                         .disabled(model.sourceActivityUnknown || source.microphoneInUse)
                 }

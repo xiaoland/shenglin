@@ -6,7 +6,7 @@ import Foundation
 import ShenglinCore
 #endif
 
-struct CaptureDiagnostics: Codable {
+struct CaptureDiagnostics: Codable, Equatable {
     let sourceSampleRate: Double?
     let sourceChannels: Int?
     let directFormat: Bool
@@ -43,6 +43,7 @@ final class VirtualMicrophone {
     private var destinationGains = [String: Float]()
     private static var configured: [DedicatedMicrophone]?
     private static var configuredPlugin: AudioObjectID?
+    private static var appliedMute = [AudioObjectID: Bool]()
     private let sourceUID: String?
     private let remoteSource: RemoteMicrophoneSource?
     private var remoteCapture: RemoteMicrophoneCapture?
@@ -99,14 +100,31 @@ final class VirtualMicrophone {
         return AudioObjectHasProperty(plugin, &address) ? plugin : nil
     }
 
-    static func publish(_ devices: [DedicatedMicrophone]) throws {
+    static func observeHALRestart() {
+        var address = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyServiceRestarted,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main) { _, _ in
+            configured = nil
+            appliedMute.removeAll()
+            observeHALRestart()
+        }
+    }
+
+    static func prepare(_ devices: [DedicatedMicrophone], muted: Set<String>) throws -> [String: AudioObjectID] {
         guard let plugin = Self.pluginID else {
             configured = nil
-            if devices.isEmpty { return }
+            appliedMute.removeAll()
+            if devices.isEmpty { return [:] }
             throw NSError(domain: "Shenglin", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "请安装支持专用麦克风的 声邻驱动"])
         }
-        if configured != devices || configuredPlugin != plugin || devices.contains(where: { Self.deviceID(uid: $0.uid) == nil }) {
+        func resolveIDs() -> [String: AudioObjectID] {
+            Dictionary(uniqueKeysWithValues: devices.compactMap { device in
+                Self.deviceID(uid: device.uid).map { (device.selector, $0) }
+            })
+        }
+        var ids = resolveIDs()
+        if configured != devices || configuredPlugin != plugin || ids.count != devices.count {
             let data = try PropertyListSerialization.data(fromPropertyList: devices.map {
                 ["bundle": $0.bundle, "name": $0.name,
                  "sampleRate": $0.outputSampleRate, "channels": $0.outputChannels] as [String: Any]
@@ -114,12 +132,28 @@ final class VirtualMicrophone {
             try Self.check(Self.setProperty(plugin, Self.deviceList, data: data as CFData), "无法更新专用麦克风列表")
             configured = devices
             configuredPlugin = plugin
+            appliedMute.removeAll()
+            ids = resolveIDs()
         }
+        let currentIDs = Set(ids.values)
+        appliedMute = appliedMute.filter { currentIDs.contains($0.key) }
+        for device in devices {
+            guard let id = ids[device.selector] else {
+                throw NSError(domain: "Shenglin", code: 2,
+                              userInfo: [NSLocalizedDescriptionKey: "正在发布 \(device.deviceName)，请稍候"])
+            }
+            let isMuted = muted.contains(device.selector)
+            guard appliedMute[id] != isMuted else { continue }
+            var value: UInt32 = isMuted ? 1 : 0
+            let data = withUnsafeBytes(of: &value) { Data($0) }
+            try Self.check(Self.setProperty(id, Self.deviceMute, data: data as CFData), "无法设置 \(device.deviceName) 静音")
+            appliedMute[id] = isMuted
+        }
+        return ids
     }
 
-    func update(inputs: [pid_t: Set<AudioObjectID>], devices: [DedicatedMicrophone],
-                group: [DedicatedMicrophone], muted: Set<String>) throws -> Set<pid_t> {
-        try Self.publish(devices)
+    func update(activeDevices: [AudioObjectID], group: [DedicatedMicrophone],
+                ids: [String: AudioObjectID]) throws {
         statusLock.lock()
         let failure = pushFailure
         pushFailure = nil
@@ -128,30 +162,12 @@ final class VirtualMicrophone {
             suspend()
             try Self.check(failure, "无法把物理麦克风送入专用设备")
         }
-        var activeDevices = [AudioObjectID]()
-        var mutedDevices = Set<AudioObjectID>()
-        for device in devices {
-            guard let id = Self.deviceID(uid: device.uid) else {
-                throw NSError(domain: "Shenglin", code: 2,
-                              userInfo: [NSLocalizedDescriptionKey: "正在发布 \(device.deviceName)，请稍候"])
-            }
-            var value: UInt32 = muted.contains(device.selector) ? 1 : 0
-            let data = withUnsafeBytes(of: &value) { Data($0) }
-            try Self.check(Self.setProperty(id, Self.deviceMute, data: data as CFData), "无法设置 \(device.deviceName) 静音")
-            if value == 1 { mutedDevices.insert(id) }
-            if value == 0 && group.contains(where: { $0.selector == device.selector }) &&
-                inputs.values.contains(where: { $0.contains(id) }) { activeDevices.append(id) }
-        }
         if activeDevices.isEmpty {
-            if running {
-                let now = ProcessInfo.processInfo.systemUptime
-                let first = inactiveSince ?? now
-                inactiveSince = first
-                if now - first < 1 {
-                    return DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedDevices)
-                }
-            }
-            queue.sync { destinations = []; destinationSelectors = [:] }
+            guard running else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            let first = inactiveSince ?? now
+            inactiveSince = first
+            if now - first < 1 { return }
             suspend()
         } else {
             inactiveSince = nil
@@ -159,7 +175,7 @@ final class VirtualMicrophone {
                 destinations = activeDevices
                 destinationGains = Dictionary(uniqueKeysWithValues: group.map { ($0.selector, $0.inputGain) })
                 destinationSelectors = Dictionary(uniqueKeysWithValues: group.compactMap { device in
-                    Self.deviceID(uid: device.uid).map { ($0, device.selector) }
+                    ids[device.selector].map { ($0, device.selector) }
                 })
             }
             if let remoteSource {
@@ -182,7 +198,6 @@ final class VirtualMicrophone {
                 if !running { try start(device: currentDevice) }
             }
         }
-        return DedicatedInputPolicy.mutedPIDs(inputs, mutedDevices: mutedDevices)
     }
 
     private func receiveRemotePCM(_ pcm: Data, epoch: Int) throws {

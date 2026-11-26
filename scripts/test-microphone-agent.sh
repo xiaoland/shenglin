@@ -5,8 +5,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cat > "$work/stubs.swift" <<'SWIFT'
 import Foundation
-struct CaptureDiagnostics: Codable {}
-struct ForensicStatus: Codable { let coverageSeconds: Int }
+struct CaptureDiagnostics: Codable, Equatable {}
+struct ForensicStatus: Codable, Equatable { let coverageSeconds: Int }
 struct Device { let selector: String }
 enum MicrophoneStore {
     static let url = URL(fileURLWithPath: CommandLine.arguments[1]).appendingPathComponent("microphones.json")
@@ -32,11 +32,9 @@ final class AudioForensics {
         return ForensicStatus(coverageSeconds: 123)
     }
 }
-final class InputActivity {
-    struct Observation { var error: String? { nil } }
-    let lastObservation = Observation()
+final class MicrophoneCapture {
+    let error: String? = nil
     let captureDiagnostics = CaptureDiagnostics()
-    init(changed: @escaping (Observation) -> Void) {}
     func poll() { state.poll() }
 }
 SWIFT
@@ -49,7 +47,7 @@ DispatchQueue.global().async {
     let during = state.counts()
     guard during.0 - before >= 3, during.1 == 1,
           let status = MicrophoneAgentStatus.current(),
-          Date().timeIntervalSince(status.updatedAt) < 0.75 else {
+          Date().timeIntervalSince(status.updatedAt) < 1.25 else {
         fputs("失败：诊断阻塞了输入检测/心跳，或重复排入诊断查询。\n", stderr)
         exit(1)
     }

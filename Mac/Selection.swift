@@ -295,15 +295,16 @@ func sourceIdentities(pid: pid_t) -> Set<String> {
     return identities
 }
 
-struct SourceCandidate: Identifiable {
+struct SourceCandidate: Identifiable, Equatable {
     let selector: String
     let name: String
     let isActive: Bool
     let isExcluded: Bool
     let isMuted: Bool
-    let microphoneName: String?
+    let microphone: DedicatedMicrophone?
     let microphoneInUse: Bool
     var id: String { selector }
+    var microphoneName: String? { microphone?.deviceName }
 }
 
 func availableSources() throws -> [SourceCandidate] {
@@ -347,12 +348,14 @@ func availableSources(active: Set<pid_t>) throws -> [SourceCandidate] {
                 ? URL(fileURLWithPath: String(selector.dropFirst(5))).lastPathComponent : selector
         }
     }
+    let devices = Dictionary(uniqueKeysWithValues: microphones.map { ($0.selector, $0) })
     return rows.map { selector, name in
-        SourceCandidate(selector: selector, name: name,
+        let microphone = devices[selector]
+        return SourceCandidate(selector: selector, name: name,
                         isActive: activeIdentities.contains { $0.contains(selector) },
                         isExcluded: excluded.contains(selector), isMuted: muted.contains(selector),
-                        microphoneName: microphones.first { $0.selector == selector }?.deviceName,
-                        microphoneInUse: microphones.first { $0.selector == selector }.flatMap {
+                        microphone: microphone,
+                        microphoneInUse: microphone.flatMap {
                             VirtualMicrophone.deviceID(uid: $0.uid)
                         }.flatMap { activeInputPIDs(on: $0) }.map { !$0.isEmpty } ?? false)
     }.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
