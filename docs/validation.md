@@ -563,3 +563,11 @@ iPad的锁屏案例之后，系统要求密码解锁，XCTest随之失联并退�
 GitHub 已公开预发布，注释标签指向 `06798a2bc92f10c46cefc3d83654495c299bcd58`。Mac 安装包为 `0.2.1 (14)`，包含空闲内存和后台开销修复。Android、iPad 和 Windows 附件与 beta.1 逐字节相同，沿用 beta.7 的构建。[发布页](https://github.com/xiaoland/shenglin/releases/tag/v0.2.1-beta.2) · [性能实测](mac-audio-performance.md#2026-11-26-空闲内存增长与后台开销)
 
 构建前后的受跟踪源码指纹一致。Mac DMG 的完整性、只读挂载、版本、arm64 架构、应用与内置驱动签名均通过核验。应用保留 Hardened Runtime 和音频输入权限，使用 Apple Development 签名。公开前后各回下载了四个安装包和 SHA-256 清单，全部与本地附件逐字节一致。构建及发布回验资料位于 `local/release-0.2.1-beta.2/`。
+
+## 0.2.1 beta.3 发布（2026-11-26）
+
+GitHub 已公开预发布，注释标签指向 `e383f054ac9fda7c2cce5a09042fe47ae8cffe9a`。四端安装包均基于 PR #1 合并后的源码重新构建，构建前后的受跟踪文件指纹一致。内置版本为 Mac `0.2.1 (15)`、Android `0.2.1-beta.3 (5)`、iPad `0.2.1 (12)`、Windows `0.2.1-beta.3`，Mac 随包浏览器扩展为 `0.2.1`。[发布页](https://github.com/xiaoland/shenglin/releases/tag/v0.2.1-beta.3) · [PR #1](https://github.com/xiaoland/shenglin/pull/1)
+
+Swift 36 项、浏览器扩展 16 项、Android 35 项、共享核心 9 项和 Windows 6 项自动化测试通过，Android lint 通过。Windows 构建机核验了发布程序的版本、隔离数据目录下的状态和 WASAPI 设备枚举。本轮验收覆盖构建、归档及上述检查，未重跑跨设备端到端音频传输。
+
+Mac DMG 完整性与只读挂载检查通过，应用和内置驱动通过严格签名验证。Mac 使用 Apple Development 签名，未经公证。Android APK 的签名证书与 beta.2 一致，包含两种 ARM ABI。iPad IPA 为 arm64，无签名，须自行签名。Windows x64 EXE 未作 Authenticode 签名。公开前后分别重新下载四个安装包与 SHA-256 清单，五个附件均与本地逐字节一致。证据位于 `local/release-0.2.1-beta.3/`。
