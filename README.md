@@ -10,7 +10,7 @@ Android 版使用 Kotlin、Jetpack Compose 和 Material 3，源码位于 `Androi
 
 Windows 版提供无 GUI 的命令行程序，可由 NSSM 作为服务管理。已配对设备可按输入设备授权共享麦克风；Mac 可挂载 Windows 输入为独立系统麦克风，录音应用选用时才会采集。协议使用通用 peer 与输入 ID，当前实现发送端为 Windows、Android 和 iPad，接收端为 Mac。0.2 beta.7 新增 Android／iPad 供源；真机验证范围见验收记录。iPad 须在前台开始供音，之后可锁屏持续；最后一个客户端停止后释放麦克风，需回到声邻前台恢复待用。
 
-Mac 0.2.1 beta.2 修复后台设置页反复读取钥匙串引发的空闲内存增长，并降低麦克风助手的 CPU 和磁盘开销。已有配对、麦克风挂载和设置可随覆盖安装保留。Android、iPad 与 Windows 沿用 beta.7 安装包。
+0.2.1 beta.3 更新四个平台。Mac 调整设置顺序、限定诊断导出范围，并保留 beta.2 的空闲性能修复。Android、iPad 和 Windows 更新配对和连接处理，随 Mac 分发的浏览器扩展改进网页音轨回收。
 
 ## 下载与安装
 
