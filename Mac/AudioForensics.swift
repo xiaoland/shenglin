@@ -1,12 +1,13 @@
 import AudioToolbox
 import CoreAudio
+import CoreServices
 import Darwin
 import Foundation
 #if canImport(ShenglinCore)
 import ShenglinCore
 #endif
 
-struct ForensicStatus: Codable {
+struct ForensicStatus: Codable, Equatable {
     let coverageSeconds: Int
     let droppedSourceBlocks: Int64
     let droppedDriverBlocks: UInt64
@@ -20,6 +21,7 @@ final class AudioForensics {
     private static let traceSelector: AudioObjectPropertySelector = 0x4e414d41 // NAMA
     private static let metricsSelector: AudioObjectPropertySelector = 0x4e414d54 // NAMT
     private let queue = DispatchQueue(label: "Shenglin.AudioForensics", qos: .utility)
+    private let inventoryQueue = DispatchQueue(label: "Shenglin.ForensicInventory", qos: .utility)
     private let sourceSlots = DispatchSemaphore(value: 64)
     private let pollSlot = DispatchSemaphore(value: 1)
     private let dropLock = NSLock()
@@ -36,8 +38,21 @@ final class AudioForensics {
     private var previousMetrics = [String: [UInt64]]()
     private var previousClients = [String: [UInt64: [UInt64]]]()
     private var coverage = [String: (firstBucket: Int, latestWrite: Date)]()
-    private var coverageScanned = false
+    private struct Entry {
+        let bytes: Int64
+        let modified: Date
+    }
+    // Only recorder-owned paths relative to the selected directory are in the inventory.
+    private var inventory: [String: Entry]?
+    private var retainedBytes: Int64 = 0
+    private var inventoryGeneration = 0
+    private var writesDuringScan: Set<String>?
+    private var needsScan = true
+    private var lastScan = Date.distantPast
     private var lastPrune = Date.distantPast
+    private var pruneCandidates: ArraySlice<(key: String, bucket: Int)>?
+    private var lastLimitGB: Int?
+    private var directoryEvents: FSEventStreamRef?
     private var lastPerformance = [String: Date]()
     private var lastDriverPerformance = [String: Date]()
 
@@ -70,21 +85,26 @@ final class AudioForensics {
         queue.async { self.useLocation(resolved, volumeID: volumeID) }
     }
 
-    private func useLocation(_ resolved: URL, volumeID: String?) {
+    private func useLocation(_ url: URL, volumeID: String?) {
         closeHandles()
-        directory = resolved
+        stopWatching()
+        directory = url
         storageVolumeID = volumeID
         minute.removeAll()
         previousMetrics.removeAll()
         previousClients.removeAll()
         lastPerformance.removeAll()
         lastDriverPerformance.removeAll()
-        lastPrune = .distantPast
         coverage.removeAll()
-        coverageScanned = false
-        if storageVolumeID != nil {
-            let recovered = warnings.filter { $0.value.hasPrefix("诊断写盘失败：") }.map(\.key)
-            for selector in recovered {
+        inventory = nil
+        inventoryGeneration += 1
+        writesDuringScan = nil
+        needsScan = true
+        lastScan = .distantPast
+        lastPrune = .distantPast
+        pruneCandidates = nil
+        if volumeID != nil {
+            for selector in warnings.filter({ $0.value.hasPrefix("诊断写盘失败：") }).keys {
                 warnings.removeValue(forKey: selector)
             }
         }
@@ -93,15 +113,10 @@ final class AudioForensics {
 
     func setLimitGB(_ value: Int) {
         MacPreferences.defaults.set(max(1, value), forKey: "diagnosticsLimitGB")
-        queue.async {
-            self.lastPrune = .distantPast
-            self.prune()
-        }
     }
 
     func status(for selector: String) -> ForensicStatus {
         queue.sync {
-            if !coverageScanned { prune() }
             let now = Date()
             let retained = coverage[deviceDirectory(selector).lastPathComponent]
             let seconds = retained.map { now.timeIntervalSince($0.latestWrite) < 5
@@ -156,7 +171,7 @@ final class AudioForensics {
         }
     }
 
-    func poll(_ devices: [DedicatedMicrophone]) {
+    func poll(_ devices: [DedicatedMicrophone], ids: [String: AudioObjectID]) {
         guard pollSlot.wait(timeout: .now()) == .success else { return }
         queue.async {
             defer { self.pollSlot.signal() }
@@ -169,10 +184,10 @@ final class AudioForensics {
             }
             self.observeConfiguration(devices)
             for device in devices {
-                guard let id = VirtualMicrophone.deviceID(uid: device.uid) else { continue }
+                guard let id = ids[device.selector] else { continue }
                 self.drain(id, device: device)
             }
-            self.prune()
+            self.maintainInventory()
         }
     }
 
@@ -210,7 +225,7 @@ final class AudioForensics {
             let manager = FileManager.default
             do {
                 try self.requireStorage()
-                let files = try self.evidenceFiles()
+                let files = try Self.scanInventory(in: self.directory).keys.sorted()
                 guard !files.isEmpty else {
                     throw NSError(domain: "Shenglin", code: 7,
                         userInfo: [NSLocalizedDescriptionKey: "当前取证目录没有可导出的声邻记录"])
@@ -221,11 +236,10 @@ final class AudioForensics {
                 let archive = work.appendingPathComponent("evidence.zip")
                 let list = work.appendingPathComponent("files")
                 let parent = self.directory.deletingLastPathComponent()
+                let prefix = self.directory.path == "/" ? "./" : "./\(self.directory.lastPathComponent)/"
                 var names = Data()
-                for file in files {
-                    let components = file.pathComponents.suffix(file.lastPathComponent == "manifest.json" ? 2 : 3)
-                    let path = ([self.directory.lastPathComponent] + components).joined(separator: "/")
-                    names.append(contentsOf: ("./" + path).utf8)
+                for relativePath in files {
+                    names.append(contentsOf: (prefix + relativePath).utf8)
                     names.append(0)
                 }
                 try names.write(to: list)
@@ -384,7 +398,9 @@ final class AudioForensics {
                 "streams": ["upstream": "AVAudioEngine tap after conversion, before HAL push",
                             "hal-output": "bytes returned by OnReadClientInput, with client PID"]]
             let data = try JSONSerialization.data(withJSONObject: info, options: [.prettyPrinted, .sortedKeys])
-            try data.write(to: folder.appendingPathComponent("manifest.json"), options: .atomic)
+            let manifest = folder.appendingPathComponent("manifest.json")
+            try data.write(to: manifest, options: .atomic)
+            noteWrite(manifest, bytes: data.count, replacing: true)
         } catch { recordError(device.selector, error) }
     }
 
@@ -409,6 +425,7 @@ final class AudioForensics {
                 handles[key] = handle
             }
             try handle.write(contentsOf: data)
+            noteWrite(file, bytes: data.count)
             if !data.isEmpty {
                 let name = deviceDirectory(selector).lastPathComponent
                 coverage[name] = (min(coverage[name]?.firstBucket ?? bucket, bucket), Date())
@@ -431,6 +448,7 @@ final class AudioForensics {
             let handle = try FileHandle(forWritingTo: file)
             try handle.seekToEnd()
             try handle.write(contentsOf: data)
+            noteWrite(file, bytes: data.count)
             try handle.close()
         } catch { recordError(selector, error) }
     }
@@ -466,89 +484,219 @@ final class AudioForensics {
         handles.removeAll()
     }
 
-    // The selected volume can also contain unrelated files. A matching device manifest
-    // and the recorder’s rolling filename format identify evidence, including removed devices.
-    private func evidenceFiles() throws -> [URL] {
+    private static func segment(_ name: Substring) -> (bucket: Int, audio: Bool)? {
+        let parts = name.split(separator: "-", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3, let bucket = Int(parts[0]), bucket >= 0,
+              let index = Int(parts[1]), index >= 0 else { return nil }
+        switch parts[2] {
+        case "upstream.bin", "hal-output.bin": return (bucket, true)
+        case "events.jsonl": return (bucket, false)
+        default: return nil
+        }
+    }
+
+    private static func entry(at url: URL) -> Entry? {
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG else { return nil }
+        return Entry(bytes: metadata.st_size, modified: Date(timeIntervalSince1970:
+            Double(metadata.st_mtimespec.tv_sec) + Double(metadata.st_mtimespec.tv_nsec) / 1_000_000_000))
+    }
+
+    private static func scanInventory(in directory: URL) throws -> [String: Entry] {
         let manager = FileManager.default
-        let folders = try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isDirectoryKey],
-                                                     options: [.skipsHiddenFiles])
-        var result = [URL]()
+        let folderKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
+        let folders = try manager.contentsOfDirectory(at: directory, includingPropertiesForKeys: Array(folderKeys),
+                                                      options: [.skipsHiddenFiles])
+        var entries = [String: Entry]()
         for folder in folders {
-            guard (try? folder.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
+            let properties = try folder.resourceValues(forKeys: folderKeys)
+            guard properties.isDirectory == true, properties.isSymbolicLink == false else { continue }
+            let name = folder.lastPathComponent
             let manifest = folder.appendingPathComponent("manifest.json")
-            guard let metadata = try? manifest.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
-                  metadata.isRegularFile == true, (metadata.fileSize ?? 0) <= 64 * 1024,
+            guard let metadata = entry(at: manifest), metadata.bytes <= 64 * 1024,
                   let data = try? Data(contentsOf: manifest),
                   let info = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   info["version"] as? Int == 1, info["encoding"] as? String == "interleaved Float32 little-endian",
                   let selector = info["selector"] as? String,
-                  selector.replacingOccurrences(of: ":", with: "-") == folder.lastPathComponent else { continue }
-            result.append(manifest)
-            let rolling = folder.appendingPathComponent("rolling")
-            guard (try? rolling.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { continue }
-            let segments = try manager.contentsOfDirectory(at: rolling,
-                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
-                options: [.skipsHiddenFiles])
-            for file in segments {
-                let parts = file.lastPathComponent.split(separator: "-", maxSplits: 2, omittingEmptySubsequences: false)
-                guard parts.count == 3, let bucket = Int(parts[0]), bucket >= 0,
-                      let index = Int(parts[1]), index >= 0,
-                      ["upstream.bin", "hal-output.bin", "events.jsonl"].contains(parts[2]),
-                      (try? file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
-                result.append(file)
+                  selector.replacingOccurrences(of: ":", with: "-") == name else { continue }
+            entries["\(name)/manifest.json"] = metadata
+            let rolling = folder.appendingPathComponent("rolling", isDirectory: true)
+            guard let properties = try? rolling.resourceValues(forKeys: folderKeys),
+                  properties.isDirectory == true, properties.isSymbolicLink == false else { continue }
+            var failure: Error?
+            let keys: Set<URLResourceKey> = [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey]
+            let walk = manager.enumerator(at: rolling, includingPropertiesForKeys: Array(keys),
+                options: [.skipsHiddenFiles, .skipsSubdirectoryDescendants]) { _, error in
+                failure = error
+                return false
             }
+            while autoreleasepool(invoking: {
+                guard let file = walk?.nextObject() as? URL else { return false }
+                let filename = file.lastPathComponent
+                if segment(filename[...]) != nil, let info = try? file.resourceValues(forKeys: keys),
+                   info.isRegularFile == true, let size = info.fileSize, let modified = info.contentModificationDate {
+                    entries["\(name)/rolling/\(filename)"] = Entry(bytes: Int64(size), modified: modified)
+                }
+                return true
+            }) {}
+            if let failure { throw failure }
         }
-        return result
+        return entries
     }
 
-    private func prune() {
-        guard !coverageScanned || Date().timeIntervalSince(lastPrune) >= 60 else { return }
-        lastPrune = Date()
-        coverageScanned = true
+    private func noteWrite(_ url: URL, bytes: Int, replacing: Bool = false) {
+        guard inventory != nil || writesDuringScan != nil else { return }
+        let root = directory.path
+        let prefixLength = root.count + (root.hasSuffix("/") ? 0 : 1)
+        let key = String(url.path.dropFirst(prefixLength))
+        writesDuringScan?.insert(key)
+        guard inventory != nil else { return }
+        guard let old = inventory?[key], !replacing else {
+            if let new = Self.entry(at: url) {
+                retainedBytes += new.bytes - (inventory?.updateValue(new, forKey: key)?.bytes ?? 0)
+            }
+            return
+        }
+        inventory?[key] = Entry(bytes: old.bytes + Int64(bytes), modified: Date())
+        retainedBytes += Int64(bytes)
+    }
+
+    private func startWatching() {
+        var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
+            retain: nil, release: nil, copyDescription: nil)
+        let options = FSEventStreamCreateFlags(kFSEventStreamCreateFlagIgnoreSelf | kFSEventStreamCreateFlagWatchRoot)
+        guard let stream = FSEventStreamCreate(nil, { _, context, _, _, _, _ in
+            guard let context else { return }
+            let recorder = Unmanaged<AudioForensics>.fromOpaque(context).takeUnretainedValue()
+            recorder.needsScan = true
+            // A deleted or replaced segment can still be open. Reopen by name on the next write.
+            recorder.closeHandles()
+        }, &context, [directory.path] as CFArray, FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 1, options) else { return }
+        FSEventStreamSetDispatchQueue(stream, queue)
+        if FSEventStreamStart(stream) { directoryEvents = stream }
+        else {
+            FSEventStreamInvalidate(stream)
+            FSEventStreamRelease(stream)
+        }
+    }
+
+    private func stopWatching() {
+        guard let directoryEvents else { return }
+        FSEventStreamStop(directoryEvents)
+        FSEventStreamInvalidate(directoryEvents)
+        FSEventStreamRelease(directoryEvents)
+        self.directoryEvents = nil
+    }
+
+    private func maintainInventory() {
+        let now = Date()
+        if directoryEvents == nil && now.timeIntervalSince(lastScan) >= 60 {
+            needsScan = true
+        }
+        if needsScan {
+            guard writesDuringScan == nil, now.timeIntervalSince(lastScan) >= 2 else { return }
+            lastScan = now
+            guard (try? requireStorage()) != nil else { return }
+            if directoryEvents == nil { startWatching() }
+            needsScan = false
+            writesDuringScan = []
+            let generation = inventoryGeneration
+            let directory = directory
+            inventoryQueue.async {
+                let entries = try? Self.scanInventory(in: directory)
+                self.queue.async { self.acceptInventory(entries, generation: generation) }
+            }
+            return
+        }
+        let limit = limitGB
+        if lastLimitGB != limit {
+            lastLimitGB = limit
+            lastPrune = .distantPast
+        }
+        let maximum = Int64(limit) * 1_000_000_000
+        guard writesDuringScan == nil, inventory != nil, retainedBytes > maximum,
+              now.timeIntervalSince(lastPrune) >= 60, (try? requireStorage()) != nil else { return }
+        lastPrune = now
+        prune(to: maximum)
+    }
+
+    private func acceptInventory(_ entries: [String: Entry]?, generation: Int) {
+        guard generation == inventoryGeneration, let writes = writesDuringScan else { return }
+        writesDuringScan = nil
+        guard var entries, (try? requireStorage()) != nil else {
+            needsScan = true
+            return
+        }
+        for key in writes { entries[key] = Self.entry(at: directory.appendingPathComponent(key)) }
+        retainedBytes = entries.values.reduce(0) { $0 + $1.bytes }
+        inventory = entries
+        pruneCandidates = nil
+        rebuildCoverage()
+    }
+
+    private func rebuildCoverage() {
         coverage.removeAll()
-        let manager = FileManager.default
-        guard (try? requireStorage()) != nil, let evidence = try? evidenceFiles() else { return }
-        var files = [(url: URL, bytes: Int64, age: Date, modified: Date)]()
-        var total: Int64 = 0
-        for url in evidence {
-            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else { continue }
-            let size = Int64(values.fileSize ?? 0)
-            total += size
-            if url.lastPathComponent != "manifest.json" {
-                let bucket = Int(url.lastPathComponent.split(separator: "-").first ?? "")
-                files.append((url, size, bucket.map { Date(timeIntervalSince1970: TimeInterval($0) * 60) }
-                    ?? values.contentModificationDate ?? .distantPast,
-                    values.contentModificationDate ?? .distantPast))
+        guard let inventory else { return }
+        for (key, entry) in inventory where entry.bytes > 0 && key.hasSuffix(".bin") {
+            guard let slash = key.lastIndex(of: "/"),
+                  let segment = Self.segment(key[key.index(after: slash)...]), segment.audio,
+                  let separator = key.firstIndex(of: "/") else { continue }
+            let folder = String(key[..<separator])
+            let previous = coverage[folder]
+            coverage[folder] = (min(previous?.firstBucket ?? segment.bucket, segment.bucket),
+                max(previous?.latestWrite ?? entry.modified, entry.modified))
+        }
+    }
+
+    private func prune(to maximum: Int64) {
+        if pruneCandidates == nil {
+            let bucket = Int(Date().timeIntervalSince1970 / 60)
+            let candidates = inventory?.keys.compactMap { key -> (key: String, bucket: Int)? in
+                guard let slash = key.lastIndex(of: "/"),
+                      let segment = Self.segment(key[key.index(after: slash)...]), segment.bucket < bucket else { return nil }
+                return (key, segment.bucket)
+            }.sorted { $0.bucket == $1.bucket ? $0.key < $1.key : $0.bucket < $1.bucket } ?? []
+            pruneCandidates = candidates[...]
+        }
+        let root = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+        guard root >= 0 else { return }
+        defer { close(root) }
+        var removedAudio = false
+        for _ in 0..<256 where retainedBytes > maximum {
+            guard let (key, _) = pruneCandidates?.popFirst() else { break }
+            let parts = key.split(separator: "/")
+            let device = openat(root, String(parts[0]), O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            guard device >= 0 else { needsScan = true; continue }
+            let folder = openat(device, "rolling", O_RDONLY | O_DIRECTORY | O_NOFOLLOW)
+            close(device)
+            guard folder >= 0 else { needsScan = true; continue }
+            let name = String(parts[2])
+            var metadata = stat()
+            if fstatat(folder, name, &metadata, AT_SYMLINK_NOFOLLOW) == 0,
+               (metadata.st_mode & S_IFMT != S_IFREG || metadata.st_size != inventory?[key]?.bytes) {
+                close(folder)
+                needsScan = true
+                break
+            }
+            let removed = unlinkat(folder, name, 0)
+            let failure = errno
+            close(folder)
+            if removed == 0 || failure == ENOENT {
+                retainedBytes -= self.inventory?.removeValue(forKey: key)?.bytes ?? 0
+                if key.hasSuffix(".bin") { removedAudio = true }
+            } else {
+                for selector in known.keys { recordError(selector, POSIXError(POSIXErrorCode(rawValue: failure) ?? .EIO)) }
             }
         }
-        let maximum = Int64(limitGB) * 1_000_000_000
-        var removed = Set<URL>()
-        if total > maximum {
-            for file in files.sorted(by: { $0.age < $1.age }) where total > maximum {
-                if file.url.path.contains("/rolling/"),
-                   file.url.lastPathComponent.hasPrefix("\(Int(Date().timeIntervalSince1970 / 60))-") { continue }
-                do {
-                    try manager.removeItem(at: file.url)
-                    total -= file.bytes
-                    removed.insert(file.url)
-                } catch {
-                    for selector in known.keys { recordError(selector, error) }
-                }
-            }
-        }
-        // The retention walk already reads these attributes. Keep status independent of
-        // the amount of retained evidence, and reconcile deleted files on each walk.
-        for file in files where file.url.pathExtension == "bin" && file.bytes > 0 && !removed.contains(file.url) {
-            let rolling = file.url.deletingLastPathComponent()
-            guard rolling.lastPathComponent == "rolling",
-                  let bucket = Int(file.url.lastPathComponent.split(separator: "-").first ?? "") else { continue }
-            let name = rolling.deletingLastPathComponent().lastPathComponent
-            let previous = coverage[name]
-            coverage[name] = (min(previous?.firstBucket ?? bucket, bucket),
-                max(previous?.latestWrite ?? .distantPast, file.modified))
-        }
-        if total > maximum {
+        if removedAudio { rebuildCoverage() }
+        if retainedBytes <= maximum {
+            pruneCandidates = nil
+        } else if pruneCandidates?.isEmpty == true {
+            pruneCandidates = nil
             for selector in known.keys { warnings[selector] = "诊断存储已达上限；请导出或更换存储位置" }
+        } else {
+            // Yield to the recording queue between batches.
+            lastPrune = .distantPast
         }
     }
 

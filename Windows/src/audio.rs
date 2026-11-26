@@ -174,6 +174,8 @@ impl Snapshot {
 struct Saved {
     values: HashMap<String, Snapshot>,
     manual: bool,
+    // Earlier service builds require this field when reading the recovery file.
+    active: bool,
 }
 pub struct Volume {
     store: Store,
@@ -280,6 +282,7 @@ impl Volume {
         }
         let ids: HashSet<_> = sessions.iter().map(|s| s.id.clone()).collect();
         self.saved.values.retain(|id, _| ids.contains(id));
+        self.saved.active = demand;
         self.save()?;
         Ok(if !known {
             "unavailable"
@@ -307,6 +310,9 @@ mod tests {
         let store = Store(path.clone());
         let mut volume = Volume::new(store.clone()).unwrap();
         volume.adjust("session", 1.0, 0.2, |_| Ok(())).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("volume.json")).unwrap()).unwrap();
+        assert_eq!(persisted["active"].as_bool(), Some(false));
         assert!(volume
             .adjust("session", 1.0, 0.1, |_| anyhow::bail!(
                 "injected system failure"

@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import CoreGraphics
 import Foundation
 import os
@@ -94,6 +95,10 @@ struct PeerDisplay: Identifiable, Equatable {
     @Published private(set) var sources = [SourceCandidate]()
     @Published private(set) var sourceActivityUnknown = false
     @Published private(set) var virtualMicrophoneAvailable = false
+    @Published private var physicalInputNames = [String: String]()
+    @Published private var peerNamesAvailable = false
+    @Published private var microphoneAgentError: String?
+    @Published private var forensicStatuses = [String: ForensicStatus]()
     @Published private(set) var microphoneShortcuts = [String: MicrophoneHotKey]()
     @Published private(set) var sharedShortcutEnabled: Bool
     @Published private(set) var sharedShortcutActive = false
@@ -152,6 +157,7 @@ struct PeerDisplay: Identifiable, Equatable {
     private var quitting = false
     private var pairClient: PairClient?
     private var controlServer: ControlServer?
+    private var lastAgentStatusRead = Date.distantPast
     private var pendingKey: Data?
     private var pendingExpiresAt: Date?
     private var pendingPadName: String?
@@ -212,10 +218,7 @@ struct PeerDisplay: Identifiable, Equatable {
         return peers.contains(where: \.connected) ? "等待空间条件" : "等待设备连接"
     }
     var inputError: String? {
-        if let error = inputState.error { return error }
-        guard sources.contains(where: { $0.microphoneName != nil }) else { return nil }
-        if let status = MicrophoneAgentStatus.current() { return status.error }
-        return "暂时无法读取后台麦克风服务状态。请检查系统设置中的声邻后台服务。"
+        inputState.error ?? microphoneAgentError
     }
     var spaceStatus: String {
         let allowed = padPeerDisplays.filter(\.spaceAllowed).count + macPeerAllowed.count
@@ -260,6 +263,12 @@ struct PeerDisplay: Identifiable, Equatable {
             }
         } catch { errorMessage = "本机控制入口不可用：\(error.localizedDescription)" }
         refreshSources()
+        refreshPhysicalInputNames()
+        var devicesProperty = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &devicesProperty, .main) { [weak self] _, _ in
+            Task { @MainActor [weak self] in self?.refreshPhysicalInputNames() }
+        }
         restoreMicrophoneShortcuts()
         if let issue = LegacyOutputRecovery.recover() { errorMessage = issue }
         _ = peerLedger.expire(at: Int64(Date().timeIntervalSince1970))
@@ -270,8 +279,7 @@ struct PeerDisplay: Identifiable, Equatable {
             self.persistPeerLedger()
             self.lastAction = "已解除本轮应用衰减，保留手动音量"
         }
-        input = InputActivity(captureEnabled: false,
-                              ignoredPID: { MicrophoneAgentStatus.current()?.pid }) { [weak self] observation in
+        input = InputActivity { [weak self] observation in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.inputState = observation
@@ -287,6 +295,7 @@ struct PeerDisplay: Identifiable, Equatable {
         } catch { errorMessage = "后台麦克风服务无法启动：\(error.localizedDescription)" }
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
+                self?.refreshMicrophoneAgentStatus()
                 self?.input?.poll()
                 self?.browser.expire()
                 self?.publishInputDemandIfChanged()
@@ -331,6 +340,7 @@ struct PeerDisplay: Identifiable, Equatable {
                                           peripheralID: pending.peripheralID) { startPadPeer(peer) }
         }
         if let errorMessage { self.errorMessage = errorMessage }
+        peerNamesAvailable = true
         recordConnection("credentials-loaded")
     }
 
@@ -832,19 +842,24 @@ struct PeerDisplay: Identifiable, Equatable {
         let result = localOutput?.update(requested: target, protected: input?.protectedIdentities ?? [],
                                          inputKnown: input?.lastObservation.error == nil && (input?.protectedPIDs.allSatisfy { !sourceIdentities(pid: $0).isEmpty } ?? true),
                                          manualOverride: remote != nil && peerLedger.manualTakeover) ?? "outputUnsupported"
-        outputStatus = localOutput?.status ?? "应用输出暂不可用"
+        let nextStatus = localOutput?.status ?? "应用输出暂不可用"
+        if outputStatus != nextStatus { outputStatus = nextStatus }
+        let nextNotice: String?
         switch result {
-        case "preservedManual": outputNotice = "已保留手动音量，本轮不再降低。"
-        case "outputUnsupported": outputNotice = "部分应用暂时无法降低音量。"
-        case "unknown": outputNotice = "输入状态未知，暂时保持原音量。"
-        default: outputNotice = nil
+        case "preservedManual": nextNotice = "已保留手动音量，本轮不再降低。"
+        case "outputUnsupported": nextNotice = "部分应用暂时无法降低音量。"
+        case "unknown": nextNotice = "输入状态未知，暂时保持原音量。"
+        default: nextNotice = nil
         }
+        if outputNotice != nextNotice { outputNotice = nextNotice }
         let protectedNames = Set(nativePIDs(input?.protectedPIDs ?? []).compactMap { pid -> String? in
             let identities = sourceIdentities(pid: pid)
             return sources.first { identities.contains($0.selector) }?.name ?? NSRunningApplication(processIdentifier: pid)?.localizedName
         }).sorted()
-        protectedOutputStatus = protectedNames.isEmpty ? "暂无受保护的原生输入应用" : "保留输出：\(protectedNames.joined(separator: "、"))"
-        browserStatus = browser.summary
+        let nextProtected = protectedNames.isEmpty ? "暂无受保护的原生输入应用" : "保留输出：\(protectedNames.joined(separator: "、"))"
+        if protectedOutputStatus != nextProtected { protectedOutputStatus = nextProtected }
+        let nextBrowser = browser.summary
+        if browserStatus != nextBrowser { browserStatus = nextBrowser }
         if starting { lastAction = PeerResult.message(result, device: localMacName) }
         return result
     }
@@ -858,11 +873,38 @@ struct PeerDisplay: Identifiable, Equatable {
     }
 
     func refreshSources() {
-        virtualMicrophoneAvailable = VirtualMicrophone.pluginID != nil
+        let available = VirtualMicrophone.pluginID != nil
+        if virtualMicrophoneAvailable != available { virtualMicrophoneAvailable = available }
         let active = activeInputPIDs()
-        sourceActivityUnknown = active == nil
-        do { sources = try availableSources(active: active ?? []) }
+        if sourceActivityUnknown != (active == nil) { sourceActivityUnknown = active == nil }
+        do {
+            let next = try availableSources(active: active ?? [])
+            if sources != next { sources = next }
+        }
         catch { errorMessage = "无法列出应用：\(error.localizedDescription)" }
+        refreshMicrophoneAgentStatus()
+    }
+
+    private func refreshPhysicalInputNames() {
+        let names = Dictionary(uniqueKeysWithValues: PhysicalInputSource.available().map { ($0.id, $0.name) })
+        if physicalInputNames != names { physicalInputNames = names }
+    }
+
+    private func refreshMicrophoneAgentStatus() {
+        let now = Date()
+        guard now.timeIntervalSince(lastAgentStatusRead) >= 1 else { return }
+        lastAgentStatusRead = now
+        let status = MicrophoneAgentStatus.current()
+        let forensics = status?.forensics ?? [:]
+        if forensicStatuses != forensics { forensicStatuses = forensics }
+        let error: String?
+        if !sources.contains(where: { $0.microphone != nil }) { error = nil }
+        else if let status { error = status.error }
+        else {
+            error = MicrophoneAgentStatus.service.status == .enabled
+                ? "暂时无法读取后台麦克风服务状态" : "请在系统设置中允许声邻后台麦克风服务"
+        }
+        if microphoneAgentError != error { microphoneAgentError = error }
     }
 
     func toggleExclusion(_ source: SourceCandidate) {
@@ -1021,24 +1063,18 @@ struct PeerDisplay: Identifiable, Equatable {
         _ = setMicrophone(source.selector, name: source.name, add: false)
     }
 
-    func microphoneSourceDescription(for selector: String) -> String {
-        guard let device = try? MicrophoneStore.load().first(where: { $0.selector == selector }) else { return "" }
+    func microphoneSourceDescription(_ device: DedicatedMicrophone) -> String {
         if let remote = device.remoteSource {
-            let name = (try? RemoteMicrophoneMount.peer(remote.peerID).name) ?? "已解除配对的设备"
+            let name = savedMacPeers.first {
+                !pendingMacIDs.contains(sourceID(for: $0.key)) && MicrophoneProtocol.peerID($0) == remote.peerID
+            }?.name ?? padSessions.values.first {
+                $0.key != pendingKey && serviceName(key: $0.key) == remote.peerID
+            }?.name ?? (peerNamesAvailable ? "已解除配对的设备" : "暂时无法读取设备名称")
             return "远端：\(name) · 48000 Hz / 单声道"
         }
-        let name = device.sourceUID.flatMap { uid in
-            PhysicalInputSource.available().first(where: { $0.id == uid })?.name
-        } ?? (device.sourceUID == nil ? "系统默认输入（旧设备）" : "上游已断开")
+        let name = device.sourceUID.flatMap { physicalInputNames[$0] }
+            ?? (device.sourceUID == nil ? "系统默认输入（旧设备）" : "上游已断开")
         return "上游：\(name) · \(device.outputSampleRate) Hz / \(device.outputChannels) 声道"
-    }
-
-    func isRemoteMicrophone(_ selector: String) -> Bool {
-        (try? MicrophoneStore.load().first(where: { $0.selector == selector })?.remoteSource) != nil
-    }
-
-    func microphoneGain(_ selector: String) -> Float {
-        (try? MicrophoneStore.load().first(where: { $0.selector == selector })?.inputGain) ?? 1
     }
 
     @discardableResult func setMicrophoneGain(_ selector: String, gain: Float) -> Bool {
@@ -1069,16 +1105,14 @@ struct PeerDisplay: Identifiable, Equatable {
     }
 
     func forensicDescription(for selector: String) -> String {
-        let status = MicrophoneAgentStatus.current()?.forensics[selector]
-            ?? AudioForensics.shared.status(for: selector)
+        guard let status = forensicStatuses[selector] else { return "暂时无法读取音频取证状态" }
         let minutes = status.coverageSeconds / 60
         let seconds = status.coverageSeconds % 60
         return "取证回看 \(minutes)分\(seconds)秒 · 上游丢块 \(status.droppedSourceBlocks) · 驱动丢块 \(status.droppedDriverBlocks) · 写盘错误 \(status.writeErrors)"
     }
 
     func forensicWarning(for selector: String) -> String? {
-        (MicrophoneAgentStatus.current()?.forensics[selector]
-            ?? AudioForensics.shared.status(for: selector)).warning
+        forensicStatuses[selector]?.warning
     }
     var forensicLocation: String { AudioForensics.shared.location.path }
     var forensicLimitGB: Int { AudioForensics.shared.limitGB }

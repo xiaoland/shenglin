@@ -16,7 +16,6 @@ output = model[model.index('inputKnown: ', model.index('localOutput?.update')):m
 output = output.removeprefix('inputKnown: ').rstrip().removesuffix(',')
 source = '''import Foundation
 '''+observation+r'''
-final class Capture { func suspend() {} }
 final class InputActivity {
  var protectedPIDs: Set<Int32> = [42]
  var protectedIdentities: Set<String> = ["reader"]
@@ -25,7 +24,6 @@ final class InputActivity {
  var previous: Set<Int32>? = [42]
  var previousLocalRecording = true
  var lastError: String?
- var captures: [Int:Capture] = [:]
  var lastObservation = InputObservation.active(1,true)
  var changed: (InputObservation) -> Void = { _ in }
 '''+unavailable+r'''

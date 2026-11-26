@@ -30,7 +30,8 @@ code = member(views, '    private var code: String', '    private func findDevic
 volume = member(views, 'private struct VolumeTargetControl:', 'private struct MainPanel:')
 volume_range = member(volume, '    private var sliderRange:', '    var body:')
 output = member(model, '    @discardableResult private func updateOutputQuiet(', '    func installBrowserAdapter()')
-notice = member(output, '        switch result {', '        let protectedNames')
+notice = member(output, '        let nextNotice:', '        let protectedNames')
+microphone_name = member(model, '    func microphoneSourceDescription(', '    @discardableResult func setMicrophoneGain(')
 nearby_filter = member(model, '            let pairedIDs = Set(self.padSessions', '        }, onStatus:')
 
 
@@ -95,6 +96,45 @@ final class OutputNoticeProbe {
 '''+notice+r'''
  }
 }
+struct NamePeer { let key: Data; let name: String }
+struct RemoteSource { let peerID: String }
+struct DedicatedMicrophone {
+ let remoteSource: RemoteSource?
+ let sourceUID: String?
+ var outputSampleRate = 48000
+ var outputChannels = 1
+}
+func serviceName(key: Data) -> String { "remote-\(key.first!)" }
+enum MicrophoneProtocol {
+ static func peerID(_ peer: NamePeer) -> String { serviceName(key: peer.key) }
+}
+final class MicrophoneNameProbe {
+ var savedMacPeers = [NamePeer]()
+ var padSessions = [String: NamePeer]()
+ var pendingMacIDs = Set<String>()
+ var pendingKey: Data?
+ var peerNamesAvailable = false
+ var physicalInputNames = [String: String]()
+ func sourceID(for key: Data) -> String { "local-\(key.first!)" }
+'''+microphone_name+r'''
+}
+let names = MicrophoneNameProbe()
+let remoteMic = DedicatedMicrophone(remoteSource: RemoteSource(peerID: "remote-1"), sourceUID: nil)
+assert(names.microphoneSourceDescription(remoteMic).contains("暂时无法读取设备名称"))
+names.peerNamesAvailable = true
+names.savedMacPeers = [NamePeer(key: Data([1]), name: "离线电脑")]
+assert(names.microphoneSourceDescription(remoteMic).contains("离线电脑"))
+names.pendingMacIDs.insert("local-1")
+assert(names.microphoneSourceDescription(remoteMic).contains("已解除配对"))
+names.padSessions = ["local-1": NamePeer(key: Data([1]), name: "已配对 iPad")]
+assert(names.microphoneSourceDescription(remoteMic).contains("已配对 iPad"))
+names.pendingKey = Data([1])
+assert(names.microphoneSourceDescription(remoteMic).contains("已解除配对"))
+let localMic = DedicatedMicrophone(remoteSource: nil, sourceUID: "input")
+names.physicalInputNames["input"] = "物理麦克风"
+assert(names.microphoneSourceDescription(localMic).contains("物理麦克风"))
+names.physicalInputNames.removeAll()
+assert(names.microphoneSourceDescription(localMic).contains("上游已断开"))
 assert(VolumeRangeProbe(relative: true).range == 0...1)
 assert(VolumeRangeProbe(relative: false).range == 0...0.5)
 let notice = OutputNoticeProbe()
