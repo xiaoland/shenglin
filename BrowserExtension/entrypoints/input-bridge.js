@@ -9,12 +9,10 @@ export default defineUnlistedScript(() => {
         return;
       }
       if (event.data?.type !== 'shenglin-input-state') return;
-      const value = event.data.value;
-      if (!value || !['calls', 'failures', 'tracked', 'live', 'active'].every(key =>
-        Number.isInteger(value[key]) && value[key] >= 0 && value[key] <= 10000) ||
-        value.active > value.live || value.live > value.tracked) return;
-      // Page-provided metadata is untrusted and scoped to this explicitly authorized page.
-      state.input = value.tracked > 0 ? (value.active > 0 ? 'active' : 'idle') : 'unknown';
+      const input = event.data.input;
+      if (!['active', 'idle', 'unknown'].includes(input)) return;
+      // This page can report only its own explicitly authorized input state.
+      state.input = input;
       state.updated = Date.now();
     }
     window.addEventListener('message', receive);

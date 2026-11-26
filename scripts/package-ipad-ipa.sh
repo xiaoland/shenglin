@@ -14,13 +14,13 @@ if codesign --verify "$app" >/dev/null 2>&1; then
     echo '拒绝打包带有本机开发签名的 iPad App' >&2
     exit 1
 fi
-stage=$(mktemp -d)
+mkdir -p dist
+stage=$(mktemp -d "$repo/dist/.shenglin-ipa.XXXXXX")
 trap 'rm -rf "$stage"' EXIT
 mkdir "$stage/Payload"
 ditto "$app" "$stage/Payload/ShenglinPad.app"
-mkdir -p dist
 output="$repo/dist/Shenglin-iPadOS-unsigned.ipa"
-rm -f "$output"
-(cd "$stage" && ditto -c -k --sequesterRsrc --keepParent Payload "$output")
-unzip -tq "$output" >/dev/null
+(cd "$stage" && ditto -c -k --sequesterRsrc --keepParent Payload Shenglin.ipa)
+unzip -tq "$stage/Shenglin.ipa" >/dev/null
+mv -f "$stage/Shenglin.ipa" "$output"
 echo "已生成 ${output}；安装者必须用自己的账号签名"

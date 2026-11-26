@@ -26,7 +26,8 @@ if [[ "$mode" == ios || "$mode" == both || "$mode" == all ]]; then
 fi
 if [[ "$mode" == android || "$mode" == android-libs || "$mode" == all ]]; then
  "$repo/scripts/build-pake.sh" source
- ndk=${ANDROID_NDK_HOME:-/Volumes/WorkSSD/Android/sdk/ndk/30.0.14904198}
+ sdk=${ANDROID_HOME:-$HOME/Library/Android/sdk}
+ ndk=${ANDROID_NDK_HOME:-$sdk/ndk/30.0.14904198}
  toolchain="$ndk/toolchains/llvm/prebuilt/darwin-x86_64"
  cmake=$(command -v cmake || printf '%s' "$repo/local/pake-tools/bin/cmake")
  for abi in arm64-v8a armeabi-v7a x86 x86_64; do

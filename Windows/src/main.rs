@@ -4,7 +4,7 @@ mod peer;
 mod store;
 mod wire;
 use anyhow::{bail, ensure, Result};
-use peer::{Event, Live};
+use peer::Live;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use shenglin_core::{DemandLedger, LedgerSnapshot};
@@ -158,20 +158,19 @@ fn run() -> Result<()> {
             if command == "serve" {
                 serve(store, network)?;
             } else {
-                let daemon = wire::daemon(network.ip)?;
-                let result = (|| -> Result<()> {
+                wire::with_daemon(network.ip, |daemon| {
                     if command == "discover" {
-                        let candidates = wire::discover(&daemon, wire::PAIR_SERVICE, None, 5)?;
+                        let candidates = wire::discover(daemon, wire::PAIR_SERVICE, None, 5)?;
                         println!("{}", json!(candidates.iter().map(|(name, address)|
                             json!({"name": name, "address": address.to_string()})).collect::<Vec<_>>()));
                     } else {
                         let config = store.load()?;
                         let peer = if args.len() == 1 {
-                            wire::pair_server(&daemon, network.ip, &config.name)?
+                            wire::pair_server(daemon, network.ip, &config.name)?
                         } else {
                             ensure!(args.len() == 3, "用法：pair [设备名称 验证码]");
                             let candidates =
-                                wire::discover(&daemon, wire::PAIR_SERVICE, Some(&args[1]), 8)?;
+                                wire::discover(daemon, wire::PAIR_SERVICE, Some(&args[1]), 8)?;
                             let address = candidates
                                 .first()
                                 .ok_or_else(|| anyhow::anyhow!("未发现配对设备"))?
@@ -186,9 +185,7 @@ fn run() -> Result<()> {
                         println!("服务运行且完成双向认证后激活配对；用 status 查看结果。");
                     }
                     Ok(())
-                })();
-                daemon.shutdown()?;
-                result?;
+                })?;
             }
         }
         _ => bail!("未知命令；运行 help 查看用法"),
@@ -209,7 +206,7 @@ fn print_status(store: &Store) -> Result<()> {
         running
             && runtime["updatedAt"]
                 .as_i64()
-                .is_some_and(|t| wire::now() - t <= 5)
+                .is_some_and(|t| (0..=5).contains(&wire::now().saturating_sub(t)))
     );
     println!(
         "{}",
@@ -229,6 +226,12 @@ fn take_option(args: &mut Vec<String>, name: &str) -> Result<Option<String>> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum WorkerKind {
+    State,
+    Microphone,
+}
+
 fn serve(store: Store, net: network::Network) -> Result<()> {
     let _lock = store.run_lock()?;
     let stop = Arc::new(AtomicBool::new(false));
@@ -246,35 +249,14 @@ fn serve(store: Store, net: network::Network) -> Result<()> {
             wire::now(),
         );
     }
-    let sequence_path = store.0.join("sequence.json");
-    let revision = if sequence_path.exists() {
-        serde_json::from_slice::<u64>(&std::fs::read(&sequence_path)?)?
-    } else {
-        0
-    };
-    // Reserve revisions durably before workers send; a killed process cannot reuse a revision.
-    let reserved = revision
-        .checked_add(1_000_000)
-        .ok_or_else(|| anyhow::anyhow!("序号耗尽"))?;
-    atomic(&sequence_path, &serde_json::to_vec(&reserved)?)?;
-    let live = Arc::new(Mutex::new(Live {
-        revision,
-        ..Default::default()
-    }));
+    let live = Arc::new(Mutex::new(Live::load(&store)?));
     let mut volume = audio::Volume::new(store.clone())?;
     let (tx, rx) = mpsc::channel();
-    let mut workers: HashMap<
-        String,
-        (
-            Arc<AtomicBool>,
-            Vec<std::thread::JoinHandle<()>>,
-            Vec<String>,
-        ),
-    > = HashMap::new();
+    let mut workers: HashMap<(String, WorkerKind), (Arc<AtomicBool>, std::thread::JoinHandle<()>)> =
+        HashMap::new();
     let mut last_status = Instant::now() - Duration::from_secs(2);
     let mut old_scope = initial.network_scope;
     let mut old_enabled = initial.enabled;
-    let mut retired = vec![];
     let mut saved_ledger = vec![];
     println!(
         "{}",
@@ -288,52 +270,47 @@ fn serve(store: Store, net: network::Network) -> Result<()> {
                 old_scope = config.network_scope.clone();
                 old_enabled = config.enabled;
             }
-            let ids: HashSet<_> = config
-                .peers
-                .iter()
-                .filter(|p| p.pending_until.is_none_or(|t| t > wire::now()))
-                .map(|p| p.id())
-                .collect();
-            let removed: Vec<_> = workers
-                .keys()
-                .filter(|id| !ids.contains(*id))
-                .cloned()
-                .collect();
-            for id in removed {
-                if let Some((flag, handles, _)) = workers.remove(&id) {
-                    flag.store(true, Ordering::Relaxed);
-                    retired.extend(handles);
-                    ledger.stop_responding(Some(id.clone()), wire::now());
-                    live.lock().unwrap().online.remove(&id);
-                }
-            }
+            let mut desired = HashMap::new();
             for p in &config.peers {
-                if !ids.contains(&p.id()) {
-                    continue;
+                let id = p.id();
+                if p.pending_until.is_none() && !p.sources.is_empty() {
+                    desired.insert((id.clone(), WorkerKind::Microphone), p);
                 }
-                if !workers.contains_key(&p.id()) {
-                    let flag = Arc::new(AtomicBool::new(false));
-                    let h = peer::spawn(
-                        p.clone(),
-                        net.clone(),
-                        store.clone(),
-                        live.clone(),
-                        tx.clone(),
-                        flag.clone(),
-                    );
-                    workers.insert(p.id(), (flag, vec![h], vec![]));
+                desired.insert((id, WorkerKind::State), p);
+            }
+            workers.retain(|key, (stop, handle)| {
+                if !desired.contains_key(key)
+                    && !stop.swap(true, Ordering::Relaxed)
+                    && key.1 == WorkerKind::State
+                {
+                    ledger.stop_responding(Some(key.0.clone()), wire::now());
+                    live.lock().unwrap().online.remove(&key.0);
                 }
-                let (flag, handles, shared) = workers.get_mut(&p.id()).unwrap();
-                if p.pending_until.is_none() && !p.sources.is_empty() && shared.is_empty() {
-                    handles.push(peer::spawn_microphone(
-                        p.clone(),
-                        net.clone(),
-                        store.clone(),
-                        live.clone(),
-                        flag.clone(),
-                    ));
-                    *shared = p.sources.clone();
-                }
+                // A stopping listener keeps its slot until it has closed its sessions.
+                !handle.is_finished()
+            });
+            for ((id, kind), p) in desired {
+                workers.entry((id, kind)).or_insert_with(|| {
+                    let stop = Arc::new(AtomicBool::new(false));
+                    let handle = match kind {
+                        WorkerKind::State => peer::spawn(
+                            p.clone(),
+                            net.clone(),
+                            store.clone(),
+                            live.clone(),
+                            tx.clone(),
+                            stop.clone(),
+                        ),
+                        WorkerKind::Microphone => peer::spawn_microphone(
+                            p.clone(),
+                            net.clone(),
+                            store.clone(),
+                            live.clone(),
+                            stop.clone(),
+                        ),
+                    };
+                    (stop, handle)
+                });
             }
             let observation = audio::recording_pids();
             let known = observation.is_ok();
@@ -342,27 +319,14 @@ fn serve(store: Store, net: network::Network) -> Result<()> {
                 let mut l = live.lock().unwrap();
                 l.known = known;
                 l.quiet = config.enabled && !pids.is_empty();
-                ensure!(l.revision < reserved, "序号预留已用尽，请重启服务");
             }
             let mut replies = vec![];
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    Event::Verified(id, yes) => {
-                        let mut l = live.lock().unwrap();
-                        if yes {
-                            l.online.insert(id);
-                        } else {
-                            l.online.remove(&id);
-                        }
-                    }
-                    Event::Update(p, u, wifi, reply) => {
-                        if accepts_update(&config, &p, wifi) {
-                            ledger.accept(u, p.id(), p.remote_role().into(), p.key, wire::now());
-                            replies.push(reply);
-                        } else {
-                            let _ = reply.send("paused".into());
-                        }
-                    }
+            while let Ok((p, u, wifi, reply)) = rx.try_recv() {
+                if accepts_update(&config, &p, wifi) {
+                    ledger.accept(u, p.id(), p.remote_role().into(), p.key, wire::now());
+                    replies.push(reply);
+                } else {
+                    let _ = reply.send("paused".into());
                 }
             }
             ledger.expire(wire::now());
@@ -381,7 +345,6 @@ fn serve(store: Store, net: network::Network) -> Result<()> {
                 atomic(&ledger_path, &snapshot)?;
                 saved_ledger = snapshot;
             }
-            retired.retain(|h| !h.is_finished());
             if last_status.elapsed() >= Duration::from_secs(1) {
                 ensure!(
                     network::networks()?
@@ -403,16 +366,11 @@ fn serve(store: Store, net: network::Network) -> Result<()> {
         Ok(())
     })();
     let restored = volume.apply(false, true, &HashSet::new(), 1.0);
-    for (_, (flag, _, _)) in &workers {
+    for (flag, _) in workers.values() {
         flag.store(true, Ordering::Relaxed);
     }
-    for (_, (_, handles, _)) in workers {
-        for h in handles {
-            let _ = h.join();
-        }
-    }
-    for h in retired {
-        let _ = h.join();
+    for (_, handle) in workers.into_values() {
+        let _ = handle.join();
     }
     restored?;
     result

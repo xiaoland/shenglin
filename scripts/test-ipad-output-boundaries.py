@@ -43,6 +43,8 @@ source = r'''import Foundation
  var peerLedger = PeerDemandLedger()
  var outputDemandActive = false
  var outputPausedForInput = false
+ struct Microphone { var capturing = false }
+ var microphone = Microphone()
  var recording: Bool? = false
  var lastAction = ""
  let key = Data(repeating: 7, count: 32)
@@ -101,6 +103,12 @@ source = r'''import Foundation
    vd.readFails = true; assert(d.end(at: 103) == "readFailed" && vd.hasSnapshot)
    vd.readFails = false; assert(d.tick(104) == "restoring")
    vd.finishRamp(); assert(abs(vd.value - 0.6) < 0.001 && !vd.hasSnapshot)
+
+   let e = Receiver(), ve = e.volume!
+   e.request(revision: 1, at: 100); _ = e.tick(100)
+   assert(e.end(at: 101) == "restoring" && ve.isRestoring)
+   assert(ve.apply(quiet: false, target: 0).0 == "restored")
+   assert(!ve.isRestoring && !ve.hasSnapshot && ve.value == 0.6)
    print("通过：iPad 暂停恢复失败重试、暂停期间手调、恢复中手调、新请求、低于目标基线、未知状态及到期恢复。")
  }
 }

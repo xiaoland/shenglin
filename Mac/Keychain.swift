@@ -13,7 +13,7 @@ enum MacCredentials {
     private static let peersAccount = "pairedPeersV3"
     private static let pendingAccount = "pendingPeerV3"
     private static let pendingMacAccount = "pendingMacPeersV3"
-    private struct Pending: Codable {
+    struct Pending: Codable {
         let key: Data
         let expiresAt: Date
         let name: String?
@@ -33,49 +33,57 @@ enum MacCredentials {
         return peers
     }
 
-    static func addPeer(key: Data, name: String, platform: PeerPlatform, localRole: PeerRole,
+    private static func addPeer(key: Data, name: String, platform: PeerPlatform, localRole: PeerRole,
                         peripheralID: UUID? = nil, transport: PeerTransport? = nil) throws {
         let peer = try PairedPeer(key: key, name: name, platform: platform,
                                   localRole: localRole, peripheralID: peripheralID, transport: transport)
         var records = try peers()
-        if let index = records.firstIndex(where: { $0.key == key }) { records[index] = peer }
-        else { records.append(peer) }
+        guard !records.contains(where: { $0.key == key }) else { return }
+        records.append(peer)
         try save(JSONEncoder().encode(records), account: peersAccount)
     }
 
-    static func pendingMacPeers() throws -> [PairedPeer] {
+    private static func storedPendingMacPeers() throws -> [PendingMac] {
         guard let data = try read(pendingMacAccount) else { return [] }
-        let records = try JSONDecoder().decode([PendingMac].self, from: data)
+        return try JSONDecoder().decode([PendingMac].self, from: data)
+    }
+
+    static func pendingMacPeers() throws -> [PairedPeer] {
+        let records = try storedPendingMacPeers()
+        guard !records.isEmpty else { return [] }
         let savedKeys = Set(try peers().map(\.key))
         let active = records.filter { $0.expiresAt > Date() && !savedKeys.contains($0.peer.key) }
         guard active.allSatisfy({ $0.peer.key.count == 32 }) else {
             throw PairingError.invalidMessage
         }
-        if active.count != records.count { try save(JSONEncoder().encode(active), account: pendingMacAccount) }
+        if active.count != records.count { try? save(JSONEncoder().encode(active), account: pendingMacAccount) }
         return active.map(\.peer)
     }
 
     static func stageMacPeer(_ peer: PairedPeer) throws {
         let key = peer.key
-        let data = try read(pendingMacAccount)
-        var records = try data.map { try JSONDecoder().decode([PendingMac].self, from: $0) } ?? []
+        var records = try storedPendingMacPeers()
         records.removeAll { $0.peer.key == key || $0.expiresAt <= Date() }
         records.append(PendingMac(peer: peer, expiresAt: Date().addingTimeInterval(300)))
         try save(JSONEncoder().encode(records), account: pendingMacAccount)
     }
 
     static func promoteMacPeer(_ key: Data) throws {
-        guard let data = try read(pendingMacAccount) else { throw PairingError.expired }
-        var records = try JSONDecoder().decode([PendingMac].self, from: data)
+        var records = try storedPendingMacPeers()
         guard let record = records.first(where: { $0.peer.key == key && $0.expiresAt > Date() })
         else { throw PairingError.expired }
         try addPeer(key: key, name: record.peer.name, platform: record.peer.platform,
-                    localRole: record.peer.localRole, transport: record.peer.transport)
+                    localRole: record.peer.localRole, peripheralID: record.peer.peripheralID, transport: record.peer.transport)
         records.removeAll { $0.peer.key == key }
-        try save(JSONEncoder().encode(records), account: pendingMacAccount)
+        try? save(JSONEncoder().encode(records), account: pendingMacAccount)
     }
 
     static func removePeer(_ key: Data) throws {
+        // Erase this key’s staged copies before the saved record stops masking them.
+        if try storedPendingPairing()?.key == key { try delete(pendingAccount) }
+        let staged = try storedPendingMacPeers()
+        let others = staged.filter { $0.peer.key != key }
+        if others.count != staged.count { try save(JSONEncoder().encode(others), account: pendingMacAccount) }
         let remaining = try peers().filter { $0.key != key }
         try save(JSONEncoder().encode(remaining), account: peersAccount)
     }
@@ -85,10 +93,6 @@ enum MacCredentials {
         guard let index = peers.firstIndex(where: { $0.key == key }) else { return }
         peers[index].peripheralID = peripheralID
         try save(JSONEncoder().encode(peers), account: peersAccount)
-    }
-
-    static func updatePadName(_ key: Data, name: String) throws {
-        try updatePeerName(key, name: name)
     }
 
     static func updatePeerName(_ key: Data, name: String) throws {
@@ -144,15 +148,17 @@ enum MacCredentials {
         }
     }
 
-    static func pendingPairing() throws -> (key: Data, expiresAt: Date, name: String?, peripheralID: UUID?)? {
+    private static func storedPendingPairing() throws -> Pending? {
         guard let data = try read(pendingAccount) else { return nil }
         let pending = try JSONDecoder().decode(Pending.self, from: data)
         guard pending.key.count == 32 else { throw PairingError.invalidMessage }
-        if pending.expiresAt <= Date() {
-            try delete(pendingAccount)
-            return nil
-        }
-        return (pending.key, pending.expiresAt, pending.name, pending.peripheralID)
+        return pending
+    }
+
+    static func pendingPairing(excluding saved: [PairedPeer]) throws -> Pending? {
+        guard let pending = try storedPendingPairing(), pending.expiresAt > Date(),
+              !saved.contains(where: { $0.key == pending.key }) else { return nil }
+        return pending
     }
 
     static func stagePairing(_ key: Data, name: String, peripheralID: UUID) throws -> Date {
@@ -165,7 +171,8 @@ enum MacCredentials {
     }
 
     static func promotePairing(_ key: Data, name: String, peripheralID: UUID?) throws {
-        guard let pending = try pendingPairing(), pending.key == key else { throw PairingError.expired }
+        guard let pending = try storedPendingPairing(), pending.key == key, pending.expiresAt > Date()
+        else { throw PairingError.expired }
         try addPeer(key: key, name: name, platform: .ipad, localRole: .initiator,
                     peripheralID: peripheralID)
         try? delete(pendingAccount)

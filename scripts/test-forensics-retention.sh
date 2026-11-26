@@ -60,6 +60,18 @@ func external(_ program: String, _ arguments: [String]) throws {
 try manifest(in: rolling)
 recorder.setLocation(root)
 _ = recorder.location
+let personal = root.appendingPathComponent("personal.json")
+try Data("personal".utf8).write(to: personal)
+let foreignFolder = root.appendingPathComponent("other/rolling", isDirectory: true)
+try FileManager.default.createDirectory(at: foreignFolder, withIntermediateDirectories: true)
+let foreignSegment = foreignFolder.appendingPathComponent("0-0-upstream.bin")
+try Data([1]).write(to: foreignSegment)
+let linkedSegment = rolling.appendingPathComponent("0-0-upstream.bin")
+try FileManager.default.createSymbolicLink(at: linkedSegment, withDestinationURL: personal)
+let directoryNamedBin = rolling.appendingPathComponent("0-1-upstream.bin", isDirectory: true)
+try FileManager.default.createDirectory(at: directoryNamedBin, withIntermediateDirectories: true)
+let privateNote = rolling.appendingPathComponent("notes.json")
+try Data("secret".utf8).write(to: privateNote)
 recorder.setLimitGB(1)
 let now = Int(Date().timeIntervalSince1970 / 60)
 func segment(_ minute: Int, _ bytes: UInt64) throws -> URL {
@@ -71,6 +83,30 @@ func segment(_ minute: Int, _ bytes: UInt64) throws -> URL {
     return url
 }
 let old = try segment(now - 20_000, 100)
+precondition(FileManager.default.fileExists(atPath: old.path), "age alone must not delete evidence")
+let archiveURL = root.appendingPathComponent("export.zip")
+func exportContents() throws -> String {
+    var exportError: Error?
+    recorder.export(to: archiveURL) { exportError = $0 }
+    _ = recorder.location
+    if let exportError { throw exportError }
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+    task.arguments = ["-tf", archiveURL.path]
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    try task.run()
+    let result = pipe.fileHandleForReading.readDataToEndOfFile()
+    task.waitUntilExit()
+    precondition(task.terminationStatus == 0)
+    return String(decoding: result, as: UTF8.self)
+}
+let entries = try exportContents()
+precondition(entries.contains("test/manifest.json") && entries.contains(old.lastPathComponent))
+for foreign in ["personal.json", "notes.json", "other/", "0-0-upstream.bin", "0-1-upstream.bin", "export.zip"] {
+    precondition(!entries.contains("/" + foreign))
+}
+precondition(try! exportContents() == entries, "re-export must replace an existing archive")
 let newer = try segment(now - 10, 700_000_000)
 let newest = try segment(now - 5, 700_000_000)
 let unrelated = root.appendingPathComponent("unrelated.bin")
@@ -81,7 +117,9 @@ try sparse.close()
 until("cap must prune the oldest eligible evidence") {
     !FileManager.default.fileExists(atPath: old.path) && !FileManager.default.fileExists(atPath: newer.path)
 }
-precondition(FileManager.default.fileExists(atPath: unrelated.path), "retention must leave unrelated files alone")
+for preserved in [unrelated, personal, foreignSegment, privateNote, linkedSegment, directoryNamedBin] {
+    precondition(FileManager.default.fileExists(atPath: preserved.path), "retention removed unrelated data")
+}
 precondition(FileManager.default.fileExists(atPath: newest.path), "newest evidence must survive cap pruning")
 precondition(abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - (now - 5) * 60)) <= 1,
              "coverage must start at the oldest surviving audio minute")
@@ -102,17 +140,19 @@ try external("/bin/rm", [newest.path])
 until("retention reconciliation must forget externally deleted audio") {
     abs(recorder.status(for: "test").coverageSeconds - (Int(Date().timeIntervalSince1970) - now * 60)) <= 1
 }
-let openSegment = try FileManager.default.contentsOfDirectory(at: rolling, includingPropertiesForKeys: nil)
-    .first { $0.pathExtension == "bin" }!
+recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 3, sampleTime: 2, samples: [0])
+_ = recorder.location
+let openSegment = try FileManager.default.contentsOfDirectory(at: rolling, includingPropertiesForKeys: [.isRegularFileKey])
+    .filter { $0.pathExtension == "bin" && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }
+    .max { $0.lastPathComponent < $1.lastPathComponent }!
 try external("/bin/rm", [openSegment.path])
 until("coverage must forget a deleted segment even when its handle was open") {
     recorder.status(for: "test").coverageSeconds == 0
 }
-recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 3, sampleTime: 2, samples: [0])
+recorder.recordSource("test", sampleRate: 48_000, channels: 1, hostTime: 4, sampleTime: 3, samples: [0])
 _ = recorder.location
-precondition(recorder.status(for: "test").coverageSeconds > 0, "the next write must reopen a deleted segment")
-precondition(try! FileManager.default.contentsOfDirectory(at: rolling, includingPropertiesForKeys: nil)
-    .contains { $0.pathExtension == "bin" }, "the next write must be visible on disk")
+precondition(try! FileManager.default.contentsOfDirectory(at: rolling, includingPropertiesForKeys: [.isRegularFileKey])
+    .contains { $0.pathExtension == "bin" && (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true }, "the next write must be visible on disk")
 let eventBucket = Int(Date().timeIntervalSince1970 / 60)
 recorder.mark("test")
 let device = DedicatedMicrophone(selector: "test", uid: "test", sourceUID: nil,

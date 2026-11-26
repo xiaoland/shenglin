@@ -51,7 +51,6 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     @Published private(set) var enabled = UserDefaults.standard.object(forKey: "listeningEnabled") as? Bool ?? true
     @Published private(set) var networkScope = NetworkScope(rawValue: UserDefaults.standard.string(forKey: "networkScope") ?? "") ?? .wifi
     @Published private(set) var spaceMode = SpaceMode(rawValue: UserDefaults.standard.string(forKey: "spaceMode") ?? "") ?? .nearbyOrWiFi
-    @Published private(set) var bleAuthenticated = false
     private struct BLEProof { let key: Data; let evidence: PeerLinkProof }
     private var bleProofs = [UUID: BLEProof]()
     @Published private(set) var wifiVerified = false
@@ -72,15 +71,17 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     private var peerStateCharacteristic: CBMutableCharacteristic?
     private var pairResponseCharacteristic: CBMutableCharacteristic?
     private var pairResponseData: Data?
-    private var controlRegistered = false
-    private var pairRegistered = false
+    private enum ServiceRegistration { case absent, adding, ready }
+    private var controlRegistration = ServiceRegistration.absent
+    private var pairRegistration = ServiceRegistration.absent
+    private var advertisingPending = false
     private var subscribed = Set<UUID>()
     private var pairedKeys = [Data]()
     private var pairedPeers = [PairedPeer]()
     private var lastAckByCentral = [UUID: Data]()
     private var readSnapshots = [UUID: [CBUUID: Data]]()
-    private var pendingKey: Data?
-    var pairingPendingActivation: Bool { pendingKey != nil || !pendingWiFiPeers.isEmpty }
+    private var pendingBLE: PairingStore.Pending?
+    var pairingPendingActivation: Bool { pendingBLE != nil || !pendingWiFiPeers.isEmpty }
     @Published private(set) var nearbyPairingPeers = [NearbyPairingPeer]()
     @Published private(set) var awaitingWiFiCode = false
     private var pendingWiFiPeers = [PairedPeer]()
@@ -104,8 +105,11 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     }
 
     private func advertise() {
-        manager?.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceID],
-                                   CBAdvertisementDataLocalNameKey: "声邻 · \(deviceName)"])
+        guard enabled, let manager, manager.state == .poweredOn,
+              controlRegistration == .ready, pairRegistration == .ready, !advertisingPending else { return }
+        advertisingPending = true
+        manager.startAdvertising([CBAdvertisementDataServiceUUIDsKey: [Self.serviceID],
+                                  CBAdvertisementDataLocalNameKey: "声邻 · \(deviceName)"])
     }
 
     override init() {
@@ -131,7 +135,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             microphone.update(peers: peers)
             pairedKeys = peers.map(\.key)
             pairedCount = pairedKeys.count
-            do { pendingKey = try PairingStore.pending() }
+            do { pendingBLE = try PairingStore.pending() }
             catch { pairingStatus = "待激活配对不可用：\(error.localizedDescription)" }
             isPaired = !pairedKeys.isEmpty
             volume = VolumeCoordinator()
@@ -148,7 +152,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                 Task { @MainActor [weak self] in
                     self?.refreshSpace()
                     self?.expirePeerRequests()
-                    self?.expirePendingWiFi()
+                    self?.expirePendingPairs()
                 }
             }
         } catch {
@@ -198,8 +202,9 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             stateAckCharacteristic = nil
             peerStateCharacteristic = nil
             pairResponseCharacteristic = nil
-            controlRegistered = false
-            pairRegistered = false
+            controlRegistration = .absent
+            pairRegistration = .absent
+            advertisingPending = false
             subscribed.removeAll()
             bleProofs.removeAll()
             readSnapshots.removeAll()
@@ -235,7 +240,6 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         for central in Array(bleProofs.keys) where bleProofs[central]?.evidence.verified != true {
             bleProofs.removeValue(forKey: central)
         }
-        bleAuthenticated = !bleProofs.isEmpty
         var next = Set<String>()
         for peerKey in pairedKeys where enabled {
             let source = sourceID(for: peerKey)
@@ -368,7 +372,11 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         startWiFi()
     }
 
-    private func expirePendingWiFi() {
+    private func expirePendingPairs() {
+        if let pendingBLE, pendingBLE.expiresAt <= Date() {
+            self.pendingBLE = nil
+            pairingStatus = "待验证配对已超时，请重新添加设备"
+        }
         guard !pendingWiFiPeers.isEmpty else { return }
         do {
             let active = try PairingStore.pendingWiFi()
@@ -399,7 +407,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         }
         do {
             try PairingStore.clearPending()
-            pendingKey = nil
+            pendingBLE = nil
             pairing = nil
             pairingCentral = nil
             pairResponseData = nil
@@ -445,8 +453,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     private func finishPairing(_ frame: PairingFrame) {
         guard let key = pairing?.confirmedKey, let central = pairingCentral else { return }
         do {
-            try PairingStore.stage(key, name: peerName)
-            pendingKey = key
+            pendingBLE = try PairingStore.stage(key, name: peerName)
             pairingStatus = "验证码已通过，等待新设备连接"
             pairingMode = false
             pairingDeadline = nil
@@ -471,12 +478,11 @@ struct PairedPeerDisplay: Identifiable, Equatable {
 
     private func publishService() {
         guard enabled, let manager, manager.state == .poweredOn else { return }
-        if controlRegistered && pairRegistered {
+        if controlRegistration == .ready && pairRegistration == .ready {
             if !manager.isAdvertising { advertise() }
-            status = "蓝牙已就绪"
             return
         }
-        if !controlRegistered {
+        if controlRegistration == .absent {
             let command = CBMutableCharacteristic(type: Self.stateWriteID, properties: [.write], value: nil, permissions: [.writeable])
             let ack = CBMutableCharacteristic(type: Self.stateAckID, properties: [.read, .notify], value: nil, permissions: [.readable])
             let peerState = CBMutableCharacteristic(type: Self.peerStateID, properties: [.read, .notify], value: nil, permissions: [.readable])
@@ -485,17 +491,17 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             service.characteristics = [command, ack, peerState, peerAckWrite]
             stateAckCharacteristic = ack
             peerStateCharacteristic = peerState
-            controlRegistered = true
+            controlRegistration = .adding
             manager.add(service)
         }
-        if !pairRegistered {
+        if pairRegistration == .absent {
             let pairWrite = CBMutableCharacteristic(type: Self.pairWriteID, properties: [.write], value: nil, permissions: [.writeable])
             let pairResponse = CBMutableCharacteristic(type: Self.pairResponseID, properties: [.read, .notify], value: nil, permissions: [.readable])
             let pairInfo = CBMutableCharacteristic(type: Self.pairInfoID, properties: [.read], value: nil, permissions: [.readable])
             let service = CBMutableService(type: Self.pairServiceID, primary: true)
             service.characteristics = [pairWrite, pairResponse, pairInfo]
             pairResponseCharacteristic = pairResponse
-            pairRegistered = true
+            pairRegistration = .adding
             manager.add(service)
         }
     }
@@ -512,6 +518,12 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         note("BLUETOOTH_STATE \(peripheral.state.rawValue)")
         if peripheral.state == .poweredOn { publishService() }
         else {
+            advertisingPending = false
+            // Core Bluetooth retains the service database while powered off.
+            if peripheral.state.rawValue < CBManagerState.poweredOff.rawValue {
+                controlRegistration = .absent
+                pairRegistration = .absent
+            }
             bleProofs.removeAll()
             readSnapshots.removeAll()
             refreshSpace()
@@ -527,14 +539,14 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                let peerState = characteristics.first(where: { $0.uuid == Self.peerStateID }) as? CBMutableCharacteristic,
                characteristics.contains(where: { $0.uuid == Self.stateWriteID }),
                characteristics.contains(where: { $0.uuid == Self.peerAckWriteID }) {
-                controlRegistered = true
+                controlRegistration = .ready
                 stateAckCharacteristic = ack
                 peerStateCharacteristic = peerState
             } else if service.uuid == Self.pairServiceID,
                       let response = characteristics.first(where: { $0.uuid == Self.pairResponseID }) as? CBMutableCharacteristic,
                       characteristics.contains(where: { $0.uuid == Self.pairWriteID }),
                       characteristics.contains(where: { $0.uuid == Self.pairInfoID }) {
-                pairRegistered = true
+                pairRegistration = .ready
                 pairResponseCharacteristic = response
             } else {
                 peripheral.remove(service)
@@ -544,18 +556,24 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
+        guard enabled else { return }
+        if service.uuid == Self.serviceID, controlRegistration == .adding {
+            controlRegistration = error == nil ? .ready : .absent
+        } else if service.uuid == Self.pairServiceID, pairRegistration == .adding {
+            pairRegistration = error == nil ? .ready : .absent
+        } else { return }
         note("SERVICE \(error.map(String.init(describing:)) ?? "ready")")
         if let error {
-            if service.uuid == Self.serviceID { controlRegistered = false }
-            if service.uuid == Self.pairServiceID { pairRegistered = false }
             status = "发布服务失败：\(error.localizedDescription)"
             bluetoothIssue = status
             return
         }
-        if controlRegistered && pairRegistered && !peripheral.isAdvertising { advertise() }
+        if !peripheral.isAdvertising { advertise() }
     }
 
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+        guard enabled, advertisingPending else { return }
+        advertisingPending = false
         note("ADVERTISING \(error.map(String.init(describing:)) ?? "ready")")
         status = error.map { "蓝牙广播失败：\($0.localizedDescription)" } ?? "蓝牙已就绪"
         bluetoothIssue = error.map { "蓝牙广播失败：\($0.localizedDescription)" }
@@ -695,11 +713,10 @@ struct PairedPeerDisplay: Identifiable, Equatable {
         guard enabled else { peripheral.respond(to: request, withResult: .unlikelyError); return }
         let now = Int64(Date().timeIntervalSince1970)
         let authenticatedKey: Data
-        if let pendingKey, update.valid(key: pendingKey, expectedOrigin: PeerRole.initiator.rawValue, now: now) {
+        if let pendingKey = pendingBLE?.key, update.valid(key: pendingKey, expectedOrigin: PeerRole.initiator.rawValue, now: now) {
             do {
-                _ = try PairingStore.promotePending()
-                self.pendingKey = nil
-                pairedPeers = try PairingStore.all()
+                pairedPeers = try PairingStore.promotePending()
+                pendingBLE = nil
                 pairedKeys = pairedPeers.map(\.key)
                 pairedCount = pairedKeys.count
                 startWiFi()
@@ -807,9 +824,8 @@ struct PairedPeerDisplay: Identifiable, Equatable {
                 if verified {
                     if self.pendingWiFiPeers.contains(where: { $0.key == peerKey }) {
                         do {
-                            try PairingStore.promoteWiFi(peerKey)
+                            self.pairedPeers = try PairingStore.promoteWiFi(peerKey)
                             self.pendingWiFiPeers.removeAll { $0.key == peerKey }
-                            self.pairedPeers = try PairingStore.all()
                             self.pairedKeys = self.pairedPeers.map(\.key)
                             self.pairedCount = self.pairedKeys.count
                             self.isPaired = !self.pairedKeys.isEmpty
@@ -927,7 +943,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didSubscribeTo characteristic: CBCharacteristic) {
         if characteristic.uuid == Self.stateAckID { subscribed.insert(central.identifier) }
         if characteristic.uuid == Self.peerStateID { publishLocalState() }
-        status = "设备已连接"
+        status = "蓝牙设备已连接"
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, central: CBCentral, didUnsubscribeFrom characteristic: CBCharacteristic) {
@@ -951,7 +967,7 @@ struct PairedPeerDisplay: Identifiable, Equatable {
             publishLocalState()
             publishWiFiState()
             expirePeerRequests()
-            status = "等待设备重连"
+            status = "等待蓝牙设备重连"
         }
     }
 }

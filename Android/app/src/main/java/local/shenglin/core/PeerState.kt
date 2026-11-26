@@ -63,6 +63,22 @@ object PeerState {
         fun takeOver(now: Long) = core.takeOver(now)
         fun expire(now: Long) = Change(core.expire(now))
         fun accept(update: Update, source: String, expectedOrigin: String, key: ByteArray, now: Long) = Change(core.accept(update.rust(), source, expectedOrigin, key, now))
+        fun acceptPersisted(update: Update, source: String, expectedOrigin: String, key: ByteArray, now: Long, persist: () -> Boolean): Change? {
+            val before = core.snapshot()
+            val change = accept(update, source, expectedOrigin, key, now)
+            if (core.snapshot() == before || persist()) return change
+            core.loadSnapshot(before)
+            return null
+        }
+
+        fun removePeer(source: String, now: Long, persist: () -> Boolean): Boolean {
+            val before = core.snapshot()
+            core.restore(before.copy(records = before.records - source), now)
+            if (persist()) return true
+            core.loadSnapshot(before)
+            return false
+        }
+
         fun stopResponding(now: Long) = Change(core.stopResponding(null, now))
         fun stopResponding(source: String, now: Long) = Change(core.stopResponding(source, now))
     }

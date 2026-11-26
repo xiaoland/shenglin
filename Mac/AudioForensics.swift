@@ -222,17 +222,41 @@ final class AudioForensics {
     func export(to destination: URL, completion: @escaping (Error?) -> Void) {
         queue.async {
             self.closeHandles()
-            do { try self.requireStorage() }
-            catch { completion(error); return }
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-            process.arguments = ["-c", "-k", "--keepParent", self.directory.path, destination.path]
+            let manager = FileManager.default
             do {
+                try self.requireStorage()
+                let files = try Self.scanInventory(in: self.directory).keys.sorted()
+                guard !files.isEmpty else {
+                    throw NSError(domain: "Shenglin", code: 7,
+                        userInfo: [NSLocalizedDescriptionKey: "当前取证目录没有可导出的声邻记录"])
+                }
+                let work = try manager.url(for: .itemReplacementDirectory, in: .userDomainMask,
+                    appropriateFor: destination, create: true)
+                defer { try? manager.removeItem(at: work) }
+                let archive = work.appendingPathComponent("evidence.zip")
+                let list = work.appendingPathComponent("files")
+                let parent = self.directory.deletingLastPathComponent()
+                let prefix = self.directory.path == "/" ? "./" : "./\(self.directory.lastPathComponent)/"
+                var names = Data()
+                for relativePath in files {
+                    names.append(contentsOf: (prefix + relativePath).utf8)
+                    names.append(0)
+                }
+                try names.write(to: list)
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
+                process.currentDirectoryURL = parent
+                process.arguments = ["--format", "zip", "-cf", archive.path, "--no-recursion", "--null", "-T", list.path]
                 try process.run()
                 process.waitUntilExit()
-                if process.terminationStatus != 0 {
+                guard process.terminationStatus == 0 else {
                     throw NSError(domain: "Shenglin", code: Int(process.terminationStatus),
                         userInfo: [NSLocalizedDescriptionKey: "诊断压缩失败"])
+                }
+                if manager.fileExists(atPath: destination.path) {
+                    _ = try manager.replaceItemAt(destination, withItemAt: archive)
+                } else {
+                    try manager.moveItem(at: archive, to: destination)
                 }
                 completion(nil)
             } catch { completion(error) }

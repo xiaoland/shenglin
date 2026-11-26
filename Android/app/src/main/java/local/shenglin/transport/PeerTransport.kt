@@ -242,14 +242,14 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         if (spaceMode == next) return@runMain
         spaceMode = next
         requireBoth = next == "nearbyAndWiFi"
-        recomputeSpacePolicy()
+        refreshSpaceAfterProofChange()
     }
 
     fun setNetworkScope(value: String) = runMain {
         val next = if (value == "lan") "lan" else "wifi"
         if (networkScope == next) return@runMain
         networkScope = next
-        recomputeSpacePolicy()
+        refreshSpaceAfterProofChange()
     }
 
     fun setDeviceName(value: String) = runMain {
@@ -317,8 +317,6 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         return checkNotNull(pairCode)
     }
 
-    fun pairingActive(): Boolean = pairServer != null && pairCode != null && SystemClock.elapsedRealtime() < pairDeadline
-
     fun pairingSnapshot(): PairingSnapshot {
         val state = pairingStatus
         val deadline = pairDeadline
@@ -381,8 +379,13 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         postStatus(message)
     }
 
-    fun forget(id: String) = runMain {
-        val record = peers.remove(id)
+    fun forget(id: String) {
+        check(Looper.myLooper() == Looper.getMainLooper())
+        val record = peers.remove(id) ?: return
+        if (!ledger.removePeer(id, nowSeconds(), ::persist)) {
+            peers[id] = record
+            error("无法保存配对记录，请重试取消配对")
+        }
         val link = links.remove(id)
         link?.stop()
         verifiedLan.remove(id); verifiedWifi.remove(id); verifiedBle.remove(id); spaceGates.remove(id)
@@ -391,11 +394,8 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         if (TransportLifecycle.clearPairingSnapshotOnForget(pairingStatus, pairingPeerId, id, activePairing)) {
             pairingStatus = "idle"; pairingPeerId = null
         }
-        if (record != null) {
-            ledger.stopResponding(id, nowSeconds())
-            persist(); syncBlePeers(); publishPeers(); recomputeDemand()
-            postStatus("已取消与“${record.name}”的配对")
-        }
+        syncBlePeers(); publishPeers(); recomputeDemand()
+        postStatus("已取消与“${record.name}”的配对")
     }
 
     fun peers(): List<Peer> {
@@ -586,8 +586,6 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         links.values.filter { it.verified }.forEach(StateLink::sendCurrentState)
         blePeers.publish(); publishPeers(); recomputeDemand()
     }
-
-    private fun recomputeSpacePolicy() = refreshSpaceAfterProofChange()
 
     private fun medium(capabilities: NetworkCapabilities?): String? = when {
         capabilities == null -> null
@@ -846,7 +844,7 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     }
 
     private fun startLink(peer: PeerRecord) {
-        if (!started || lanNetwork == null || lanAddress == null || links.containsKey(peer.id)) return
+        if (!started || lanNetwork == null || lanAddress == null || peers[peer.id] !== peer || links.containsKey(peer.id)) return
         StateLink(peer).also { links[peer.id] = it; it.start() }
     }
 
@@ -884,10 +882,9 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     }
 
     private fun removeLink(link: StateLink) {
-        if (links[link.peer.id] === link) links.remove(link.peer.id)
+        if (!links.remove(link.peer.id, link)) return
         verifiedLan.remove(link.peer.id); verifiedWifi.remove(link.peer.id)
         blePeers.publish(); publishPeers(); recomputeDemand()
-        if (link.peer.pending) retryPending(link.peer)
         if (started) main.postDelayed({ startLink(link.peer) }, 2000)
     }
 
@@ -912,22 +909,23 @@ class PeerTransport(context: Context, private val listener: Listener, private va
         val now = nowSeconds()
         val allowed = spaceEvidence(peer.id)
         val accepted = if (allowed) update else PeerState.Update.signed(update.origin, update.revision, false, true, update.validUntil, null, peer.key)
-        val change = ledger.accept(accepted, peer.id, remoteRole(peer.localRole), peer.key, now)
+        val change = ledger.acceptPersisted(accepted, peer.id, remoteRole(peer.localRole), peer.key, now, ::persist)
         val reason = when {
+            change == null -> "storageFailed"
             !allowed -> "outsideSpace"
             !change.accepted -> "ledgerRejected"
             !update.known -> "remoteStateUnknown"
             else -> "accepted"
         }
         lastInboundUpdate[peer.id] = InboundUpdate(
-            path, update.revision, update.known, update.quiet, change.accepted, allowed, reason,
+            path, update.revision, update.known, update.quiet, change?.accepted == true, allowed, reason,
             System.currentTimeMillis(), SystemClock.elapsedRealtime(),
         )
-        if (change.accepted) persist()
+        if (change == null) return PeerState.Ack.signed(peer.localRole, update.revision, update.quiet, reason, null, peer.key)
         var result = if (!allowed) "outsideSpace" else if (update.known) { if (update.quiet) "applied" else "restored" } else "unknown"
         val volumeResult = dispatchDemand(true)
         if (allowed && !volumeResult.isNullOrEmpty()) result = volumeResult
-        return PeerState.Ack.signed(localRole(peer.localRole), update.revision, update.quiet, result, null, peer.key)
+        return PeerState.Ack.signed(peer.localRole, update.revision, update.quiet, result, null, peer.key)
     }
 
     private fun spaceEvidence(peerId: String): Boolean {
@@ -1076,7 +1074,6 @@ class PeerTransport(context: Context, private val listener: Listener, private va
     private fun close(closeable: Closeable?) { try { closeable?.close() } catch (_: IOException) { } }
     private fun nowSeconds() = System.currentTimeMillis() / 1000L
     private fun remoteRole(role: String) = if (role == "initiator") "responder" else "initiator"
-    private fun localRole(role: String) = role
     private fun validPlatform(value: String) = value == "mac" || value == "ipad" || value == "android" || value == "windows"
 
     private fun cleanName(value: String?, fallback: String, maxBytes: Int): String {
@@ -1409,10 +1406,10 @@ class PeerTransport(context: Context, private val listener: Listener, private va
                     localOrigin, localRevision, enabled, localRecordingKnown, localRecording,
                     spaceEvidence(peer.id), paused || !enabled, nowSeconds(), peer.key,
                 )
+                check(persist()) { "无法保存状态版本" }
                 synchronized(pending) { pending.add(update.revision); if (pending.size > 8) pending.remove(pending.iterator().next()) }
                 send(current, expectedGeneration, "update", JSONObject().put("kind", "update").put("update", Wire.json(update)))
                 lastSentElapsed = SystemClock.elapsedRealtime()
-                persist()
             } catch (error: Exception) { logFailure("state-build", error); disconnect(current, expectedGeneration) }
         }
 

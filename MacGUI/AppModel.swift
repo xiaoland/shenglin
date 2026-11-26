@@ -311,9 +311,9 @@ struct PeerDisplay: Identifiable, Equatable {
         Task.detached { [weak self] in
             do {
                 let peers = try MacCredentials.peers()
-                var pending: (key: Data, expiresAt: Date, name: String?, peripheralID: UUID?)?
+                var pending: MacCredentials.Pending?
                 var pendingError: String?
-                do { pending = try MacCredentials.pendingPairing() }
+                do { pending = try MacCredentials.pendingPairing(excluding: peers) }
                 catch { pendingError = "无法读取待激活配对：\(error.localizedDescription)" }
                 await self?.loadedKeys(peers, pending: pending, errorMessage: pendingError, generation: generation)
             } catch {
@@ -323,7 +323,7 @@ struct PeerDisplay: Identifiable, Equatable {
     }
 
     private func loadedKeys(_ peers: [PairedPeer],
-                            pending: (key: Data, expiresAt: Date, name: String?, peripheralID: UUID?)?,
+                            pending: MacCredentials.Pending?,
                             errorMessage: String?, generation: Int) {
         guard generation == credentialLoadGeneration else { return }
         startMacPeers()
@@ -449,7 +449,7 @@ struct PeerDisplay: Identifiable, Equatable {
     private func updatePadName(_ session: PadPeerSession, name: String) {
         do {
             if pendingKey == session.key { pendingPadName = name }
-            else { try MacCredentials.updatePadName(session.key, name: name) }
+            else { try MacCredentials.updatePeerName(session.key, name: name) }
             session.name = name
             lastAction = "\(name) 设备名称已更新"
             refreshPadDisplays()
@@ -938,13 +938,12 @@ struct PeerDisplay: Identifiable, Equatable {
         catch { errorMessage = "无法读取麦克风静音设置：\(error.localizedDescription)" }
     }
 
-    var sharedShortcutStatus: String {
-        if !sharedShortcutEnabled { return "当前使用系统热键；同组合的前台应用内快捷键可能收不到按键。" }
+    var sharedShortcutStatus: String? {
         if microphoneShortcuts.isEmpty { return "共享模式已选定；录入快捷键后才开始监听。" }
         if sharedShortcutActive {
             return "共享模式运行中：macOS 会交付所有按键按下事件；声邻只处理已配置组合，不记录其他按键。"
         }
-        return "共享模式等待授权：请在系统设置 → 隐私与安全性 → 输入监控中允许声邻；此期间 声邻快捷键不可用。授权后点“重新检查授权”。"
+        return shortcutMessage.isEmpty ? "共享快捷键尚未启用，请重新检查授权。" : nil
     }
 
     func setSharedShortcutEnabled(_ value: Bool) {
@@ -1539,7 +1538,7 @@ struct PeerDisplay: Identifiable, Equatable {
                       loginEnabled: loginEnabled, pairingActive: pairingActive,
                       pairingStatus: pairingStatus, pairingAwaitingCode: pairingAwaitingCode,
                       pairingPadName: pairingPadName,
-                      pairingPendingActivation: pendingKey != nil,
+                      pairingPendingActivation: pairingPendingActivation,
                       nearbyPads: nearbyPads.map { .init(id: $0.id, name: $0.name) },
                       sources: sources.map { .init(selector: $0.selector, name: $0.name,
                                                    excluded: $0.isExcluded, muted: $0.isMuted,

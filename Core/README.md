@@ -1,6 +1,6 @@
 # 声邻共同核心
 
-`shenglin_core` 是三端协议和协同规则的唯一实现。Swift/Kotlin 通过 UniFFI 生成绑定调用它；网络、蓝牙回调、录音观察、实际音量操作和持久化仍由原生应用负责。核心不创建线程、计时器或网络连接，所有期限判断都使用调用方传入的时间。
+`shenglin_core` 实现各端共用的协议和协同规则。Windows 直接调用 Rust，Swift 和 Kotlin 通过 UniFFI 生成的绑定调用。各端原生应用负责网络、蓝牙回调、录音观察、音量操作和持久化。核心的期限判断使用调用方传入的时间。
 
 配对继续调用 `NativePAKE/NativePAKE.c` 和仓库锁定版本的 BoringSSL。角色标识、v3/v4 transcript、HMAC/HKDF、wire 字段及旧关系密钥保持兼容。`RustPairingInitiator`、`RustPairingResponder` 和 `DemandLedger` 的内部可变状态由互斥锁保护；单个 PAKE context 仍只消费一次。
 
@@ -16,6 +16,6 @@
 
 `android` 保留原应用的 arm64-v8a、armeabi-v7a、x86、x86_64 四种 ABI；`android-libs` 只重建这些原生库，适用于绑定接口不变的打包修正，不会重生成绑定或触及 Apple 产物。构建前需安装对应 Rust target：`aarch64-linux-android`、`armv7-linux-androideabi`、`i686-linux-android`、`x86_64-linux-android`。
 
-生成的 Swift 源码、头文件与 module map 位于 `local/rust-bindings/swift`，Kotlin 源码位于 `local/rust-bindings/kotlin`。原生库位于 `local/rust-target/<target>/release`。这些都是可重建产物，不提交到版本库。Android 默认使用 `/Volumes/WorkSSD/Android/sdk/ndk/30.0.14904198`，可用 `ANDROID_NDK_HOME` 指定其他已安装的 NDK。
+生成的 Swift 源码、头文件与 module map 位于 `local/rust-bindings/swift`，Kotlin 源码位于 `local/rust-bindings/kotlin`。原生库位于 `local/rust-target/<target>/release`。这些都是可重建产物，不提交到版本库。Android 默认使用 `ANDROID_HOME` 下的 `ndk/30.0.14904198`。未设置 `ANDROID_HOME` 时，SDK 目录默认为 `$HOME/Library/Android/sdk`。可用 `ANDROID_NDK_HOME` 指定其他已安装的 NDK。
 
 `tests/fixtures/legacy-vectors.json` 来自迁移前真实 Swift 实现。兼容测试覆盖其签名和 Unicode 名称、UInt64 高位、unknown/手动接管/租约恢复、配对双方成功与拒绝，以及链路 ACK 的重放和过期。三端安装、已有关系恢复和真实音量验收由仓库的集成流程完成，Rust 单测不能替代这些检查。

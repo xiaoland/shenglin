@@ -14,7 +14,6 @@
     <key>NSMicrophoneUsageDescription</key><string>将内置麦克风共享给你授权的已配对设备。</string>
     <key>NSBonjourServices</key><array><string>_shenglin._tcp</string><string>_shenglin-pair4._tcp</string><string>_shenglin-mic._tcp</string></array>
     <key>UIBackgroundModes</key><array><string>bluetooth-peripheral</string><string>audio</string></array>
-    <key>UIDeviceFamily</key><array><integer>2</integer></array>
     <key>UILaunchScreen</key><dict/>
     <key>UISupportedInterfaceOrientations</key><array>
         <string>UIInterfaceOrientationPortrait</string>

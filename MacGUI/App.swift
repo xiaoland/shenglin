@@ -379,14 +379,6 @@ private struct SettingsPanel: View {
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
-            Section("浏览器协同") {
-                Button("设置浏览器扩展…", action: model.installBrowserAdapter)
-                Text("每个网页分别调用扩展。通话页先选择“通话”，再开启 Voice；背景页选择“背景”。刷新后需要重新参与。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section("iPad 安装") {
-                Button("安装到 iPad…") { showingIPadInstaller = true }
-            }
             Section {
                 DisclosureGroup("已排除 \(model.sources.filter(\.isExcluded).count) 个应用") {
                     ForEach(model.sources) { source in
@@ -443,7 +435,9 @@ private struct SettingsPanel: View {
                     Toggle("让前台应用也响应同一快捷键", isOn: Binding(
                         get: { model.sharedShortcutEnabled }, set: model.setSharedShortcutEnabled))
                     if model.sharedShortcutEnabled {
-                        Text(model.sharedShortcutStatus).font(.caption).foregroundStyle(.secondary)
+                        if let status = model.sharedShortcutStatus {
+                            Text(status).font(.caption).foregroundStyle(.secondary)
+                        }
                         if !model.sharedShortcutActive && !model.microphoneShortcuts.isEmpty {
                             Button("重新检查授权") { model.retrySharedShortcutAuthorization() }
                         }
@@ -452,6 +446,14 @@ private struct SettingsPanel: View {
                         Text(model.shortcutMessage).font(.caption).foregroundStyle(.orange)
                     }
                 }
+            }
+            Section("浏览器协同") {
+                Button("设置浏览器扩展…", action: model.installBrowserAdapter)
+                Text("每个网页分别调用扩展。通话页先选择“通话”，再开启 Voice；背景页选择“背景”。刷新后需要重新参与。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section("iPad 安装") {
+                Button("安装到 iPad…") { showingIPadInstaller = true }
             }
             if !model.errorMessage.isEmpty {
                 Section {
@@ -580,7 +582,7 @@ private struct DiagnosticsPanel: View {
                         }
                     }
                     Text(model.forensicLocation).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                    Text("音频持续保存在本机，按容量上限淘汰；可能包含私人谈话，不会自动上传。")
+                    Text("音频保存在本机，达到容量上限时清理最早的记录。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 if !model.diagnosticMessage.isEmpty || !model.errorMessage.isEmpty {
@@ -594,6 +596,8 @@ private struct DiagnosticsPanel: View {
             Divider()
             HStack {
                 Button("导出诊断包…") { model.exportForensics() }
+                Text("诊断包可能包含私人谈话。分享前请确认内容。")
+                    .font(.caption).foregroundStyle(.secondary)
                 Spacer()
             }
             .padding(.horizontal, 20).padding(.vertical, 12)

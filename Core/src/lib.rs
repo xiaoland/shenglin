@@ -261,16 +261,12 @@ impl RustSpaceGate {
     }
     pub fn allows(&self, require_both: bool, ble: bool, network: bool, now: i64) -> bool {
         let mut last = self.last.lock().unwrap();
-        if if require_both {
-            ble && network
-        } else {
-            ble || network
-        } {
+        if space_predicate(require_both, ble, network) {
             *last = Some(now);
-            true
-        } else {
-            last.is_some_and(|v| now < v.saturating_add(20))
+        } else if !last.is_some_and(|at| now >= at && now.saturating_sub(at) < 20) {
+            *last = None;
         }
+        last.is_some()
     }
 }
 #[uniffi::export]

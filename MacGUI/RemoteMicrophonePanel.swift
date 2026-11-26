@@ -20,27 +20,32 @@ struct RemoteMicrophonePanel: View {
             }.disabled(loading)
             Button(loading ? "正在连接…" : "读取已授权麦克风", action: loadSources)
                 .disabled(loading || selected.isEmpty)
-            List(microphones) { microphone in
-                HStack {
-                    Text(microphone.name)
-                    Spacer()
-                    Button("挂载") {
-                        do {
-                            let device = try RemoteMicrophoneMount.add(peerID: selected, microphone: microphone)
-                            model.refreshSources()
-                            message = "已挂载“\(device.deviceName)”，请在录音应用中选择这个输入。"
-                        } catch { message = error.localizedDescription }
+            if !microphones.isEmpty {
+                List(microphones) { microphone in
+                    HStack {
+                        Text(microphone.name)
+                        Spacer()
+                        Button("挂载") {
+                            do {
+                                let device = try RemoteMicrophoneMount.add(peerID: selected, microphone: microphone)
+                                model.refreshSources()
+                                message = "已挂载“\(device.deviceName)”，请在录音应用中选择这个输入。"
+                            } catch { message = error.localizedDescription }
+                        }
                     }
-                }
-            }.frame(minHeight: 140)
+                }.frame(height: 140)
+            }
             if !message.isEmpty {
                 Text(message).font(.callout).foregroundStyle(.secondary).textSelection(.enabled)
             }
             HStack { Spacer(); Button("完成") { dismiss() }.keyboardShortcut(.defaultAction) }
         }
-        .padding(24).frame(width: 520, height: 390)
+        .padding(24).frame(width: 520)
         .task { do { peers = try MacCredentials.peers() } catch { message = error.localizedDescription } }
-        .onChange(of: selected) { _, _ in microphones = [] }
+        .onChange(of: selected) { _, _ in
+            microphones = []
+            message = ""
+        }
     }
     private func loadSources() {
         guard let peer = peers.first(where: { MicrophoneProtocol.peerID($0) == selected }) else { return }

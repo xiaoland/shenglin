@@ -174,6 +174,7 @@ impl Snapshot {
 struct Saved {
     values: HashMap<String, Snapshot>,
     manual: bool,
+    // Earlier service builds require this field when reading the recovery file.
     active: bool,
 }
 pub struct Volume {
@@ -303,12 +304,15 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "shenglin-volume-{}-{}",
             std::process::id(),
-            crate::wire::nonce().replace('/', "_")
+            u64::from_le_bytes(shenglin_core::random_bytes(8).unwrap().try_into().unwrap())
         ));
         std::fs::create_dir_all(&path).unwrap();
         let store = Store(path.clone());
         let mut volume = Volume::new(store.clone()).unwrap();
         volume.adjust("session", 1.0, 0.2, |_| Ok(())).unwrap();
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("volume.json")).unwrap()).unwrap();
+        assert_eq!(persisted["active"].as_bool(), Some(false));
         assert!(volume
             .adjust("session", 1.0, 0.1, |_| anyhow::bail!(
                 "injected system failure"

@@ -27,6 +27,17 @@ async function observer() {
   disabled.enabled = false; timers[0](); assert.equal(state.input, 'idle');
   disabled.enabled = true; disabled.readyState = muted.readyState = 'ended';
   timers[0](); assert.equal(state.input, 'idle');
+  window.postMessage({type: 'shenglin-input-state', input: 'other'});
+  assert.equal(state.input, 'idle');
+  // Stop and reauthorize while an earlier getUserMedia promise is still pending.
+  let resolveOld;
+  nextStream = new Promise(resolve => { resolveOld = resolve; });
+  const oldRequest = media.getUserMedia();
+  window.postMessage({type: 'shenglin-input-stop'});
+  for (const file of ['input-bridge.js', 'input-main.js']) vm.runInContext(fs.readFileSync(path.join(root, file), 'utf8'), context);
+  resolveOld({getAudioTracks: () => [{readyState: 'live', enabled: true, muted: false}]});
+  await oldRequest;
+  assert.equal(window.__shenglinInputState.input, 'unknown');
   window.postMessage({type: 'shenglin-input-stop'});
   assert.equal(media.getUserMedia, original);
 }
@@ -108,9 +119,16 @@ async function worker() {
   async function drain() { for (let i = 0; i < 40; i++) await Promise.resolve(); }
   assert.equal((await send({command: 'status', tabId: 7})).connection, 'connecting');
   assert.equal(frames.at(-1).pages.length, 0); // Cold popup probes the App without authorizing a page.
+  // Opening and closing unrelated tabs must leave the popup's initial handshake intact.
+  onUpdated(99, {status: 'loading'});
+  onRemoved(99);
+  await drain();
+  assert.equal(connections, 1);
+  assert.equal(frames.length, 1);
   onNativeMessage({ok: false, message: '请启动声邻 App'});
   const offline = await send({command: 'status', tabId: 7});
   assert.equal(offline.connection, 'unavailable');
+  assert.equal(connections, 1);
   assert.equal(offline.nativeError, '请启动声邻 App');
   assert.equal(offline.page, undefined);
   acknowledge();

@@ -60,7 +60,11 @@ elif name == 'ps':
     print('--microphone-agent' if os.environ.get('RUNNING') in ['agent', 'stuck'] else 'GUI')
 elif name == 'pgrep':
     sys.exit(1)
-elif name in ['lsregister', 'open', 'hdiutil', 'mv']:
+elif name == 'hdiutil':
+    if args[0] == 'create':
+        Path(args[-1]).write_bytes(b'new image')
+    sys.exit(1 if os.environ.get('DMG_FAIL') == args[0] else 0)
+elif name in ['lsregister', 'open']:
     with open(os.environ['COMMAND_LOG'], 'a') as log:
         log.write(name + ' ' + ' '.join(args) + '\\n')
 '''
@@ -118,8 +122,16 @@ elif name in ['lsregister', 'open', 'hdiutil', 'mv']:
     assert not list(applications.glob('.shenglin.*'))
     assert not (repo / 'dist/Shenglin.app').exists()
     assert not (repo / 'local/MacDerived.noindex/Build/Products/Release/声邻.app').exists()
+    image = repo / 'dist/Shenglin-macOS-arm64.dmg'
+    image.parent.mkdir(exist_ok=True)
+    image.write_bytes(b'old image')
+    for failure in ['create', 'verify']:
+        assert run('package-macos-dmg.sh', DMG_FAIL=failure).returncode != 0
+        assert image.read_bytes() == b'old image'
+        assert not list(image.parent.glob('.shenglin-dmg.*'))
     result = run('package-macos-dmg.sh')
     assert result.returncode == 0, result.stderr
+    assert image.read_bytes() == b'new image'
     result = run('run-mac-app.sh')
     assert result.returncode == 0, result.stderr
     assert f'open -g {installed}' in command_log.read_text()

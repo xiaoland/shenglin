@@ -1,15 +1,17 @@
 use crate::{
     network::Network,
-    store::{Peer, Store},
+    store::{atomic, Peer, Store},
     wire::*,
 };
 use anyhow::{ensure, Result};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde_json::{json, Value};
 use shenglin_core::*;
 use std::{
     collections::HashSet,
-    io::Read,
+    io::{BufRead, BufReader},
     net::{TcpListener, TcpStream},
+    path::PathBuf,
     sync::{
         atomic::{AtomicBool, Ordering},
         mpsc::Sender,
@@ -23,33 +25,53 @@ use std::{
 pub struct Live {
     pub known: bool,
     pub quiet: bool,
-    pub revision: u64,
+    sequence_path: PathBuf,
+    revision: u64,
+    reserved: u64,
     pub online: HashSet<String>,
     pub streams: HashSet<String>,
 }
-pub enum Event {
-    Update(Peer, PeerUpdate, bool, Sender<String>),
-    Verified(String, bool),
+impl Live {
+    pub fn load(store: &Store) -> Result<Self> {
+        let path = store.0.join("sequence.json");
+        let revision = match std::fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(e) => return Err(e.into()),
+        };
+        Ok(Self {
+            sequence_path: path,
+            revision,
+            reserved: revision,
+            ..Default::default()
+        })
+    }
+
+    fn next_revision(&mut self) -> Result<u64> {
+        if self.revision == self.reserved {
+            let limit = self
+                .revision
+                .checked_add(1_000_000)
+                .ok_or_else(|| anyhow::anyhow!("序号耗尽"))?;
+            atomic(&self.sequence_path, &serde_json::to_vec(&limit)?)?;
+            self.reserved = limit;
+        }
+        self.revision += 1;
+        Ok(self.revision)
+    }
 }
+
+pub type UpdateRequest = (Peer, PeerUpdate, bool, Sender<String>);
 
 fn handshake(s: &mut TcpStream, p: &Peer, medium: &str, stop: &AtomicBool) -> Result<bool> {
     setup(s)?;
-    let ours = nonce();
+    let ours = B64.encode(random_bytes(16)?);
     send(s, &json!({"kind":"challenge","nonce":ours}))?;
     let challenge = receive(s)?;
     ensure!(challenge["kind"] == "challenge", "认证步骤无效");
     ensure!(!stop.load(Ordering::Relaxed), "正在停止");
     let theirs = challenge["nonce"].as_str().unwrap_or("").to_string();
-    // The core validator also enforces the challenge's 16-byte nonce.
-    ensure!(
-        wifi_proof_valid(
-            wifi_proof_sign(p.role.clone(), theirs.clone(), p.key.clone()),
-            p.role.clone(),
-            theirs.clone(),
-            p.key.clone()
-        ),
-        "挑战无效"
-    );
+    ensure!(B64.decode(&theirs)?.len() == 16, "挑战无效");
     send(
         s,
         &json!({"kind":"proof","nonce":theirs,"signature":wifi_proof_sign(p.role.clone(),theirs.clone(),p.key.clone()),"medium":medium,"mediumSignature":network_medium_proof_sign(p.role.clone(),theirs,medium.into(),p.key.clone())?}),
@@ -87,23 +109,30 @@ fn connected(
     net: &Network,
     store: &Store,
     live: &Mutex<Live>,
-    events: &Sender<Event>,
+    events: &Sender<UpdateRequest>,
     stop: &AtomicBool,
 ) -> Result<()> {
     let wifi = handshake(&mut s, p, &net.medium, stop)?;
     store.change(|c| {
-        if let Some(saved) = c.peers.iter_mut().find(|v| v.key == p.key) {
-            saved.pending_until = None;
-        }
+        let saved = c
+            .peers
+            .iter_mut()
+            .find(|v| v.key == p.key)
+            .ok_or_else(|| anyhow::anyhow!("配对已过期或移除"))?;
+        saved.pending_until = None;
         Ok(())
     })?;
-    events.send(Event::Verified(p.id(), true))?;
+    let id = p.id();
+    live.lock().unwrap().online.insert(id.clone());
     let result = (|| {
         s.set_read_timeout(Some(Duration::from_millis(250)))?;
+        let mut reader = BufReader::new(s.try_clone()?);
         let mut buffer = vec![];
         let mut last_sent = Instant::now() - Duration::from_secs(5);
-        let mut last_ack = Instant::now();
-        let mut pending = HashSet::new();
+        let mut sent_state = None;
+        let connected_at = Instant::now();
+        let elapsed_ms = || connected_at.elapsed().as_millis() as i64;
+        let proof = LinkProof::new();
         let mut last_name = String::new();
         let mut config = store.load()?;
         let mut refreshed = Instant::now();
@@ -113,22 +142,29 @@ fn connected(
                 refreshed = Instant::now();
             }
             let allowed = config.enabled && (config.network_scope == "lan" || wifi);
-            if last_sent.elapsed() >= Duration::from_secs(5) {
-                let mut current = live.lock().unwrap();
-                current.revision += 1;
+            let mut current = live.lock().unwrap();
+            let state = (allowed && current.quiet, !allowed || current.known);
+            let changed = sent_state != Some(state);
+            let revision = if changed || last_sent.elapsed() >= Duration::from_secs(5) {
+                Some(current.next_revision()?)
+            } else {
+                None
+            };
+            drop(current);
+            if let Some(revision) = revision {
                 let update = sign_update(
                     p.role.clone(),
-                    current.revision,
-                    allowed && current.quiet,
-                    current.known,
+                    revision,
+                    state.0,
+                    state.1,
                     now() + 20,
                     None,
                     p.key.clone(),
                 );
-                pending.insert(update.revision);
-                drop(current);
                 send(&mut s, &json!({"kind":"update","update":update}))?;
+                proof.sent(update);
                 last_sent = Instant::now();
+                sent_state = Some(state);
                 if last_name != config.name {
                     send(
                         &mut s,
@@ -137,14 +173,17 @@ fn connected(
                     last_name = config.name.clone();
                 }
             }
-            ensure!(last_ack.elapsed() < Duration::from_secs(20), "设备回执超时");
-            let mut b = [0];
-            match s.read(&mut b) {
-                Ok(0) => return Ok(()),
-                Ok(_) => {
-                    if b[0] != 10 {
-                        buffer.push(b[0]);
-                        ensure!(buffer.len() <= 1024, "状态帧过长");
+            let elapsed = elapsed_ms();
+            ensure!(elapsed < 20_000 || proof.verified(elapsed), "设备回执超时");
+            match reader.fill_buf() {
+                Ok([]) => return Ok(()),
+                Ok(bytes) => {
+                    let newline = bytes.iter().position(|b| *b == b'\n');
+                    let n = newline.unwrap_or(bytes.len());
+                    ensure!(buffer.len() + n <= 1024, "状态帧过长");
+                    buffer.extend_from_slice(&bytes[..n]);
+                    reader.consume(n + usize::from(newline.is_some()));
+                    if newline.is_none() {
                         continue;
                     }
                     let frame: Value = serde_json::from_slice(&buffer)?;
@@ -174,7 +213,7 @@ fn connected(
                             );
                             let response = if allowed {
                                 let (tx, rx) = std::sync::mpsc::channel();
-                                events.send(Event::Update(p.clone(), u.clone(), wifi, tx))?;
+                                events.send((p.clone(), u.clone(), wifi, tx))?;
                                 rx.recv_timeout(Duration::from_secs(2))?
                             } else {
                                 "paused".into()
@@ -187,11 +226,15 @@ fn connected(
                         Some("ack") => {
                             let ack: PeerAck = serde_json::from_value(frame["ack"].clone())?;
                             ensure!(
-                                valid_ack(ack.clone(), p.key.clone(), p.remote_role().into())
-                                    && pending.remove(&ack.revision),
+                                proof.accept(
+                                    ack,
+                                    p.key.clone(),
+                                    p.remote_role().into(),
+                                    now(),
+                                    elapsed_ms()
+                                ),
                                 "回执无效"
                             );
-                            last_ack = Instant::now();
                         }
                         _ => anyhow::bail!("状态消息类型无效"),
                     }
@@ -206,8 +249,23 @@ fn connected(
         }
         Ok(())
     })();
-    let _ = events.send(Event::Verified(p.id(), false));
+    live.lock().unwrap().online.remove(&id);
     result
+}
+
+fn incoming(listener: &TcpListener) -> Result<Option<TcpStream>> {
+    match listener.accept() {
+        Ok((socket, _)) => Ok(Some(socket)),
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::Interrupted
+            ) =>
+        {
+            Ok(None)
+        }
+        Err(e) => Err(e.into()),
+    }
 }
 
 pub fn spawn(
@@ -215,34 +273,24 @@ pub fn spawn(
     net: Network,
     store: Store,
     live: Arc<Mutex<Live>>,
-    events: Sender<Event>,
+    events: Sender<UpdateRequest>,
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let run = (|| -> Result<()> {
-            let d = daemon(net.ip)?;
+        let run = with_daemon(net.ip, |d| {
             let listener = if p.role == "initiator" {
                 let l = TcpListener::bind((net.ip, 0))?;
                 l.set_nonblocking(true)?;
-                advertise(&d, net.ip, STATE_SERVICE, &p.id(), l.local_addr()?.port())?;
+                advertise(d, net.ip, STATE_SERVICE, &p.id(), l.local_addr()?.port())?;
                 Some(l)
             } else {
                 None
             };
             while !stop.load(Ordering::Relaxed) {
-                if p.pending_until.is_some_and(|deadline| deadline < now())
-                    && store
-                        .load()?
-                        .peers
-                        .iter()
-                        .any(|v| v.key == p.key && v.pending_until.is_some())
-                {
-                    break;
-                }
                 let stream = if let Some(l) = &listener {
-                    l.accept().ok().map(|(s, _)| s)
+                    incoming(l)?
                 } else {
-                    discover(&d, STATE_SERVICE, Some(&p.id()), 2)?
+                    discover(d, STATE_SERVICE, Some(&p.id()), 2)?
                         .into_iter()
                         .find_map(|(_, addr)| connect_from(net.ip, addr).ok())
                 };
@@ -253,9 +301,8 @@ pub fn spawn(
                 }
                 thread::sleep(Duration::from_millis(500));
             }
-            d.shutdown()?;
             Ok(())
-        })();
+        });
         if let Err(e) = run {
             eprintln!("设备连接失败：{e}");
         }
@@ -267,7 +314,6 @@ fn microphone_session(
     p: &Peer,
     store: &Store,
     live: &Mutex<Live>,
-    busy: &Mutex<HashSet<String>>,
     stop: &AtomicBool,
 ) -> Result<()> {
     wasapi::initialize_mta().ok()?;
@@ -294,17 +340,16 @@ fn microphone_session(
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("缺少输入设备"))?;
     ensure!(sources.iter().any(|s| s.id == id), "此设备未授权共享");
-    ensure!(
-        busy.lock().unwrap().insert(id.to_string()),
-        "此输入已在向该 peer 传输"
-    );
     socket2::SockRef::from(&wire.stream).set_send_buffer_size(8192)?;
     wire.stream
         .set_write_timeout(Some(Duration::from_millis(300)))?;
     let stream_id = format!("{}|{}", p.id(), id);
+    ensure!(
+        live.lock().unwrap().streams.insert(stream_id.clone()),
+        "此输入已在向该 peer 传输"
+    );
     let result = (|| {
         wire.json(json!({"sampleRate":48000,"channels":1,"encoding":"f32le","packetFrames":960}))?;
-        live.lock().unwrap().streams.insert(stream_id.clone());
         let mut checked = Instant::now();
         crate::audio::capture(id, |chunk| {
             if stop.load(Ordering::Relaxed) {
@@ -326,7 +371,6 @@ fn microphone_session(
         })
     })();
     live.lock().unwrap().streams.remove(&stream_id);
-    busy.lock().unwrap().remove(id);
     result
 }
 
@@ -338,58 +382,46 @@ pub fn spawn_microphone(
     stop: Arc<AtomicBool>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let run = (|| -> Result<()> {
-            let d = daemon(net.ip)?;
+        let run = with_daemon(net.ip, |d| {
             let listener = TcpListener::bind((net.ip, 0))?;
             listener.set_nonblocking(true)?;
             advertise(
-                &d,
+                d,
                 net.ip,
                 MIC_SERVICE,
                 &format!("{}-{}", p.id(), p.role),
                 listener.local_addr()?.port(),
             )?;
-            let busy = Arc::new(Mutex::new(HashSet::new()));
             let mut sessions: Vec<(thread::JoinHandle<()>, TcpStream)> = vec![];
-            while !stop.load(Ordering::Relaxed) {
-                let mut i = 0;
-                while i < sessions.len() {
-                    if sessions[i].0.is_finished() {
-                        let (h, _) = sessions.swap_remove(i);
-                        let _ = h.join();
-                    } else {
-                        i += 1;
+            let result = (|| -> Result<()> {
+                while !stop.load(Ordering::Relaxed) {
+                    sessions.retain(|(handle, _)| !handle.is_finished());
+                    if let Some(s) = incoming(&listener)? {
+                        if sessions.len() < 8 {
+                            let socket = s.try_clone()?;
+                            let (p, store, live, stop) =
+                                (p.clone(), store.clone(), live.clone(), stop.clone());
+                            let handle = thread::spawn(move || {
+                                if let Err(e) = microphone_session(s, &p, &store, &live, &stop) {
+                                    eprintln!("麦克风 {}：{e}", p.name);
+                                }
+                            });
+                            sessions.push((handle, socket));
+                        }
                     }
+                    thread::sleep(Duration::from_millis(50));
                 }
-                if let Ok((s, _)) = listener.accept() {
-                    if sessions.len() < 8 {
-                        let socket = s.try_clone()?;
-                        let (p, store, live, busy, stop) = (
-                            p.clone(),
-                            store.clone(),
-                            live.clone(),
-                            busy.clone(),
-                            stop.clone(),
-                        );
-                        let handle = thread::spawn(move || {
-                            if let Err(e) = microphone_session(s, &p, &store, &live, &busy, &stop) {
-                                eprintln!("麦克风 {}：{e}", p.name);
-                            }
-                        });
-                        sessions.push((handle, socket));
-                    }
-                }
-                thread::sleep(Duration::from_millis(50));
-            }
+                Ok(())
+            })();
+            stop.store(true, Ordering::Relaxed);
             for (_, s) in &sessions {
                 let _ = s.shutdown(std::net::Shutdown::Both);
             }
             for (h, _) in sessions {
                 let _ = h.join();
             }
-            d.shutdown()?;
-            Ok(())
-        })();
+            result
+        });
         if let Err(e) = run {
             eprintln!("麦克风共享失败：{e}");
         }

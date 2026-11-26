@@ -20,7 +20,11 @@ if [ -e "$target" ]; then
     /bin/mv "$target" "$previous/ShenglinDriver.driver"
 fi
 if ! /bin/mv "$staging/ShenglinDriver.driver" "$target"; then
-    if [ -n "${previous:-}" ]; then /bin/mv "$previous/ShenglinDriver.driver" "$target"; fi
+    if [ -n "${previous:-}" ]; then
+        /bin/mv "$previous/ShenglinDriver.driver" "$target"
+        /bin/rmdir "$previous"
+    fi
     exit 1
 fi
 /usr/bin/killall coreaudiod
+if [ -n "${previous:-}" ]; then /bin/rm -rf "$previous"; fi

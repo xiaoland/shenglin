@@ -3,20 +3,25 @@ export default defineUnlistedScript(() => {
     const media = navigator.mediaDevices;
     if (!media?.getUserMedia) return;
     const original = media.getUserMedia, tracks = new Set();
-    let calls = 0, failures = 0;
+    let observedAudio = false;
     function report() {
-      const live = [...tracks].filter(track => track.readyState === 'live');
-      window.postMessage({type: 'shenglin-input-state', value: {
-        calls, failures, tracked: tracks.size, live: live.length,
-        active: live.filter(track => track.enabled && !track.muted).length
-      }}, location.origin);
+      let input = observedAudio ? 'idle' : 'unknown';
+      for (const track of tracks) {
+        if (track.readyState === 'ended') tracks.delete(track);
+        else if (track.enabled && !track.muted) input = 'active';
+      }
+      window.postMessage({type: 'shenglin-input-state', input}, location.origin);
     }
-    function observed(...args) {
-      calls++; report();
-      return original.apply(this, args).then(stream => {
-        stream.getAudioTracks().forEach(track => tracks.add(track));
-        report(); return stream;
-      }, error => { failures++; report(); throw error; });
+    async function observed(...args) {
+      const stream = await original.apply(this, args);
+      if (window.__shenglinInputObserver === observed) {
+        for (const track of stream.getAudioTracks()) {
+          observedAudio = true;
+          tracks.add(track);
+        }
+        report();
+      }
+      return stream;
     }
     media.getUserMedia = observed;
     const timer = setInterval(report, 250);
@@ -28,7 +33,7 @@ export default defineUnlistedScript(() => {
       delete window.__shenglinInputObserver;
     }
     window.addEventListener('message', stop);
-    window.__shenglinInputObserver = true;
+    window.__shenglinInputObserver = observed;
     report();
 
 });
